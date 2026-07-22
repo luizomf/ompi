@@ -9,11 +9,11 @@ The Pi agent conversation that delegates work to subagents, receives their pongs
 _Avoid_: Product, service, platform, mechanical controller
 
 **Subagent**:
-An independent Pi agent conversation started by the root agent and owned by its current session. Its conversation persists across turns, while its process exists only during an active turn.
+An independent Pi agent conversation started by the orchestrator agent and owned by its current session. Its conversation persists across turns, while its process exists only during an active turn.
 _Avoid_: Worker service, task, job
 
 **Clean start**:
-A new subagent conversation that receives its explicit prompt but none of the root conversation history.
+A new subagent conversation that receives its explicit prompt but none of the orchestrator conversation history.
 _Avoid_: Context fork, implicit inheritance
 
 **Subagent extension**:
@@ -37,5 +37,5 @@ The subagent extension's single deterministic notification that an accepted suba
 _Avoid_: Model callback, polling, status check
 
 **Live status**:
-A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the root agent's conversation.
+A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the orchestrator agent's conversation.
 _Avoid_: Transcript message, progress polling, full output
