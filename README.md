@@ -17,25 +17,26 @@ List the available recipes:
 just
 ```
 
-Start Pi with only the personal skills directory:
+Start from the smallest profile and add only the capabilities needed for the
+current task:
+
+```sh
+just bare         # No discovered resources or context files
+just core         # Only this project's AGENTS.md
+just research     # AGENTS.md, research skill, and browser extension
+just orchestrate  # AGENTS.md, handoff, tmux-worker, and wormhole skills
+```
+
+These profiles disable automatic discovery of agent-facing resources. Explicit
+`--skill`, `--extension`, and `--append-system-prompt` paths still load, so
+unrelated Claude, Codex, project, package, or global resources do not enter the
+agent context.
+
+For comparison, start Pi with every personal skill or its normal discovery
+behavior:
 
 ```sh
 just p
-```
-
-This expands to:
-
-```sh
-pi --no-skills --skill "${HOME}/.pi/agent/skills"
-```
-
-`--no-skills` disables automatic skill discovery. The explicit `--skill` path
-is still loaded, preventing unrelated Claude, Codex, project, or package skills
-from entering the session.
-
-Start Pi with its normal discovery behavior:
-
-```sh
 just pi
 ```
 
