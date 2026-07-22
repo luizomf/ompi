@@ -19,3 +19,7 @@ _Avoid_: Daemon, orchestration platform, scheduler
 **Steering**:
 A new instruction queued for a running subagent and delivered at Pi's next safe boundary, before its next model call.
 _Avoid_: Real-time chat, process interruption, follow-up
+
+**Interruption**:
+Aborting a subagent's current turn without deleting its conversation, so that conversation remains available for later instructions.
+_Avoid_: Removal, reset, steering
