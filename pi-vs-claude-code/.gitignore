@@ -1,0 +1,16 @@
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+*.swp
+*.swo
+
+# API keys — never commit real credentials
+.env
+
+.pi/agent-sessions/
+
+
+.playwright-cli/
+
+tmp/
