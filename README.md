@@ -39,6 +39,12 @@ Start Pi with its normal discovery behavior:
 just pi
 ```
 
+## Exploration notes
+
+- [Pi orchestration exploration](docs/orchestration-exploration.md) records
+  findings about wormholes, tmux workers, subagents, cross-machine messaging,
+  reliability boundaries, and vendored extension risks.
+
 ## Reference repository
 
 [`pi-vs-claude-code/`](pi-vs-claude-code/) is a vendored reference snapshot of
