@@ -9,7 +9,7 @@ The Pi agent conversation from which subagents are started and to which their co
 _Avoid_: Product, service, platform, coordinator
 
 **Subagent**:
-An independent Pi agent conversation started by the root agent and owned by its current session.
+An independent Pi agent conversation started by the root agent and owned by its current session. Its conversation persists across turns, while its process exists only during an active turn.
 _Avoid_: Worker service, task, job
 
 **Supervisor**:
