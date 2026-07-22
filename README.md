@@ -25,6 +25,7 @@ just bare         # Only the /exit alias extension
 just core         # AGENTS.md and the /exit alias extension
 just research     # Core plus research skill and browser extension
 just orchestrate  # Core plus handoff, tmux-worker, and wormhole skills
+just subagents    # Core plus the asynchronous subagent extension
 ```
 
 These profiles disable automatic discovery of agent-facing resources. Explicit
@@ -38,6 +39,51 @@ behavior:
 ```sh
 just p
 just pi
+```
+
+## Asynchronous subagents
+
+`just subagents` explicitly enables the owned extension in
+`extensions/subagents/`. It starts clean, persistent Pi conversations and returns
+as soon as the child RPC process accepts a prompt. Each accepted turn later
+queues exactly one completion, failure, or interruption pong in the orchestrator
+conversation.
+
+The extension exposes these tools and matching commands:
+
+| Tool | Command | Purpose |
+| --- | --- | --- |
+| `subagent_start` | `/sub` | Start a clean conversation |
+| `subagent_continue` | `/subcont` | Continue a settled conversation |
+| `subagent_steer` | `/substeer` | Steer an active turn |
+| `subagent_interrupt` | `/substop` | Interrupt an active turn |
+| `subagent_list` | `/sublist` | List session-scoped known conversations |
+
+Use plain command arguments for common operations, or JSON with `/sub` and
+`/subcont` for model, thinking-level, working-directory, tool, and name options.
+For example:
+
+```text
+/sub Inspect the authentication flow and report risks.
+/sub {"prompt":"Run the focused tests","name":"tests","tools":["read","bash"]}
+/subcont 1 Check the newly changed files.
+/substeer 1 Focus only on the parser.
+/substop 1
+/sublist
+```
+
+Subagents inherit the current environment, including credentials and SSH agent
+access. They are not sandboxed. Child extensions are disabled, only the user's
+Pi skills directory is loaded, and at most four child processes run at once.
+The registry is intentionally in memory; native Pi JSONL sessions remain after
+the orchestrator exits.
+
+Install dependencies and verify the extension with:
+
+```sh
+npm install
+npm run typecheck
+npm test
 ```
 
 ## Exploration notes

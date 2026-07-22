@@ -1,0 +1,195 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import type { LaunchSpec, RpcChild, RpcEvent } from "./controller.ts";
+
+interface RpcResponse {
+  id?: string;
+  type: "response";
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+interface PendingRequest {
+  resolve(value: unknown): void;
+  reject(error: Error): void;
+  timer: NodeJS.Timeout;
+}
+
+export interface ChildInvocation {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+
+export function buildChildInvocation(spec: LaunchSpec, userSkillsDir: string): ChildInvocation {
+  const args = [
+    "--mode", "rpc",
+    "--no-extensions",
+    "--no-skills",
+    "--skill", userSkillsDir,
+    "--model", spec.model,
+    "--thinking", spec.thinking,
+  ];
+  if (spec.session) args.push("--session", spec.session);
+  if (spec.name && !spec.session) args.push("--name", spec.name);
+  if (spec.tools !== undefined) args.push("--tools", spec.tools.join(","));
+
+  const currentScript = process.argv[1];
+  const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
+  if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
+    return { command: process.execPath, args: [currentScript, ...args], cwd: spec.cwd, env: { ...process.env } };
+  }
+
+  const executable = basename(process.execPath).toLowerCase();
+  const genericRuntime = /^(node|bun)(\.exe)?$/.test(executable);
+  return {
+    command: genericRuntime ? "pi" : process.execPath,
+    args,
+    cwd: spec.cwd,
+    env: { ...process.env },
+  };
+}
+
+export class RpcSubprocess implements RpcChild {
+  private readonly process: ChildProcessWithoutNullStreams;
+  private readonly pending = new Map<string, PendingRequest>();
+  private readonly eventListeners: Array<(event: RpcEvent) => void> = [];
+  private readonly exitListeners: Array<(error?: Error) => void> = [];
+  private requestId = 0;
+  private stderr = "";
+  private exited = false;
+  private exitPromise: Promise<void>;
+  private resolveExit!: () => void;
+
+  constructor(invocation: ChildInvocation) {
+    this.exitPromise = new Promise((resolve) => {
+      this.resolveExit = resolve;
+    });
+    this.process = spawn(invocation.command, invocation.args, {
+      cwd: invocation.cwd,
+      env: invocation.env,
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.attachJsonlReader();
+    this.process.stderr.on("data", (chunk: Buffer) => {
+      this.stderr = `${this.stderr}${chunk.toString("utf8")}`.slice(-8_000);
+    });
+    this.process.once("error", (error) => this.handleExit(error));
+    this.process.once("exit", (code, signal) => {
+      const error = code === 0
+        ? undefined
+        : new Error(`Child exited (code=${code}, signal=${signal}).${this.stderr ? ` ${this.stderr}` : ""}`);
+      this.handleExit(error);
+    });
+    this.process.stdin.on("error", (error) => {
+      if (!this.exited) this.rejectPending(error);
+    });
+  }
+
+  request(command: Record<string, unknown>): Promise<unknown> {
+    if (this.exited || !this.process.stdin.writable) return Promise.reject(new Error("Child RPC process is not writable."));
+    const id = `subagent_${++this.requestId}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Timed out waiting for RPC response to ${String(command.type)}.${this.stderr ? ` ${this.stderr}` : ""}`));
+      }, 30_000);
+      this.pending.set(id, { resolve, reject, timer });
+      this.process.stdin.write(`${JSON.stringify({ ...command, id })}\n`, "utf8", (error) => {
+        if (!error) return;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(error);
+      });
+    });
+  }
+
+  onEvent(listener: (event: RpcEvent) => void): () => void {
+    this.eventListeners.push(listener);
+    return () => {
+      const index = this.eventListeners.indexOf(listener);
+      if (index >= 0) this.eventListeners.splice(index, 1);
+    };
+  }
+
+  onExit(listener: (error?: Error) => void): () => void {
+    this.exitListeners.push(listener);
+    return () => {
+      const index = this.exitListeners.indexOf(listener);
+      if (index >= 0) this.exitListeners.splice(index, 1);
+    };
+  }
+
+  async close(): Promise<void> {
+    if (this.exited) return;
+    this.process.stdin.end();
+    const timeout = setTimeout(() => this.process.kill("SIGTERM"), 2_000);
+    const killTimeout = setTimeout(() => this.process.kill("SIGKILL"), 4_000);
+    await this.exitPromise;
+    clearTimeout(timeout);
+    clearTimeout(killTimeout);
+  }
+
+  private attachJsonlReader(): void {
+    const decoder = new StringDecoder("utf8");
+    let buffer = "";
+    this.process.stdout.on("data", (chunk: Buffer) => {
+      buffer += decoder.write(chunk);
+      while (true) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) break;
+        let line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        this.handleLine(line);
+      }
+    });
+    this.process.stdout.on("end", () => {
+      buffer += decoder.end();
+      if (buffer) this.handleLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
+    });
+  }
+
+  private handleLine(line: string): void {
+    if (!line.trim()) return;
+    let message: RpcResponse | RpcEvent;
+    try {
+      message = JSON.parse(line) as RpcResponse | RpcEvent;
+    } catch {
+      return;
+    }
+    if (message.type === "response" && "id" in message && message.id) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(message.id);
+      if (message.success) pending.resolve(message.data);
+      else pending.reject(new Error(message.error ?? "Unknown RPC error."));
+      return;
+    }
+    for (const listener of this.eventListeners) listener(message as RpcEvent);
+  }
+
+  private handleExit(error?: Error): void {
+    if (this.exited) return;
+    this.exited = true;
+    this.rejectPending(error ?? new Error("Child RPC process exited."));
+    this.resolveExit();
+    for (const listener of this.exitListeners) listener(error);
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}
