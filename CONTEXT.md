@@ -29,7 +29,7 @@ The immediate response that a subagent process accepted its prompt and began an 
 _Avoid_: Pong, completion
 
 **Pong**:
-The supervisor's single deterministic notification that an accepted subagent turn completed, failed, or was interrupted. It is queued for the root agent and triggers a turn without relying on either agent to remember a callback.
+The supervisor's single deterministic notification that an accepted subagent turn completed, failed, or was interrupted. It includes the subagent's bounded final assistant message when one exists and a reference to the full conversation; its delivery never depends on the subagent producing that message.
 _Avoid_: Model callback, polling, status check
 
 **Live status**:
