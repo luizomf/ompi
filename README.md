@@ -23,8 +23,8 @@ current task:
 ```sh
 just bare         # Only the /exit alias extension
 just core         # AGENTS.md and the /exit alias extension
-just research     # AGENTS.md, research skill, and browser extension
-just orchestrate  # AGENTS.md, handoff, tmux-worker, and wormhole skills
+just research     # Core plus research skill and browser extension
+just orchestrate  # Core plus handoff, tmux-worker, and wormhole skills
 ```
 
 These profiles disable automatic discovery of agent-facing resources. Explicit
