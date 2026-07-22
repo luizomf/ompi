@@ -21,8 +21,8 @@ Start from the smallest profile and add only the capabilities needed for the
 current task:
 
 ```sh
-just bare         # No discovered resources or context files
-just core         # Only this project's AGENTS.md
+just bare         # Only the /exit alias extension
+just core         # AGENTS.md and the /exit alias extension
 just research     # AGENTS.md, research skill, and browser extension
 just orchestrate  # AGENTS.md, handoff, tmux-worker, and wormhole skills
 ```

@@ -1,13 +1,13 @@
 default:
     @just --list
 
-# Start Pi without discovered agent resources or context files
+# Start Pi with only the exit alias extension
 bare:
-    pi --no-skills --no-extensions --no-prompt-templates --no-context-files
+    pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --no-prompt-templates --no-context-files
 
-# Start Pi with only this project's AGENTS.md
+# Start Pi with AGENTS.md and the exit alias extension
 core:
-    pi --no-skills --no-extensions --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
+    pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
 
 # Start Pi with the research skill and browser extension
 research:
