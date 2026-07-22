@@ -27,6 +27,23 @@ because it is present here.
 - Make the smallest useful change and avoid abstractions without a current need.
 - Use English for code, comments, and repository documentation.
 
+## Agent skills
+
+### Issue tracker
+
+Specs and issues are tracked in this repository's private GitHub Issues. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the standard omskills category and state labels. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a multi-context repository with `CONTEXT-MAP.md` at the root and
+context-specific glossaries under `docs/`. See `docs/agents/domain.md`.
+
 ## Git as Project Memory
 
 Use Git as the durable backup, checkpoint system, and memory for this project:
