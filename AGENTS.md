@@ -27,15 +27,23 @@ because it is present here.
 - Make the smallest useful change and avoid abstractions without a current need.
 - Use English for code, comments, and repository documentation.
 
-## Git and GitHub
+## Git as Project Memory
 
-- Keep the GitHub repository private.
+Use Git as the durable backup, checkpoint system, and memory for this project:
+
+- Inspect `git status`, recent history, and relevant diffs before resuming work.
+- Commit small, coherent checkpoints and push them regularly.
+- Create a checkpoint before risky experiments or broad changes.
 - Use conventional commits: `type(scope): imperative description`.
-- Use issues and short-lived branches for substantial features. Tiny workflow or
-  documentation adjustments may be committed directly when the owner requests
-  them.
-- Never force-push `main` or perform destructive Git operations without explicit
-  approval.
+- Explain non-obvious intent and decisions in the commit body or project docs.
+- Keep the working tree understandable; do not mix unrelated changes.
+- Never use Git to store secrets, raw conversations, generated state, or private
+  information.
+
+Keep the GitHub repository private. Use issues and short-lived branches for
+substantial features. Tiny workflow or documentation adjustments may be
+committed directly when the owner requests them. Never force-push `main` or
+perform destructive Git operations without explicit approval.
 
 ## Verification
 
