@@ -31,3 +31,7 @@ _Avoid_: Pong, completion
 **Pong**:
 The supervisor's single deterministic notification that an accepted subagent turn completed, failed, or was interrupted. It is queued for the root agent and triggers a turn without relying on either agent to remember a callback.
 _Avoid_: Model callback, polling, status check
+
+**Live status**:
+A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the root agent's conversation.
+_Avoid_: Transcript message, progress polling, full output
