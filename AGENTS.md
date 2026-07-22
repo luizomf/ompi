@@ -32,7 +32,10 @@ because it is present here.
 Use Git as the durable backup, checkpoint system, and memory for this project:
 
 - Inspect `git status`, recent history, and relevant diffs before resuming work.
-- Commit small, coherent checkpoints and push them regularly.
+- Treat every repository edit as checkpoint-worthy: after completing a coherent
+  change, verify it, commit it, and push it to the configured upstream unless
+  the owner explicitly says not to or the push is blocked. Read-only
+  exploration does not require an empty commit.
 - Create a checkpoint before risky experiments or broad changes.
 - Use conventional commits: `type(scope): imperative description`.
 - Explain non-obvious intent and decisions in the commit body or project docs.
