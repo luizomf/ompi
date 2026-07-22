@@ -12,6 +12,10 @@ _Avoid_: Product, service, platform, coordinator
 An independent Pi agent conversation started by the root agent and owned by its current session. Its conversation persists across turns, while its process exists only during an active turn.
 _Avoid_: Worker service, task, job
 
+**Clean start**:
+A new subagent conversation that receives its explicit prompt but none of the root conversation history.
+_Avoid_: Context fork, implicit inheritance
+
 **Supervisor**:
 The session-scoped part of the extension that owns the running subagent processes and their status. It ends those processes when the root session ends while leaving their Pi conversation history intact.
 _Avoid_: Daemon, orchestration platform, scheduler
