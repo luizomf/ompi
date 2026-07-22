@@ -23,3 +23,7 @@ _Avoid_: Real-time chat, process interruption, follow-up
 **Interruption**:
 Aborting a subagent's current turn without deleting its conversation, so that conversation remains available for later instructions.
 _Avoid_: Removal, reset, steering
+
+**Pong**:
+The supervisor's deterministic notification that a subagent turn settled or failed. It is queued for the root agent and triggers a turn without relying on either agent to remember a callback.
+_Avoid_: Model callback, polling, status check
