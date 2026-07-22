@@ -38,6 +38,33 @@ The visible-window design is useful because the user can observe and interact
 with either process. The same callback pattern can cross machines over SSH when
 both hosts have appropriately scoped SSH access.
 
+### Compaction versus explicit handoff
+
+A manual `/compact` test summarized approximately 134k tokens into Pi's
+structured goal, constraints, progress, decisions, next steps, context, and file
+lists format. Pi also kept the recent part of the active split turn verbatim.
+The resulting same-session continuation preserved enough context to answer
+identity and immediate-history checks correctly.
+
+Compaction and handoff solve different problems:
+
+- **compaction** is the better default for continuing the same session and
+  process with less context; it is automatic, preserves a recent tail, and
+  leaves the full JSONL history available;
+- **explicit handoff** is better for transferring authority to a fresh process;
+  it can remove stale details, reference durable artifacts, state the new
+  process's role, and prescribe an exact first action and callback.
+
+The tested compact summary was strong but not a standalone transfer document.
+Some checkpoint and "current work" statements became stale after later actions;
+those actions remained available only because they were in Pi's retained recent
+context. It also retained low-value operational details such as expired pane IDs
+and old temporary paths. The curated wormhole handoff had better signal-to-noise
+and a more precise transfer boundary.
+
+Practical rule: compact first when the goal is only to recover context space;
+use a handoff when changing process, window, agent role, machine, or authority.
+
 ## Observed reliability problem
 
 Prompt-only orchestration can stop between stages. A completed worker may report
