@@ -33,6 +33,26 @@ These profiles disable automatic discovery of agent-facing resources. Explicit
 unrelated Claude, Codex, project, package, or global resources do not enter the
 agent context.
 
+### Codex search fallback
+
+The owned extension in `extensions/codex-search/` provides a narrow
+`codex_search` tool for difficult web research when normal browser fetching is
+blocked or insufficient, or when an independent second research path is useful.
+Enable it explicitly for one Pi process:
+
+```sh
+pi --no-extensions --extension ./extensions/codex-search/index.ts
+```
+
+It invokes `codex_search -` directly without a shell and sends the research
+query through stdin. The process has a fixed two-minute timeout and bounded
+captured output. Model and reasoning defaults remain owned by the
+`codex_search` executable resolved from `PATH`; the extension passes no model,
+reasoning, `--yolo`, ephemeral-container, or arbitrary Codex flags. Its
+model-produced result is not a verified primary source, so requests should ask
+for URLs or citations where relevant and verify those sources separately. The extension is not enabled by any launch profile or
+package manifest.
+
 For comparison, start Pi with every personal skill or its normal discovery
 behavior:
 
