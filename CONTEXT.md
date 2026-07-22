@@ -15,3 +15,7 @@ _Avoid_: Worker service, task, job
 **Supervisor**:
 The session-scoped part of the extension that owns the running subagent processes and their status. It ends those processes when the root session ends while leaving their Pi conversation history intact.
 _Avoid_: Daemon, orchestration platform, scheduler
+
+**Steering**:
+A new instruction queued for a running subagent and delivered at Pi's next safe boundary, before its next model call.
+_Avoid_: Real-time chat, process interruption, follow-up
