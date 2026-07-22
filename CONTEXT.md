@@ -17,8 +17,8 @@ A new subagent conversation that receives its explicit prompt but none of the ro
 _Avoid_: Context fork, implicit inheritance
 
 **Supervisor**:
-The session-scoped part of the extension that owns the running subagent processes and their status. It ends those processes when the root session ends while leaving their Pi conversation history intact.
-_Avoid_: Daemon, orchestration platform, scheduler
+The session-scoped part of the extension that owns subagent process lifecycle, message transport, and status. It does not decide or interpret the work delegated by the root agent.
+_Avoid_: Daemon, orchestration platform, scheduler, workflow engine
 
 **Steering**:
 A new instruction queued for a running subagent and delivered at Pi's next safe boundary, before its next model call.
