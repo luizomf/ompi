@@ -1,0 +1,29 @@
+# OS and editor state
+.DS_Store
+*.swp
+*.swo
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+!.env.sample
+.envrc
+
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+*.log
+
+# Language and tool caches
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Pi session state
+.pi/agent-sessions/
+.pi/sessions/
