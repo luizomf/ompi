@@ -18,6 +18,12 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+const WORKER_SYSTEM_PROMPT = [
+  "You are a worker subagent in a conversation orchestrated by a parent agent.",
+  "Complete the assigned task yourself and report the result to the parent.",
+  "Do not spawn or delegate to other agents, Pi processes, or tmux workers, including through shell commands or skills.",
+].join(" ");
+
 export interface ChildInvocation {
   command: string;
   args: string[];
@@ -31,6 +37,7 @@ export function buildChildInvocation(spec: LaunchSpec, userSkillsDir: string): C
     "--no-extensions",
     "--no-skills",
     "--skill", userSkillsDir,
+    "--append-system-prompt", WORKER_SYSTEM_PROMPT,
     "--model", spec.model,
     "--thinking", spec.thinking,
   ];

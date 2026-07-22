@@ -21,6 +21,12 @@ describe("buildChildInvocation", () => {
     expect(invocation.args).toContain("--no-extensions");
     expect(invocation.args).toContain("--no-skills");
     expect(valueAfter(invocation.args, "--skill")).toBe("/home/user/.pi/agent/skills");
+    expect(valueAfter(invocation.args, "--append-system-prompt")).toContain(
+      "You are a worker subagent",
+    );
+    expect(valueAfter(invocation.args, "--append-system-prompt")).toContain(
+      "Do not spawn or delegate to other agents",
+    );
     expect(valueAfter(invocation.args, "--model")).toBe("anthropic/claude");
     expect(valueAfter(invocation.args, "--thinking")).toBe("high");
     expect(valueAfter(invocation.args, "--tools")).toBe("read,bash");

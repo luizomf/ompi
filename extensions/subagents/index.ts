@@ -131,8 +131,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     const activeCount = views.filter((view) => view.active).length;
     const presentation = buildActiveUi(views, Date.now());
     if (ui) {
-      ui.setWidget("subagents", presentation.lines);
-      ui.setStatus("subagents", presentation.status);
+      const theme = ui.theme;
+      ui.setWidget(
+        "subagents",
+        presentation.lines?.map((line) => theme.fg("accent", line)),
+      );
+      ui.setStatus(
+        "subagents",
+        presentation.status ? theme.fg("success", presentation.status) : undefined,
+      );
     }
     if (activeCount > 0 && !timer) timer = setInterval(refreshUi, 1_000);
     if (activeCount === 0 && timer) {
