@@ -4,9 +4,9 @@ Language for the small internal Pi extension that lets one conversation start an
 
 ## Language
 
-**Root agent**:
-The Pi agent conversation from which subagents are started and to which their completion events return.
-_Avoid_: Product, service, platform, coordinator
+**Orchestrator agent**:
+The Pi agent conversation that delegates work to subagents, receives their pongs, and decides what happens next.
+_Avoid_: Product, service, platform, mechanical controller
 
 **Subagent**:
 An independent Pi agent conversation started by the root agent and owned by its current session. Its conversation persists across turns, while its process exists only during an active turn.
@@ -16,9 +16,9 @@ _Avoid_: Worker service, task, job
 A new subagent conversation that receives its explicit prompt but none of the root conversation history.
 _Avoid_: Context fork, implicit inheritance
 
-**Supervisor**:
-The session-scoped part of the extension that owns subagent process lifecycle, message transport, and status. It does not decide or interpret the work delegated by the root agent.
-_Avoid_: Daemon, orchestration platform, scheduler, workflow engine
+**Subagent extension**:
+The mechanical Pi extension that connects the orchestrator agent to subagents and owns their process lifecycle, message transport, and status for the current session. It does not decide or interpret delegated work.
+_Avoid_: Agent, daemon, orchestration platform, scheduler, workflow engine
 
 **Steering**:
 A new instruction queued for a running subagent and delivered at Pi's next safe boundary, before its next model call.
@@ -33,7 +33,7 @@ The immediate response that a subagent process accepted its prompt and began an 
 _Avoid_: Pong, completion
 
 **Pong**:
-The supervisor's single deterministic notification that an accepted subagent turn completed, failed, or was interrupted. It includes the subagent's bounded final assistant message when one exists and a reference to the full conversation; its delivery never depends on the subagent producing that message.
+The subagent extension's single deterministic notification that an accepted subagent turn completed, failed, or was interrupted. It includes the subagent's bounded final assistant message when one exists and a reference to the full conversation; its delivery never depends on the subagent producing that message.
 _Avoid_: Model callback, polling, status check
 
 **Live status**:
