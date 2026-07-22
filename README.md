@@ -49,6 +49,16 @@ as soon as the child RPC process accepts a prompt. Each accepted turn later
 queues exactly one completion, failure, or interruption pong in the orchestrator
 conversation.
 
+For daily use, link this audited extension into Pi's global extension directory:
+
+```sh
+ln -s "$(pwd)/extensions/subagents" "${HOME}/.pi/agent/extensions/subagents"
+```
+
+A normal `pi` process then discovers it automatically, and `/reload` picks up
+source changes. Explicit profiles using `--no-extensions` remain isolated unless
+they also pass `--extension ./extensions/subagents/index.ts`.
+
 The extension exposes these tools and matching commands:
 
 | Tool | Command | Purpose |
