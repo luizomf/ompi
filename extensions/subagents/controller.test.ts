@@ -98,11 +98,11 @@ describe("SubagentController", () => {
     expect(pongs).toEqual([]);
   });
 
-  it("runs multiple children and rejects a fifth without queuing", async () => {
+  it("runs twelve children and rejects a thirteenth without queuing", async () => {
     const { controller, children } = setup();
-    await Promise.all(Array.from({ length: 4 }, (_, index) => controller.start({ prompt: `${index}`, cwd: "/repo", model: "p/m", thinking: "low" })));
-    await expect(controller.start({ prompt: "fifth", cwd: "/repo", model: "p/m", thinking: "low" })).rejects.toThrow("four");
-    expect(children).toHaveLength(4);
+    await Promise.all(Array.from({ length: 12 }, (_, index) => controller.start({ prompt: `${index}`, cwd: "/repo", model: "p/m", thinking: "low" })));
+    await expect(controller.start({ prompt: "thirteenth", cwd: "/repo", model: "p/m", thinking: "low" })).rejects.toThrow("12");
+    expect(children).toHaveLength(12);
   });
 
   it("times out pre-acceptance without a pong", async () => {

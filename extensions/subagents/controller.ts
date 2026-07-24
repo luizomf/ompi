@@ -81,7 +81,7 @@ export interface ControllerOptions {
   now?: () => number;
 }
 
-const MAX_ACTIVE = 4;
+const MAX_ACTIVE = 12;
 const DEFAULT_HANDSHAKE_MS = 10_000;
 
 function errorMessage(error: unknown): string {
@@ -370,7 +370,7 @@ export class SubagentController {
   private assertCanLaunch(): void {
     if (this.shuttingDown) throw new Error("The orchestrator session is shutting down.");
     if ([...this.records.values()].filter((record) => record.active).length >= MAX_ACTIVE) {
-      throw new Error("At most four subagents may be active; no work was queued.");
+      throw new Error(`At most ${MAX_ACTIVE} subagents may be active; no work was queued.`);
     }
   }
 
