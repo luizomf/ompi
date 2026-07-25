@@ -20,6 +20,10 @@ _Avoid_: Queue instruction, workflow definition, raw shell command
 One execution of a Job. A Job may have multiple Attempts while retaining its identity and history.
 _Avoid_: Duplicate Job, workflow step
 
+**Attempt outcome**:
+A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an output reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's retry policy.
+_Avoid_: Raw runner output, retry decision
+
 **Runner**:
 An execution adapter selected by a Job that interprets its runner-specific payload. Pi or another model integration is one Runner type rather than a property of the Job queue.
 _Avoid_: Queue backend, workflow engine
