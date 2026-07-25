@@ -145,16 +145,20 @@ The Queue daemon component that turns due Occurrences into Jobs. It accepts expl
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
 
 **Schedule**:
-A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. It has a stable identity and immutable numbered revisions: editing its rule, target, or Trigger input creates a revision used only by future Occurrences, while recorded Occurrences identify the revision that planned them. Each terminal Job leaves future recurrence unchanged; the Schedule permits at most one nonterminal Job at a time, disabling or archiving affects only future Occurrences, a nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
-_Avoid_: Job, mutable revision, overlapping execution, failure-driven auto-disable, relative date, sub-minute timer, custom recurrence language, destructive deletion, daylight-saving catch-up
+A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. It has a stable identity and immutable numbered revisions: editing its rule, target, Trigger input, or Late policy creates a revision used only by future Occurrences, while recorded Occurrences identify the revision that planned them. Each terminal Job leaves future recurrence unchanged; the Schedule permits at most one nonterminal Job at a time, disabling or archiving affects only future Occurrences, a nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
+_Avoid_: Job, mutable revision, overlapping execution, failure-driven auto-disable, relative date, sub-minute timer, custom recurrence language, destructive deletion, implicit catch-up
 
 **Occurrence**:
 One planned firing of a Schedule, uniquely identified by its Schedule, local calendar minute, and time zone, with the resolved precise instant retained for execution and audit.
 _Avoid_: Attempt, duplicate daylight-saving instant, approximate time
 
+**Late policy**:
+A Schedule's explicit response when one or more due instants pass while the Queue daemon is unavailable or the host clock jumps forward. `skip`, the default, records them as missed without creating a Job. `fire_once` coalesces the due instants into one late Job for the newest Occurrence and records its lateness, preventing a catch-up burst.
+_Avoid_: Silent late execution, one Job per missed recurrence, implicit backfill
+
 **Missed occurrence**:
-An Occurrence whose scheduled instant passed while the Queue daemon was unavailable. It is recorded as missed for inspection and never backfilled into a Job.
-_Avoid_: Pending Job, catch-up work
+An Occurrence whose scheduled instant passed under a Schedule's `skip` Late policy, or an older due Occurrence coalesced by `fire_once`. It is retained as scheduling evidence and never becomes a pending Job.
+_Avoid_: Pending Job, invisible gap, catch-up work
 
 **Overlap-skipped occurrence**:
 An Occurrence that does not create a Job because the same Schedule already has a nonterminal Job. It is retained as scheduling evidence rather than queued for later.
