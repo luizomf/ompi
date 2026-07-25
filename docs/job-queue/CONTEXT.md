@@ -65,8 +65,8 @@ A renewable fenced ownership claim bound to one Attempt supervisor. Expiry promp
 _Avoid_: Retry timer, duplicate-execution permission, success evidence
 
 **Attempt outcome**:
-A Runner's normalized mechanical report of running state or terminal success, failure, timeout, cancellation, or an unknown result, with process exit metadata, concise diagnostics, and Output or Result artifact references. It does not interpret service-specific content; a Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
-_Avoid_: Business-result interpretation, raw runner output, retry decision
+A Runner's normalized mechanical report of running state or terminal success, failure, timeout, cancellation, or an unknown result, with process exit metadata, concise diagnostics, and Output or Result artifact references. It does not interpret service-specific content; a Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy. A terminal outcome is immutable: an unknown result cannot be manually relabeled as success or failure without mechanical evidence.
+_Avoid_: Business-result interpretation, raw runner output, retry decision, operator-declared outcome
 
 **Queue error code**:
 A stable mechanical classification owned by the Job queue for its own validation, storage, lifecycle, resource, and Runner-control failures. Wrapper and service diagnostics remain opaque and are never promoted into provider-specific queue codes.
@@ -89,8 +89,8 @@ An opaque service result that a wrapper may write atomically to the supervisor-p
 _Avoid_: Required result mode, parsed stdout, queue-generated business result, model response contract
 
 **Retry policy**:
-A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome. Manual retry adds an Attempt from the failed Job's immutable snapshot; a new Trigger creates a new Job from the current definition.
-_Avoid_: Runner decision, snapshot mutation, unconditional retry
+A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome. Manual retry adds an Attempt from the failed or unknown Job's immutable snapshot; retrying an unknown Job requires explicit acknowledgement that external effects may be repeated, while the unknown Attempt remains unchanged in history. A new Trigger creates a new Job from the current definition.
+_Avoid_: Runner decision, snapshot mutation, relabeled outcome, unconditional retry
 
 **Execution timeout**:
 An optional Job Definition limit that initiates Cancellation and records a timed-out Attempt when exceeded. Jobs have no mandatory or inferred timeout because valid execution duration is workload-dependent.
