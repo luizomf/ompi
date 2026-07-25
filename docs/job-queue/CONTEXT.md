@@ -52,6 +52,10 @@ _Avoid_: Job, relative date
 One planned firing of a Schedule, uniquely identified by its Schedule and precise scheduled instant.
 _Avoid_: Attempt, approximate time
 
+**Missed occurrence**:
+An Occurrence whose scheduled instant passed while the Queue daemon was unavailable. It is recorded as missed for inspection and never backfilled into a Job.
+_Avoid_: Pending Job, catch-up work
+
 **Dispatcher**:
 The Queue daemon component that claims executable Jobs and invokes their selected Runners, with at most one active Attempt on the host.
 _Avoid_: Scheduler, workflow coordinator, worker pool
