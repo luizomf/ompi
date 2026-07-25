@@ -45,8 +45,16 @@ One execution of a Job. A Job may have multiple Attempts while retaining its ide
 _Avoid_: Duplicate Job, workflow step
 
 **Attempt outcome**:
-A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an output reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
+A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an Output artifact reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
 _Avoid_: Raw runner output, retry decision
+
+**Job summary**:
+The compact structured view of a Job's current state, exact timestamps, Attempt count, next action, outcome code, and concise diagnostic.
+_Avoid_: Raw log, prose reconstruction
+
+**Output artifact**:
+Runner output stored outside the queryable queue state and referenced by an Attempt outcome, with bounded previews available through the Job summary.
+_Avoid_: Database log blob, status message
 
 **Retry policy**:
 A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome.
