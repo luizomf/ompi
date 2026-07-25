@@ -13,8 +13,8 @@ A registered reusable Runner configuration and payload that remains inert until 
 _Avoid_: Job, running service, inline Hook script
 
 **Job**:
-One execution created from a Job Definition and tracked by the Job queue under a stable identity.
-_Avoid_: Job Definition, Workflow, pipeline, step
+One execution created from a Job Definition and tracked by the Job queue under a stable identity. It owns an immutable snapshot of the definition accepted by its Trigger, so later definition edits affect only future Jobs.
+_Avoid_: Job Definition, mutable execution plan, Workflow, pipeline, step
 
 **Trigger**:
 A durable request that creates a Job from a Job Definition. A Trigger may be manual, produced by a Schedule Occurrence, or produced by a Hook.
