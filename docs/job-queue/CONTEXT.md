@@ -61,16 +61,20 @@ The independent single-Attempt process that owns its Runner process tree, contro
 _Avoid_: Worker pool, Queue daemon, direct database writer
 
 **Attempt outcome**:
-A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an Output artifact reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
-_Avoid_: Raw runner output, retry decision
+A Runner's normalized mechanical report of running state or terminal success, failure, timeout, cancellation, or an unknown result, with process exit metadata, concise diagnostics, and Output or Result artifact references. It does not interpret service-specific content; a Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
+_Avoid_: Business-result interpretation, raw runner output, retry decision
 
 **Job summary**:
 The compact structured view of a Job's current state, exact timestamps, Attempt count, next action, outcome code, and concise diagnostic.
 _Avoid_: Raw log, prose reconstruction
 
 **Output artifact**:
-Runner output streamed outside memory and queryable queue state under a configurable per-Attempt size limit, then referenced by an Attempt outcome with bounded previews in the Job summary. Exceeding the limit fails the Attempt explicitly; retained bytes expire under configurable age and total-size limits while structured metadata remains, with active Attempts and unresolved Dead Letters protected from collection.
-_Avoid_: Buffered process output, silently truncated success, database log blob, permanent raw history, status message
+Runner stdout or stderr streamed outside memory and queryable queue state under a configurable per-Attempt size limit, then referenced by an Attempt outcome with bounded previews in the Job summary. It is diagnostic evidence, never the service result; exceeding the limit fails the Attempt explicitly, and retained bytes expire under configured retention while structured metadata remains.
+_Avoid_: Service result, buffered process output, silently truncated success, database log blob, permanent raw history, status message
+
+**Result artifact**:
+An optional opaque service result written atomically by a wrapper to the supervisor-provided result path and attached to the Attempt outcome. The Job queue verifies only the declared presence and resource bounds, not model or service-specific meaning.
+_Avoid_: Parsed stdout, queue-generated business result, model response contract
 
 **Retry policy**:
 A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome.
@@ -89,8 +93,8 @@ An execution adapter selected by a Job that interprets its runner-specific paylo
 _Avoid_: Shared job processor, queue backend, workflow engine
 
 **Command Runner**:
-The generic Runner that invokes one structured executable with arguments, working directory, standard input, and Job environment while treating nested tools and services as opaque. Harness and container integrations belong behind invoked wrappers, and a command remains responsible for cleaning up external resources it creates.
-_Avoid_: Shell evaluator, model adapter, Docker adapter
+The generic Runner that invokes one structured executable with arguments, working directory, standard input, Job environment, and an optional supervisor-provided result path while treating nested tools and services as opaque. Harness and container integrations belong behind invoked wrappers, and a command remains responsible for result validation and cleaning up external resources it creates.
+_Avoid_: Shell evaluator, stdout parser, model adapter, Docker adapter
 
 **Concurrency key**:
 A caller-declared resource identity that prevents Jobs with the same key from having active Attempts at the same time while unrelated Jobs remain eligible for parallel dispatch.
