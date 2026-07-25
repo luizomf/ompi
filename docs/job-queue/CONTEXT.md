@@ -148,6 +148,10 @@ _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
 A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. It has a stable identity and immutable numbered revisions: editing its rule, target, Trigger input, or Late policy creates a revision used only by future Occurrences, while recorded Occurrences identify the revision that planned them. Each terminal Job leaves future recurrence unchanged; the Schedule permits at most one nonterminal Job at a time, disabling or archiving affects only future Occurrences, a nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
 _Avoid_: Job, mutable revision, overlapping execution, failure-driven auto-disable, relative date, sub-minute timer, custom recurrence language, destructive deletion, implicit catch-up
 
+**Schedule status**:
+The administrative lifecycle value `enabled`, `disabled`, `completed`, or `archived`. A one-time Schedule becomes `completed` after its sole due instant is durably accounted for as fired or missed; its summary links directly to the Occurrence and resulting Job when one exists. A recurring Schedule remains enabled after a late or terminal Job and keeps its original calendar cadence.
+_Avoid_: Job state, hidden one-time history, recurrence shifted by downtime
+
 **Occurrence**:
 One planned firing of a Schedule, uniquely identified by its Schedule, local calendar minute, and time zone, with the resolved precise instant retained for execution and audit.
 _Avoid_: Attempt, duplicate daylight-saving instant, approximate time
