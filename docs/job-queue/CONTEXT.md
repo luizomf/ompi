@@ -120,8 +120,12 @@ _Avoid_: Shell evaluator, stdout parser, model adapter, Docker adapter
 A caller-declared resource identity that prevents Jobs with the same key from having active Attempts at the same time while unrelated Jobs remain eligible for parallel dispatch.
 _Avoid_: Runner identity, schedule slot, queue partition
 
+**Queue installation**:
+One independent Job queue owned by one operating-system user on one host, including its local configuration, database, artifacts, socket, and Attempt supervisors. macOS and Linux installations do not replicate runtime identity or state; portable Job Definition and Schedule documents may be applied independently and become local revisions after host readiness validation.
+_Avoid_: Cluster member, replicated queue, copied runtime directory, shared supervisor
+
 **Queue daemon**:
-The single long-lived local process that hosts the Scheduler and Dispatcher for one operating-system user on one host while durable state remains outside the process. Stopping or restarting it preserves active Attempt supervisors by default; terminating work always requires explicit Cancellation.
+The single long-lived local process that hosts the Scheduler and Dispatcher for one Queue installation while durable state remains outside the process. Stopping or restarting it preserves active Attempt supervisors by default; terminating work always requires explicit Cancellation.
 _Avoid_: System service, multi-user service, clustered service, OS cron, workflow daemon, separate scheduler service
 
 **Startup adapter**:
