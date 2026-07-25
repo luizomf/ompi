@@ -4,6 +4,10 @@ Language for the durable local runtime that accepts and tracks independently sub
 
 ## Language
 
+**OMQueue**:
+The canonical product, repository, and command name for this Job queue. Using one explicit name keeps model instructions, diagnostics, process discovery, paths, and examples mechanically aligned.
+_Avoid_: omq, generic queue command, different package and executable names
+
 **Job queue**:
 The durable execution boundary that records submitted Jobs, their eligibility for execution, attempts, and outcomes. It does not interpret or coordinate the workflow inside a Job.
 _Avoid_: Workflow engine, orchestrator, agent coordinator
