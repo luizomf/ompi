@@ -32,6 +32,10 @@ _Avoid_: Dependency graph, cycle detection, Schedule
 Opaque runner-specific input stored and delivered by the Job queue but interpreted only by the selected Runner. A command payload uses a structured executable, argument vector, working directory, and optional standard input rather than implicit shell text.
 _Avoid_: Queue instruction, workflow definition, raw shell command
 
+**Job environment**:
+The explicit environment assembled for one Job from a small daemon baseline, declared non-secret values, and named secret references. It never inherits the submitting client's environment or loads `.env` automatically, and sensitive values are redacted from the Queue protocol and diagnostics.
+_Avoid_: Client environment snapshot, automatic `.env`, logged secret
+
 **Job submission**:
 The atomic durable acceptance of a Job that returns its identity and initial status without waiting for a Runner to start or finish.
 _Avoid_: Job completion, synchronous execution
