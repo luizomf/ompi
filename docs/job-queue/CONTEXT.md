@@ -133,8 +133,8 @@ An append-only structured lifecycle record with a durable sequence, available fo
 _Avoid_: Log line, conversational notification
 
 **Agent adapter**:
-A model-specific Queue protocol client that owns its event cursor, inbox behavior, and conversation wake-up without adding agent concepts to the Job queue.
-_Avoid_: Queue daemon, shared model backend
+A model-specific Queue protocol client that owns its event cursor, target-session availability, delivery result, inbox behavior, and conversation wake-up without adding agent concepts to the Job queue. The Queue daemon records the scheduled Job and its mechanical outcome but does not keep a harness alive, launch a missing harness, or claim that a conversation received a message.
+_Avoid_: Queue daemon, shared model backend, harness supervisor, assumed delivery
 
 **Scheduler**:
 The Queue daemon component that turns due Occurrences into Jobs. It accepts explicit instants or calendar rules with an IANA time zone, never relative or natural-language dates.
