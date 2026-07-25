@@ -133,8 +133,8 @@ The Queue daemon component that turns due Occurrences into Jobs. It accepts expl
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
 
 **Schedule**:
-A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. Disabling or archiving affects only future Occurrences; a nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
-_Avoid_: Job, relative date, sub-minute timer, custom recurrence language, destructive deletion, daylight-saving catch-up
+A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. It permits at most one nonterminal Job at a time; disabling or archiving affects only future Occurrences, a nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
+_Avoid_: Job, overlapping execution, relative date, sub-minute timer, custom recurrence language, destructive deletion, daylight-saving catch-up
 
 **Occurrence**:
 One planned firing of a Schedule, uniquely identified by its Schedule, local calendar minute, and time zone, with the resolved precise instant retained for execution and audit.
@@ -143,6 +143,10 @@ _Avoid_: Attempt, duplicate daylight-saving instant, approximate time
 **Missed occurrence**:
 An Occurrence whose scheduled instant passed while the Queue daemon was unavailable. It is recorded as missed for inspection and never backfilled into a Job.
 _Avoid_: Pending Job, catch-up work
+
+**Overlap-skipped occurrence**:
+An Occurrence that does not create a Job because the same Schedule already has a nonterminal Job. It is retained as scheduling evidence rather than queued for later.
+_Avoid_: Pending Job, concurrency-key wait
 
 **Dispatcher**:
 The Queue daemon component that claims executable Jobs in deterministic FIFO order by eligibility and identity, then invokes their selected Runners up to a configurable host-wide active-Attempt limit. It neither prioritizes nor preempts Jobs; the limit is a resource-exhaustion fuse, not submission or scheduling capacity.
