@@ -52,6 +52,10 @@ _Avoid_: Job ID, timestamp deduplication
 One execution of a Job. A Job may have multiple Attempts while retaining its identity and history.
 _Avoid_: Duplicate Job, workflow step
 
+**Attempt supervisor**:
+The independent single-Attempt process that owns its Runner process tree, control channel, output capture, and atomic terminal packet. It can outlive and reconnect to a restarted Queue daemon but never writes queue state directly.
+_Avoid_: Worker pool, Queue daemon, direct database writer
+
 **Attempt outcome**:
 A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an Output artifact reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
 _Avoid_: Raw runner output, retry decision
