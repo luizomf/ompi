@@ -53,8 +53,8 @@ One planned firing of a Schedule, uniquely identified by its Schedule and precis
 _Avoid_: Attempt, approximate time
 
 **Dispatcher**:
-The Queue daemon component that claims executable Jobs and invokes their selected Runners.
-_Avoid_: Scheduler, workflow coordinator
+The Queue daemon component that claims executable Jobs and invokes their selected Runners, with at most one active Attempt on the host.
+_Avoid_: Scheduler, workflow coordinator, worker pool
 
 **Workflow**:
 Coordination logic contained within a Job or its invoked program and therefore opaque to the Job queue.
