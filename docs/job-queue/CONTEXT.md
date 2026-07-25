@@ -133,8 +133,8 @@ The single long-lived local process that hosts the Scheduler and Dispatcher for 
 _Avoid_: System service, multi-user service, clustered service, OS cron, workflow daemon, separate scheduler service
 
 **Startup adapter**:
-An optional user-level platform integration that starts the portable Queue daemon through launchd or systemd without exposing Job Definitions or adding platform behavior to the core.
-_Avoid_: Queue daemon, mandatory installer, root service
+An optional user-level platform integration that starts the portable Queue daemon through launchd or systemd without exposing Job Definitions or adding platform behavior to the core. Its convergent installation creates or updates and enables the user service, starts the daemon, and reports success only after Queue-protocol verification; failed verification leaves the adapter inspectable and returns actionable diagnostics.
+_Avoid_: Queue daemon, mandatory installer, root service, adapter-only installation
 
 **Queue protocol**:
 The versioned structured local interface through which all clients manage and observe the Queue daemon. CLI and model integrations are presentation adapters and never read the database or artifact files directly.
