@@ -13,8 +13,12 @@ One independently submitted unit of executable work tracked by the Job queue und
 _Avoid_: Workflow, pipeline, step
 
 **Job payload**:
-Opaque runner-specific input stored and delivered by the Job queue but interpreted only by the selected Runner. A command payload uses a structured executable, argument vector, and working directory rather than implicit shell text.
+Opaque runner-specific input stored and delivered by the Job queue but interpreted only by the selected Runner. A command payload uses a structured executable, argument vector, working directory, and optional standard input rather than implicit shell text.
 _Avoid_: Queue instruction, workflow definition, raw shell command
+
+**Job submission**:
+The atomic durable acceptance of a Job that returns its identity and initial status without waiting for a Runner to start or finish.
+_Avoid_: Job completion, synchronous execution
 
 **Attempt**:
 One execution of a Job. A Job may have multiple Attempts while retaining its identity and history.
