@@ -84,6 +84,14 @@ _Avoid_: System service, multi-user service, clustered service, OS cron, workflo
 The versioned structured local interface through which all clients manage and observe the Queue daemon. CLI and model integrations are presentation adapters and never read the database or artifact files directly.
 _Avoid_: SQLite API, log scraping, model-specific backend
 
+**Queue event**:
+An append-only structured lifecycle record with a durable sequence, available for catch-up and live subscription through the Queue protocol.
+_Avoid_: Log line, conversational notification
+
+**Agent adapter**:
+A model-specific Queue protocol client that owns its event cursor, inbox behavior, and conversation wake-up without adding agent concepts to the Job queue.
+_Avoid_: Queue daemon, shared model backend
+
 **Scheduler**:
 The Queue daemon component that turns due Occurrences into Jobs. It accepts explicit instants or calendar rules with an IANA time zone, never relative or natural-language dates.
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
