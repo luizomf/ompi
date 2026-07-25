@@ -45,8 +45,8 @@ The Queue daemon component that turns due Occurrences into Jobs. It accepts expl
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
 
 **Schedule**:
-A durable one-time instant or recurring calendar rule that produces Occurrences in an explicit IANA time zone.
-_Avoid_: Job, relative date
+A durable one-time instant or recurring calendar rule with one-minute resolution that produces Occurrences in an explicit IANA time zone.
+_Avoid_: Job, relative date, sub-minute timer
 
 **Occurrence**:
 One planned firing of a Schedule, uniquely identified by its Schedule and precise scheduled instant.
