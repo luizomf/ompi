@@ -73,8 +73,8 @@ Runner stdout or stderr streamed outside memory and queryable queue state under 
 _Avoid_: Service result, buffered process output, silently truncated success, database log blob, permanent raw history, status message
 
 **Result artifact**:
-An optional opaque service result written atomically by a wrapper to the supervisor-provided result path and attached to the Attempt outcome. The Job queue verifies only the declared presence and resource bounds, not model or service-specific meaning.
-_Avoid_: Parsed stdout, queue-generated business result, model response contract
+An opaque service result that a wrapper may write atomically to the supervisor-provided result path and that the Job queue attaches when present. Absence is a normal null reference; the queue verifies only path ownership and resource bounds, never presence, schema, or service-specific meaning.
+_Avoid_: Required result mode, parsed stdout, queue-generated business result, model response contract
 
 **Retry policy**:
 A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome.
