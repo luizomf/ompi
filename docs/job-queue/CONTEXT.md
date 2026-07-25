@@ -8,9 +8,21 @@ Language for the durable local runtime that accepts and tracks independently sub
 The durable execution boundary that records submitted Jobs, their eligibility for execution, attempts, and outcomes. It does not interpret or coordinate the workflow inside a Job.
 _Avoid_: Workflow engine, orchestrator, agent coordinator
 
+**Job Definition**:
+A registered reusable Runner configuration and payload that remains inert until a Trigger creates a Job from it.
+_Avoid_: Job, running service, inline Hook script
+
 **Job**:
-One independently submitted unit of executable work tracked by the Job queue under a stable identity.
-_Avoid_: Workflow, pipeline, step
+One execution created from a Job Definition and tracked by the Job queue under a stable identity.
+_Avoid_: Job Definition, Workflow, pipeline, step
+
+**Trigger**:
+A durable request that creates a Job from a Job Definition. A Trigger may be manual, produced by a Schedule Occurrence, or produced by a Hook.
+_Avoid_: Job, inline execution, workflow transition
+
+**Hook**:
+A registered reaction to a terminal Job event that durably Triggers another Job Definition without changing or waiting on the source Job's outcome.
+_Avoid_: Dependency, callback script, workflow edge
 
 **Job payload**:
 Opaque runner-specific input stored and delivered by the Job queue but interpreted only by the selected Runner. A command payload uses a structured executable, argument vector, working directory, and optional standard input rather than implicit shell text.
@@ -53,7 +65,7 @@ The Queue daemon component that turns due Occurrences into Jobs. It accepts expl
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
 
 **Schedule**:
-A durable one-time instant or recurring calendar rule with one-minute resolution that produces Occurrences in an explicit IANA time zone.
+A durable one-time instant or recurring calendar rule with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone.
 _Avoid_: Job, relative date, sub-minute timer
 
 **Occurrence**:
