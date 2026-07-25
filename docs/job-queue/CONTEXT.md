@@ -77,8 +77,12 @@ A durable request to prevent a waiting Job from starting or to make its Runner t
 _Avoid_: Abandonment, rollback, fire-and-forget kill
 
 **Runner**:
-An execution adapter selected by a Job that interprets its runner-specific payload. Each active Attempt receives its own Runner instance, which handles only that Job; Pi or another model integration is one Runner type rather than a property of the Job queue.
+An execution adapter selected by a Job that interprets its runner-specific payload. Each active Attempt receives its own Runner instance, which handles only that Job.
 _Avoid_: Shared job processor, queue backend, workflow engine
+
+**Command Runner**:
+The foundational Runner that invokes one structured executable with arguments, working directory, standard input, and Job environment while treating nested tools and services as opaque. A command remains responsible for cleaning up external resources it creates.
+_Avoid_: Shell evaluator, model adapter, Docker adapter
 
 **Concurrency key**:
 A caller-declared resource identity that prevents Jobs with the same key from having active Attempts at the same time while unrelated Jobs remain eligible for parallel dispatch.
