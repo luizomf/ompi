@@ -93,7 +93,7 @@ A caller-declared resource identity that prevents Jobs with the same key from ha
 _Avoid_: Runner identity, schedule slot, queue partition
 
 **Queue daemon**:
-The single long-lived local process that hosts the Scheduler and Dispatcher for one operating-system user on one host while durable state remains outside the process. It inherits that user's authority, is not a privilege or sandbox boundary, and does not coordinate a cluster or shared network-filesystem queue.
+The single long-lived local process that hosts the Scheduler and Dispatcher for one operating-system user on one host while durable state remains outside the process. Stopping or restarting it preserves active Attempt supervisors by default; terminating work always requires explicit Cancellation.
 _Avoid_: System service, multi-user service, clustered service, OS cron, workflow daemon, separate scheduler service
 
 **Startup adapter**:
