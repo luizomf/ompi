@@ -24,6 +24,10 @@ _Avoid_: Job, inline execution, workflow transition
 A registered reaction to a terminal Job event that durably Triggers another Job Definition without changing or waiting on the source Job's outcome.
 _Avoid_: Dependency, callback script, workflow edge
 
+**Hook cascade**:
+A causal sequence of Hook-triggered Jobs bounded by a configurable depth fuse. The Job queue carries only the current depth and does not build or validate a workflow graph.
+_Avoid_: Dependency graph, cycle detection, Schedule
+
 **Job payload**:
 Opaque runner-specific input stored and delivered by the Job queue but interpreted only by the selected Runner. A command payload uses a structured executable, argument vector, working directory, and optional standard input rather than implicit shell text.
 _Avoid_: Queue instruction, workflow definition, raw shell command
