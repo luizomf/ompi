@@ -21,8 +21,8 @@ An execution adapter selected by a Job that interprets its runner-specific paylo
 _Avoid_: Queue backend, workflow engine
 
 **Queue daemon**:
-The single long-lived local process that hosts the Scheduler and Dispatcher while durable state remains outside the process.
-_Avoid_: OS cron, workflow daemon, separate scheduler service
+The single long-lived local process that hosts the Scheduler and Dispatcher for one operating-system user while durable state remains outside the process. It inherits that user's authority and is not a privilege or sandbox boundary.
+_Avoid_: System service, multi-user service, OS cron, workflow daemon, separate scheduler service
 
 **Scheduler**:
 The Queue daemon component that turns due scheduled occurrences into Jobs.
