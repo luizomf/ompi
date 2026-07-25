@@ -20,6 +20,18 @@ _Avoid_: Duplicate Job, workflow step
 An execution adapter selected by a Job that interprets its runner-specific payload. Pi or another model integration is one Runner type rather than a property of the Job queue.
 _Avoid_: Queue backend, workflow engine
 
+**Queue daemon**:
+The single long-lived local process that hosts the Scheduler and Dispatcher while durable state remains outside the process.
+_Avoid_: OS cron, workflow daemon, separate scheduler service
+
+**Scheduler**:
+The Queue daemon component that turns due scheduled occurrences into Jobs.
+_Avoid_: Dispatcher, workflow coordinator
+
+**Dispatcher**:
+The Queue daemon component that claims executable Jobs and invokes their selected Runners.
+_Avoid_: Scheduler, workflow coordinator
+
 **Workflow**:
 Coordination logic contained within a Job or its invoked program and therefore opaque to the Job queue.
 _Avoid_: Queue lifecycle, retry policy
