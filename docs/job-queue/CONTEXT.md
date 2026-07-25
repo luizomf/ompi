@@ -12,6 +12,10 @@ _Avoid_: Workflow engine, orchestrator, agent coordinator
 One independently submitted unit of executable work tracked by the Job queue under a stable identity.
 _Avoid_: Workflow, pipeline, step
 
+**Job payload**:
+Opaque runner-specific input stored and delivered by the Job queue but interpreted only by the selected Runner. A command payload uses a structured executable, argument vector, and working directory rather than implicit shell text.
+_Avoid_: Queue instruction, workflow definition, raw shell command
+
 **Attempt**:
 One execution of a Job. A Job may have multiple Attempts while retaining its identity and history.
 _Avoid_: Duplicate Job, workflow step
