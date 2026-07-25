@@ -16,6 +16,10 @@ _Avoid_: Workflow, pipeline, step
 One execution of a Job. A Job may have multiple Attempts while retaining its identity and history.
 _Avoid_: Duplicate Job, workflow step
 
+**Runner**:
+An execution adapter selected by a Job that interprets its runner-specific payload. Pi or another model integration is one Runner type rather than a property of the Job queue.
+_Avoid_: Queue backend, workflow engine
+
 **Workflow**:
 Coordination logic contained within a Job or its invoked program and therefore opaque to the Job queue.
 _Avoid_: Queue lifecycle, retry policy
