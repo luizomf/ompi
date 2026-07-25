@@ -61,8 +61,8 @@ An Occurrence whose scheduled instant passed while the Queue daemon was unavaila
 _Avoid_: Pending Job, catch-up work
 
 **Dispatcher**:
-The Queue daemon component that claims executable Jobs and invokes their selected Runners, with at most one active Attempt on the host.
-_Avoid_: Scheduler, workflow coordinator, worker pool
+The Queue daemon component that claims executable Jobs and invokes their selected Runners.
+_Avoid_: Scheduler, workflow coordinator
 
 **Workflow**:
 Coordination logic contained within a Job or its invoked program and therefore opaque to the Job queue.
