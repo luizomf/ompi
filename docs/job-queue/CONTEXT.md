@@ -65,8 +65,8 @@ The compact structured view of a Job's current state, exact timestamps, Attempt 
 _Avoid_: Raw log, prose reconstruction
 
 **Output artifact**:
-Runner output stored outside the queryable queue state and referenced by an Attempt outcome, with bounded previews available through the Job summary.
-_Avoid_: Database log blob, status message
+Runner output stored outside the queryable queue state and referenced by an Attempt outcome, with bounded previews available through the Job summary. Artifact bytes expire under configurable age and size retention while structured metadata remains; active Attempts and unresolved Dead Letters are protected from collection.
+_Avoid_: Database log blob, permanent raw history, status message
 
 **Retry policy**:
 A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome.
