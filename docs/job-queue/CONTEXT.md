@@ -117,12 +117,12 @@ The Queue daemon component that turns due Occurrences into Jobs. It accepts expl
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
 
 **Schedule**:
-A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone.
-_Avoid_: Job, relative date, sub-minute timer, custom recurrence language
+A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. A nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
+_Avoid_: Job, relative date, sub-minute timer, custom recurrence language, daylight-saving catch-up
 
 **Occurrence**:
-One planned firing of a Schedule, uniquely identified by its Schedule and precise scheduled instant.
-_Avoid_: Attempt, approximate time
+One planned firing of a Schedule, uniquely identified by its Schedule, local calendar minute, and time zone, with the resolved precise instant retained for execution and audit.
+_Avoid_: Attempt, duplicate daylight-saving instant, approximate time
 
 **Missed occurrence**:
 An Occurrence whose scheduled instant passed while the Queue daemon was unavailable. It is recorded as missed for inspection and never backfilled into a Job.
