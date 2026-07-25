@@ -80,6 +80,10 @@ _Avoid_: Runner identity, schedule slot, queue partition
 The single long-lived local process that hosts the Scheduler and Dispatcher for one operating-system user on one host while durable state remains outside the process. It inherits that user's authority, is not a privilege or sandbox boundary, and does not coordinate a cluster or shared network-filesystem queue.
 _Avoid_: System service, multi-user service, clustered service, OS cron, workflow daemon, separate scheduler service
 
+**Queue protocol**:
+The versioned structured local interface through which all clients manage and observe the Queue daemon. CLI and model integrations are presentation adapters and never read the database or artifact files directly.
+_Avoid_: SQLite API, log scraping, model-specific backend
+
 **Scheduler**:
 The Queue daemon component that turns due Occurrences into Jobs. It accepts explicit instants or calendar rules with an IANA time zone, never relative or natural-language dates.
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
