@@ -136,6 +136,10 @@ _Avoid_: Log line, conversational notification
 A model-specific Queue protocol client that owns its event cursor, target-session availability, delivery result, inbox behavior, and conversation wake-up without adding agent concepts to the Job queue. The Queue daemon records the scheduled Job and its mechanical outcome but does not keep a harness alive, launch a missing harness, or claim that a conversation received a message.
 _Avoid_: Queue daemon, shared model backend, harness supervisor, assumed delivery
 
+**Deferred agent prompt**:
+An adapter-owned instruction captured durably as Trigger input and later delivered as a new user message to a target live conversation. It may be authored by the user or by a model acting within the user's granted authority, and its delivery envelope identifies the source request, Schedule, and exact due instant so compaction cannot erase the immediate task. Runner output can be referenced as untrusted evidence but never becomes or modifies an authorized prompt automatically.
+_Avoid_: Queue-owned agent instruction, reconstructed context, stdout as prompt, implicit authority escalation
+
 **Scheduler**:
 The Queue daemon component that turns due Occurrences into Jobs. It accepts explicit instants or calendar rules with an IANA time zone, never relative or natural-language dates.
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
