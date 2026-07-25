@@ -33,8 +33,8 @@ Opaque runner-specific input stored and delivered by the Job queue but interpret
 _Avoid_: Queue instruction, workflow definition, raw shell command
 
 **Job environment**:
-The explicit environment assembled for one Job from a small daemon baseline, declared non-secret values, and named secret references. It never inherits the submitting client's environment or loads `.env` automatically, and sensitive values are redacted from the Queue protocol and diagnostics.
-_Avoid_: Client environment snapshot, automatic `.env`, logged secret
+The explicit environment assembled for one Job from a small daemon baseline, declared non-secret values, named secret references, and an isolated per-Attempt temporary directory exposed through standard temporary-directory variables. It never inherits the submitting client's environment or loads `.env` automatically; sensitive values are redacted, and undeclared temporary files are removed after termination or confirmed orphan recovery.
+_Avoid_: Client environment snapshot, shared temporary directory, automatic `.env`, logged secret
 
 **Path root**:
 A named host-local mapping used by Job Definitions to resolve portable executable, working-directory, and input paths. Absolute paths remain valid but are reported as host-specific.
