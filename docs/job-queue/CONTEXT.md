@@ -37,8 +37,12 @@ A durable request to prevent a waiting Job from starting or to make its Runner t
 _Avoid_: Abandonment, rollback, fire-and-forget kill
 
 **Runner**:
-An execution adapter selected by a Job that interprets its runner-specific payload. Pi or another model integration is one Runner type rather than a property of the Job queue.
-_Avoid_: Queue backend, workflow engine
+An execution adapter selected by a Job that interprets its runner-specific payload. Each active Attempt receives its own Runner instance, which handles only that Job; Pi or another model integration is one Runner type rather than a property of the Job queue.
+_Avoid_: Shared job processor, queue backend, workflow engine
+
+**Concurrency key**:
+A caller-declared resource identity that prevents Jobs with the same key from having active Attempts at the same time while unrelated Jobs remain eligible for parallel dispatch.
+_Avoid_: Runner identity, schedule slot, queue partition
 
 **Queue daemon**:
 The single long-lived local process that hosts the Scheduler and Dispatcher for one operating-system user on one host while durable state remains outside the process. It inherits that user's authority, is not a privilege or sandbox boundary, and does not coordinate a cluster or shared network-filesystem queue.
