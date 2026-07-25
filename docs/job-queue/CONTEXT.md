@@ -64,8 +64,12 @@ _Avoid_: Worker pool, Queue daemon, direct database writer
 A Runner's normalized mechanical report of running state or terminal success, failure, timeout, cancellation, or an unknown result, with process exit metadata, concise diagnostics, and Output or Result artifact references. It does not interpret service-specific content; a Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
 _Avoid_: Business-result interpretation, raw runner output, retry decision
 
+**Job state**:
+The public lifecycle value `queued`, `running`, `retry_wait`, `succeeded`, `failed`, `cancel_requested`, `cancelled`, or `unknown`. Claims and leases remain Attempt details; a Dead Letter is a failed Job with no automatic progress remaining, not a separate state.
+_Avoid_: Internal claim state, provider-specific status, Dead Letter as lifecycle value
+
 **Job summary**:
-The compact structured view of a Job's current state, exact timestamps, Attempt count, next action, outcome code, and concise diagnostic.
+The compact structured view of a Job's state, exact timestamps, Attempt count, next action, outcome code, and concise diagnostic.
 _Avoid_: Raw log, prose reconstruction
 
 **Output artifact**:
