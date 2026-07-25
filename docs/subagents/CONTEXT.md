@@ -39,3 +39,7 @@ _Avoid_: Model callback, polling, status check
 **Live status**:
 A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the orchestrator conversation. A minimal footer count remains visible while any subagent turn is active.
 _Avoid_: Transcript message, progress polling, full output
+
+## Turn-release contract
+
+After a start confirmation, the orchestrator must never keep its current turn alive merely to await the pong. It must not use sleeps, shell wait loops, or repeated status snapshots. It may continue useful work that does not depend on the subagent's result; otherwise it ends its response immediately. Ending the response returns control to the user and lets the queued pong enter the orchestrator conversation in a later turn.

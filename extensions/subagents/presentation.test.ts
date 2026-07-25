@@ -1,6 +1,7 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { Pong, SubagentView } from "./controller.ts";
-import { buildActiveUi, buildPongMessage } from "./index.ts";
+import subagentsExtension, { buildActiveUi, buildPongMessage } from "./index.ts";
 
 function view(overrides: Partial<SubagentView>): SubagentView {
   return {
@@ -14,6 +15,26 @@ function view(overrides: Partial<SubagentView>): SubagentView {
     ...overrides,
   };
 }
+
+describe("subagent tool guidance", () => {
+  it("tells the orchestrator to release its turn instead of waiting or polling", () => {
+    const tools: Array<{ name: string; description: string; promptGuidelines?: string[] }> = [];
+    const pi = {
+      registerTool: (tool: { name: string; description: string; promptGuidelines?: string[] }) => tools.push(tool),
+      registerCommand: () => undefined,
+      on: () => undefined,
+      getThinkingLevel: () => "medium",
+      sendMessage: () => undefined,
+    } as unknown as ExtensionAPI;
+
+    subagentsExtension(pi);
+
+    const guidance = tools.flatMap((tool) => tool.promptGuidelines ?? []).join(" ");
+    expect(guidance).toContain("never wait, sleep, or poll");
+    expect(guidance).toContain("end the response");
+    expect(guidance).toContain("subagent_list");
+  });
+});
 
 describe("subagent presentation", () => {
   it("shows only active work and the minimal concurrent footer count", () => {

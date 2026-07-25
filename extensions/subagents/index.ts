@@ -193,23 +193,41 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: "Start a clean persistent Pi conversation asynchronously. Returns after RPC prompt acceptance; completion arrives later as one pong.",
+    description: "Start a clean persistent Pi conversation asynchronously. Returns after RPC prompt acceptance; completion arrives later as one pong. Never wait or poll for that pong.",
     promptSnippet: "Start an independent asynchronous Pi conversation with a complete prompt",
+    promptGuidelines: [
+      "After subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
+    ],
     parameters: StartSchema,
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const view = await start(params, ctx);
-      return { content: [{ type: "text", text: `Subagent #${view.id} accepted the prompt and is running. Session: ${view.sessionRef}` }], details: view };
+      return {
+        content: [{
+          type: "text",
+          text: `Subagent #${view.id} accepted the prompt and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Continue independent work or end this response; the pong will arrive later.`,
+        }],
+        details: view,
+      };
     },
   });
 
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: "Start another asynchronous turn in a settled known subagent conversation.",
+    description: "Start another asynchronous turn in a settled known subagent conversation. Returns after prompt acceptance; never wait or poll for completion.",
+    promptGuidelines: [
+      "After subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
+    ],
     parameters: ContinueSchema,
     async execute(_id, params) {
       const view = await continueSubagent(params);
-      return { content: [{ type: "text", text: `Subagent #${view.id} accepted the continuation and is running.` }], details: view };
+      return {
+        content: [{
+          type: "text",
+          text: `Subagent #${view.id} accepted the continuation and is running.\nDo not wait, sleep, or poll for completion. Continue independent work or end this response; the pong will arrive later.`,
+        }],
+        details: view,
+      };
     },
   });
 
@@ -238,7 +256,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_list",
     label: "List Subagents",
-    description: "List conversations known to this orchestrator session and their latest state.",
+    description: "Take one snapshot of conversations known to this orchestrator session. This is not a completion wait or polling mechanism.",
+    promptGuidelines: [
+      "Use subagent_list only for a status snapshot needed for a user request or an orchestration decision; never call it repeatedly to poll for completion.",
+    ],
     parameters: ListSchema,
     async execute() {
       const views = controller.list();

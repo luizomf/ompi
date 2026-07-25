@@ -69,6 +69,11 @@ as soon as the child RPC process accepts a prompt. Each accepted turn later
 queues exactly one completion, failure, or interruption pong in the orchestrator
 conversation.
 
+After acceptance, the orchestrator must not sleep, run a wait loop, or repeatedly
+call `subagent_list` for completion. It may continue useful work independent of
+the subagent result; otherwise it must end its response so user input and the
+later pong can enter the conversation.
+
 For daily use, link this audited extension into Pi's global extension directory:
 
 ```sh
@@ -104,7 +109,7 @@ For example:
 
 Subagents inherit the current environment, including credentials and SSH agent
 access. They are not sandboxed. Child extensions are disabled, only the user's
-Pi skills directory is loaded, and at most four child processes run at once.
+Pi skills directory is loaded, and at most twelve child processes run at once.
 The registry is intentionally in memory; native Pi JSONL sessions remain after
 the orchestrator exits.
 
