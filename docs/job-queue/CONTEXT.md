@@ -12,6 +12,10 @@ _Avoid_: Workflow engine, orchestrator, agent coordinator
 A registered reusable Runner configuration and payload stored as a Queue-protocol-managed durable record that remains inert until a Trigger creates a Job from it. Each accepted edit creates an immutable numbered revision under the definition's stable identity; future Triggers use the current revision, each Job identifies its captured revision, and reverting creates another revision rather than rewriting history. Files may be applied or exported as documents but are never watched as live configuration or treated as a second source of truth. Disabling prevents new Triggers, while archiving removes the definition from normal discovery without deleting history or changing existing Jobs.
 _Avoid_: Job, running service, mutable revision, watched configuration file, inline Hook script, destructive deletion
 
+**Definition readiness**:
+A computed host-specific diagnostic separate from a Job Definition's durable identity and revisions. Structural validation is mandatory for storage, while a structurally valid but host-unready definition may be stored disabled with all missing executable, Path root, and secret references reported together. Enabling requires a successful readiness check at that instant; later host drift is reported without silently rewriting or disabling the definition.
+_Avoid_: Invalid stored schema, hidden missing dependency, permanent host binding, automatic definition edit
+
 **Job**:
 One execution created from a Job Definition and tracked by the Job queue under a stable identity. It owns an immutable snapshot of the definition accepted by its Trigger, so later definition edits affect only future Jobs.
 _Avoid_: Job Definition, mutable execution plan, Workflow, pipeline, step
