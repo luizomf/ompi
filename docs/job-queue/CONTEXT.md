@@ -81,7 +81,7 @@ An execution adapter selected by a Job that interprets its runner-specific paylo
 _Avoid_: Shared job processor, queue backend, workflow engine
 
 **Command Runner**:
-The foundational Runner that invokes one structured executable with arguments, working directory, standard input, and Job environment while treating nested tools and services as opaque. A command remains responsible for cleaning up external resources it creates.
+The generic Runner that invokes one structured executable with arguments, working directory, standard input, and Job environment while treating nested tools and services as opaque. Harness and container integrations belong behind invoked wrappers, and a command remains responsible for cleaning up external resources it creates.
 _Avoid_: Shell evaluator, model adapter, Docker adapter
 
 **Concurrency key**:
