@@ -81,8 +81,8 @@ An opaque service result that a wrapper may write atomically to the supervisor-p
 _Avoid_: Required result mode, parsed stdout, queue-generated business result, model response contract
 
 **Retry policy**:
-A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome.
-_Avoid_: Runner decision, unconditional retry
+A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome. Manual retry adds an Attempt from the failed Job's immutable snapshot; a new Trigger creates a new Job from the current definition.
+_Avoid_: Runner decision, snapshot mutation, unconditional retry
 
 **Dead Letter**:
 A failed Job that has no automatic Attempts remaining and stays inspectable until an explicit recovery decision.
