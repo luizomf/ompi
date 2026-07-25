@@ -136,6 +136,10 @@ _Avoid_: Log line, conversational notification
 A model-specific Queue protocol client that owns its event cursor, target-session availability, delivery result, inbox behavior, and conversation wake-up without adding agent concepts to the Job queue. The Queue daemon records the scheduled Job and its mechanical outcome but does not keep a harness alive, launch a missing harness, or claim that a conversation received a message.
 _Avoid_: Queue daemon, shared model backend, harness supervisor, assumed delivery
 
+**Agent notification policy**:
+An adapter-owned per-submission choice for whether terminal Queue events wake the originating conversation. `failure`, the default, delivers final failure or unknown outcomes; `terminal` delivers every terminal outcome; and `none` keeps execution silent. A submission unrelated to a conversation has no origin target, while Queue events remain durable and observable regardless of notification policy.
+_Avoid_: Queue retry policy, mandatory wake-up, missing Queue event, assumed origin conversation
+
 **Deferred agent prompt**:
 An adapter-owned instruction captured durably as Trigger input and later delivered as a new user message to a target live conversation. It may be authored by the user or by a model acting within the user's granted authority, and its delivery envelope identifies the source request, Schedule, and exact due instant so compaction cannot erase the immediate task. Runner output can be referenced as untrusted evidence but never becomes or modifies an authorized prompt automatically.
 _Avoid_: Queue-owned agent instruction, reconstructed context, stdout as prompt, implicit authority escalation
