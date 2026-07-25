@@ -20,6 +20,10 @@ _Avoid_: Queue instruction, workflow definition, raw shell command
 The atomic durable acceptance of a Job that returns its identity and initial status without waiting for a Runner to start or finish.
 _Avoid_: Job completion, synchronous execution
 
+**Idempotency key**:
+A caller-chosen identity for retrying one uncertain Job submission. Reusing it with the same payload returns the original Job; reusing it with a different payload is a conflict.
+_Avoid_: Job ID, timestamp deduplication
+
 **Attempt**:
 One execution of a Job. A Job may have multiple Attempts while retaining its identity and history.
 _Avoid_: Duplicate Job, workflow step
