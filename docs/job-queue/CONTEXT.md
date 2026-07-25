@@ -84,6 +84,10 @@ _Avoid_: Runner identity, schedule slot, queue partition
 The single long-lived local process that hosts the Scheduler and Dispatcher for one operating-system user on one host while durable state remains outside the process. It inherits that user's authority, is not a privilege or sandbox boundary, and does not coordinate a cluster or shared network-filesystem queue.
 _Avoid_: System service, multi-user service, clustered service, OS cron, workflow daemon, separate scheduler service
 
+**Startup adapter**:
+An optional user-level platform integration that starts the portable Queue daemon through launchd or systemd without exposing Job Definitions or adding platform behavior to the core.
+_Avoid_: Queue daemon, mandatory installer, root service
+
 **Queue protocol**:
 The versioned structured local interface through which all clients manage and observe the Queue daemon. CLI and model integrations are presentation adapters and never read the database or artifact files directly.
 _Avoid_: SQLite API, log scraping, model-specific backend
