@@ -9,8 +9,8 @@ The durable execution boundary that records submitted Jobs, their eligibility fo
 _Avoid_: Workflow engine, orchestrator, agent coordinator
 
 **Job Definition**:
-A registered reusable Runner configuration and payload that remains inert until a Trigger creates a Job from it. Disabling prevents new Triggers, while archiving removes it from normal discovery without deleting history or changing existing Jobs.
-_Avoid_: Job, running service, inline Hook script, destructive deletion
+A registered reusable Runner configuration and payload stored as a Queue-protocol-managed durable record that remains inert until a Trigger creates a Job from it. Files may be applied or exported as documents but are never watched as live configuration or treated as a second source of truth. Disabling prevents new Triggers, while archiving removes the definition from normal discovery without deleting history or changing existing Jobs.
+_Avoid_: Job, running service, watched configuration file, inline Hook script, destructive deletion
 
 **Job**:
 One execution created from a Job Definition and tracked by the Job queue under a stable identity. It owns an immutable snapshot of the definition accepted by its Trigger, so later definition edits affect only future Jobs.
