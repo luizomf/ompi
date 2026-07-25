@@ -45,8 +45,16 @@ One execution of a Job. A Job may have multiple Attempts while retaining its ide
 _Avoid_: Duplicate Job, workflow step
 
 **Attempt outcome**:
-A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an output reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's retry policy.
+A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an output reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's Retry policy.
 _Avoid_: Raw runner output, retry decision
+
+**Retry policy**:
+A Job Definition's limit and backoff for additional Attempts. It defaults to one Attempt, must be explicitly enabled for automatic retries, and never automatically retries an unknown outcome.
+_Avoid_: Runner decision, unconditional retry
+
+**Dead Letter**:
+A failed Job that has no automatic Attempts remaining and stays inspectable until an explicit recovery decision.
+_Avoid_: Deleted failure, automatic retry queue
 
 **Cancellation**:
 A durable request to prevent a waiting Job from starting or to make its Runner terminate an active Attempt and wait for confirmation. It targets the execution tree the Runner controls, does not undo completed effects, and produces an unknown outcome when termination cannot be confirmed.
