@@ -32,6 +32,10 @@ _Avoid_: Duplicate Job, workflow step
 A Runner's normalized report of success, failure, timeout, cancellation, or an unknown result, with concise diagnostics and an output reference. A Runner may suggest whether a failure is recoverable, but the Job queue applies the Job's retry policy.
 _Avoid_: Raw runner output, retry decision
 
+**Cancellation**:
+A durable request to prevent a waiting Job from starting or to make its Runner terminate an active Attempt and wait for confirmation. It targets the execution tree the Runner controls, does not undo completed effects, and produces an unknown outcome when termination cannot be confirmed.
+_Avoid_: Abandonment, rollback, fire-and-forget kill
+
 **Runner**:
 An execution adapter selected by a Job that interprets its runner-specific payload. Pi or another model integration is one Runner type rather than a property of the Job queue.
 _Avoid_: Queue backend, workflow engine
