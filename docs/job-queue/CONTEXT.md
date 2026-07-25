@@ -41,8 +41,16 @@ The single long-lived local process that hosts the Scheduler and Dispatcher for 
 _Avoid_: System service, multi-user service, clustered service, OS cron, workflow daemon, separate scheduler service
 
 **Scheduler**:
-The Queue daemon component that turns due scheduled occurrences into Jobs.
-_Avoid_: Dispatcher, workflow coordinator
+The Queue daemon component that turns due Occurrences into Jobs. It accepts explicit instants or calendar rules with an IANA time zone, never relative or natural-language dates.
+_Avoid_: Dispatcher, workflow coordinator, natural-language date parser
+
+**Schedule**:
+A durable one-time instant or recurring calendar rule that produces Occurrences in an explicit IANA time zone.
+_Avoid_: Job, relative date
+
+**Occurrence**:
+One planned firing of a Schedule, uniquely identified by its Schedule and precise scheduled instant.
+_Avoid_: Attempt, approximate time
 
 **Dispatcher**:
 The Queue daemon component that claims executable Jobs and invokes their selected Runners.
