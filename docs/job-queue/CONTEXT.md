@@ -9,8 +9,8 @@ The durable execution boundary that records submitted Jobs, their eligibility fo
 _Avoid_: Workflow engine, orchestrator, agent coordinator
 
 **Job Definition**:
-A registered reusable Runner configuration and payload stored as a Queue-protocol-managed durable record that remains inert until a Trigger creates a Job from it. Files may be applied or exported as documents but are never watched as live configuration or treated as a second source of truth. Disabling prevents new Triggers, while archiving removes the definition from normal discovery without deleting history or changing existing Jobs.
-_Avoid_: Job, running service, watched configuration file, inline Hook script, destructive deletion
+A registered reusable Runner configuration and payload stored as a Queue-protocol-managed durable record that remains inert until a Trigger creates a Job from it. Each accepted edit creates an immutable numbered revision under the definition's stable identity; future Triggers use the current revision, each Job identifies its captured revision, and reverting creates another revision rather than rewriting history. Files may be applied or exported as documents but are never watched as live configuration or treated as a second source of truth. Disabling prevents new Triggers, while archiving removes the definition from normal discovery without deleting history or changing existing Jobs.
+_Avoid_: Job, running service, mutable revision, watched configuration file, inline Hook script, destructive deletion
 
 **Job**:
 One execution created from a Job Definition and tracked by the Job queue under a stable identity. It owns an immutable snapshot of the definition accepted by its Trigger, so later definition edits affect only future Jobs.
@@ -77,8 +77,8 @@ The public lifecycle value `queued`, `running`, `retry_wait`, `succeeded`, `fail
 _Avoid_: Internal claim state, provider-specific status, Dead Letter as lifecycle value
 
 **Job summary**:
-The compact structured view of a Job's state, exact timestamps, Attempt count, next action, outcome code, and concise diagnostic.
-_Avoid_: Raw log, prose reconstruction
+The compact structured Queue-protocol view of a Job's definition revision, state, exact timestamps, Attempt count, next action, outcome code, concise diagnostic, bounded Output previews, and direct artifact or event references. It centralizes the evidence an operator or model needs to choose the next action without discovering or correlating host files.
+_Avoid_: Raw log, prose reconstruction, filesystem scavenger hunt
 
 **Output artifact**:
 Runner stdout or stderr streamed outside memory and queryable queue state under a configurable per-Attempt size limit, then referenced by an Attempt outcome with bounded previews in the Job summary. It is diagnostic evidence, never the service result; exceeding the limit fails the Attempt explicitly, and retained bytes expire under configured retention while structured metadata remains.
