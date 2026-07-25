@@ -9,8 +9,8 @@ The durable execution boundary that records submitted Jobs, their eligibility fo
 _Avoid_: Workflow engine, orchestrator, agent coordinator
 
 **Job Definition**:
-A registered reusable Runner configuration and payload that remains inert until a Trigger creates a Job from it.
-_Avoid_: Job, running service, inline Hook script
+A registered reusable Runner configuration and payload that remains inert until a Trigger creates a Job from it. Disabling prevents new Triggers, while archiving removes it from normal discovery without deleting history or changing existing Jobs.
+_Avoid_: Job, running service, inline Hook script, destructive deletion
 
 **Job**:
 One execution created from a Job Definition and tracked by the Job queue under a stable identity. It owns an immutable snapshot of the definition accepted by its Trigger, so later definition edits affect only future Jobs.
@@ -117,8 +117,8 @@ The Queue daemon component that turns due Occurrences into Jobs. It accepts expl
 _Avoid_: Dispatcher, workflow coordinator, natural-language date parser
 
 **Schedule**:
-A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. A nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
-_Avoid_: Job, relative date, sub-minute timer, custom recurrence language, daylight-saving catch-up
+A durable one-time ISO 8601 instant or recurring five-field cron expression with one-minute resolution that produces Occurrences for one Job Definition in an explicit IANA time zone. Disabling or archiving affects only future Occurrences; a nonexistent daylight-saving minute produces nothing, and a repeated local minute produces at most one Occurrence.
+_Avoid_: Job, relative date, sub-minute timer, custom recurrence language, destructive deletion, daylight-saving catch-up
 
 **Occurrence**:
 One planned firing of a Schedule, uniquely identified by its Schedule, local calendar minute, and time zone, with the resolved precise instant retained for execution and audit.
