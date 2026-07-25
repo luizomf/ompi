@@ -20,6 +20,10 @@ _Avoid_: Job Definition, mutable execution plan, Workflow, pipeline, step
 A durable request that creates a Job from a Job Definition. A Trigger may be manual, produced by a Schedule Occurrence, or produced by a Hook.
 _Avoid_: Job, inline execution, workflow transition
 
+**Trigger input**:
+A JSON value validated against the Job Definition's declared schema and captured in the Job snapshot. Command mappings may pass complete input values as argument or standard-input values but never evaluate shell or textual templates.
+_Avoid_: Definition edit, shell interpolation, unvalidated form field
+
 **Hook**:
 A registered reaction to a terminal Job event that durably Triggers another Job Definition without changing or waiting on the source Job's outcome.
 _Avoid_: Dependency, callback script, workflow edge
