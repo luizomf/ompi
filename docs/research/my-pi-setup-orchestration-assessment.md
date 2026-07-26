@@ -10,7 +10,7 @@ The reference has two different full-screen TUI overlays, not one generic “bac
 
 ompi should not replace its nearly complete native RPC subagent mechanism. The smallest potentially useful adoption is a TUI-only `/subagents` inspection surface over the existing controller, initially without takeover input; the reference’s background-terminal subsystem should remain a separate opt-in feature and should be built only after a concrete repeated need appears. The current implementation already has asynchronous prompt acceptance, persistent native sessions, steering, interruption, exactly-one pong delivery, and compact live status. (`extensions/subagents/index.ts:99-162`, `extensions/subagents/index.ts:193-264`, `extensions/subagents/controller.ts:246-348`)
 
-**No implementation should be chosen to fix the owner’s unnamed small defect until that defect is described and reproduced.**
+**No implementation should be chosen for the reported small defect until that defect is described and reproduced.**
 
 ## Exact reference user flows
 
@@ -30,7 +30,7 @@ The overlay is implemented with the documented `ctx.ui.custom(..., { overlay: tr
 2. `/ps` gives an informational listing outside TUI mode, reports the empty state when needed, or opens the TUI picker. (`my-pi-setup/extensions/background-terminals/index.ts:421-444`)
 3. The dashboard lists tracked terminals with status, title/id, PID, elapsed time, and exit state. Up/down or `j`/`k` moves, Enter inspects, `x` kills a running selection, and cancel closes. (`my-pi-setup/extensions/background-terminals/src/ui/ps.ts:123-207`, `my-pi-setup/extensions/background-terminals/src/ui/ps.ts:221-359`)
 4. The detail view defaults to stdout; `t` toggles stdout/stderr, arrows or `j`/`k` and page keys scroll, `g`/`G` jump to top/bottom, `x` kills, and cancel returns to the dashboard. It live-tails when the bottom-relative offset is zero. (`my-pi-setup/extensions/background-terminals/src/ui/ps.ts:366-488`, `my-pi-setup/extensions/background-terminals/src/ui/ps.ts:540-615`)
-5. Captured output is ANSI/control-sanitized only for rendering, retained in memory as a bounded newest tail, and optionally spilled to owner-only files; the implementation caps each in-memory stream at 2 MiB and each spill at 256 MiB. (`my-pi-setup/extensions/background-terminals/src/ui/output-view.ts:1-56`, `my-pi-setup/extensions/background-terminals/src/manager.ts:38-55`, `my-pi-setup/extensions/background-terminals/src/manager.ts:457-520`)
+5. Captured output is ANSI/control-sanitized only for rendering, retained in memory as a bounded newest tail, and optionally spilled to user-only files; the implementation caps each in-memory stream at 2 MiB and each spill at 256 MiB. (`my-pi-setup/extensions/background-terminals/src/ui/output-view.ts:1-56`, `my-pi-setup/extensions/background-terminals/src/manager.ts:38-55`, `my-pi-setup/extensions/background-terminals/src/manager.ts:457-520`)
 
 ## Architectural comparison
 
@@ -60,7 +60,7 @@ The current RPC design follows Pi’s protocol semantics: successful `prompt` re
 ### Subagent inspection UI
 
 1. **Do not port the backend manager.** Keep `SubagentController` and `RpcSubprocess`; they already implement ompi’s clean-start, persistent-conversation, turn-release, and deterministic-pong contracts. (`docs/subagents/CONTEXT.md:11-18`, `docs/subagents/CONTEXT.md:31-45`, `extensions/subagents/controller.ts:125-190`)
-2. If the owner wants richer inspection, add a TUI-only `/subagents` picker over `controller.list()`, preserving the current widget. A first version should be read-only and show metadata, current tool, bounded visible preview, error, and session reference; this uses information already exposed by `SubagentView`. (`extensions/subagents/controller.ts:38-53`, `extensions/subagents/index.ts:69-83`)
+2. If richer inspection is needed, add a TUI-only `/subagents` picker over `controller.list()`, preserving the current widget. A first version should be read-only and show metadata, current tool, bounded visible preview, error, and session reference; this uses information already exposed by `SubagentView`. (`extensions/subagents/controller.ts:38-53`, `extensions/subagents/index.ts:69-83`)
 3. Only if that view is insufficient, extend the controller with a bounded normalized event transcript and port the reference’s sanitize/wrap/scroll logic. Do not add takeover input merely to match the reference: ompi already exposes explicit `subagent_steer`, `subagent_continue`, and `subagent_interrupt` operations. (`extensions/subagents/index.ts:214-254`, `my-pi-setup/extensions/subagents/src/ui/transcript.ts:13-44`)
 
 ### Background-terminal support
@@ -71,4 +71,4 @@ Do not adopt it preemptively. If repeated dev-server/watcher work demonstrates a
 
 ## Decision boundary
 
-This assessment identifies optional UI improvements, not a defect remedy. **The owner must describe the small defect before any implementation is selected, because neither an inspection overlay nor a background-process manager can be justified as its fix without the defect’s observable behavior and expected outcome.**
+This assessment identifies optional UI improvements, not a defect remedy. **The small defect must be described before any implementation is selected, because neither an inspection overlay nor a background-process manager can be justified as its fix without the defect’s observable behavior and expected outcome.**

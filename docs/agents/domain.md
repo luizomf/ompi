@@ -1,6 +1,6 @@
 # Domain Docs
 
-This is a multi-context repository for owned Pi experiments and workflows.
+This is a multi-context repository for Pi experiments and workflows maintained here.
 
 ## Before Working
 

@@ -21,7 +21,7 @@ orchestrate:
 subagents:
     pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --extension ./extensions/subagents/index.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
 
-# Start Pi with only the personal skills directory
+# Start Pi with only the user skills directory
 p:
     pi --no-skills --skill "${HOME}/.pi/agent/skills"
 
