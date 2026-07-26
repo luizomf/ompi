@@ -125,17 +125,7 @@ npm test
 
 - [Pi orchestration exploration](docs/orchestration-exploration.md) records
   findings about wormholes, tmux workers, subagents, cross-machine messaging,
-  reliability boundaries, and vendored extension risks.
-
-## Reference repository
-
-[`pi-vs-claude-code/`](pi-vs-claude-code/) is a vendored reference snapshot of
-[`disler/pi-vs-claude-code`](https://github.com/disler/pi-vs-claude-code) at
-commit `0ed11f44932fdef29bd98467700019762298f50d`.
-
-The snapshot was statically reviewed before import, but its extensions are not
-automatically trusted. Pi extensions execute arbitrary code with the current
-user's permissions, so inspect and enable them individually.
+  reliability boundaries, and historically reviewed extensions.
 
 ## Safety defaults
 

@@ -1,20 +1,20 @@
 # Pi Orchestration Exploration
 
-Status: exploratory notes, not an implementation decision.
+Status: historical exploration with its useful findings retained.
 
 This document preserves findings about interactive Pi handoffs, visible workers,
 subagents, and agent-to-agent communication so they do not need to be
-rediscovered. Vendored extensions discussed here were inspected statically and
-were not executed.
+rediscovered. The reviewed third-party snapshot was removed after extraction;
+its extensions were inspected statically and were not executed.
 
 ## Current local primitives
 
 ### Wormhole
 
 A wormhole moves an interactive conversation to a fresh Pi process in another
-tmux window while leaving the origin recoverable. A handoff file is the
-continuation authority. The fresh process sends a callback to the origin and
-must either begin the authorized next step or stop at an explicit user gate.
+tmux window and retires the origin after the handoff is restored. A handoff file
+is the continuation authority. The fresh process sends a callback to the origin
+and must either begin the authorized next step or stop at an explicit user gate.
 
 A tmux pane ID such as `%102` is an internal server-wide identifier. Moving or
 reordering windows may change friendly indexes but does not change a living
@@ -23,10 +23,10 @@ endpoints must be captured immediately before each delegation or jump.
 
 ### Tmux worker
 
-A tmux worker delegates independent work to a visible interactive Pi process in
-another window. The worker writes a detailed report and sends a short callback
-to the coordinator. The callback is only a pointer; the coordinator reads the
-report before continuing.
+A tmux worker connects the caller to a visible interactive Pi process in another
+window. The worker writes a detailed report and sends a short callback to the
+coordinator. The callback is only a transport handshake; the user or invoking
+workflow determines the work and what follows.
 
 Unlike a wormhole, a worker does not replace the coordinator. The two mechanisms
 are complementary:
@@ -80,11 +80,12 @@ A reliable loop should not make the finishing worker responsible for inventing
 or remembering the next transition. A supervisor should own explicit state,
 completion criteria, transitions, stop conditions, and human gates.
 
-## Vendored extension findings
+## Historical extension findings
 
-The files below belong to the untrusted reference snapshot in
-`pi-vs-claude-code/`. They may be useful as design references but should not be
-loaded without a separate compatibility and security review.
+The removed files came from
+[`disler/pi-vs-claude-code`](https://github.com/disler/pi-vs-claude-code) at
+commit `0ed11f44932fdef29bd98467700019762298f50d`. The findings remain here so the
+executable snapshot does not need to stay in the working tree.
 
 ### `extensions/subagent-widget.ts`
 
@@ -253,35 +254,22 @@ processes commonly inherit the parent's environment and may therefore inherit
 API keys, SSH agent access, and other credentials. Agent prompts and tool lists
 must be treated as executable policy.
 
-The vendored snapshot also enables automatic `.env` loading in its own
-`justfile`. This repository intentionally does not copy that behavior. No
-vendored recipe or extension should be run merely because it exists locally.
+The historical snapshot enabled automatic `.env` loading in its own `justfile`.
+This repository did not adopt that behavior. No third-party recipe or extension
+should be run merely because it appears in retained notes.
 
-## Tentative direction
+## Outcome
 
-No architecture has been selected. A promising minimal composition is:
+The adopted minimal composition keeps mechanics and policy separate:
 
-1. keep tmux workers for visibility, user interaction, and SSH reachability;
-2. give one coordinator or extension ownership of a finite workflow state;
-3. require each worker to preserve a detailed report before callback;
-4. make callback handling trigger the next transition in code, not by prompt
-   memory;
-5. encode stop conditions and human gates explicitly;
-6. avoid a general distributed-agent platform until a concrete workflow
-   requires it.
+1. native isolated subagents perform specialist work;
+2. an acyclic coordinator skill owns selection, adjudication, correction,
+   integration, continuation, and completion;
+3. specialist results always return to the coordinator rather than transitioning
+   directly to another specialist;
+4. wormhole rotates a completed work unit into a fresh coordinator context when
+   another authorized unit remains; and
+5. Git, the issue tracker, and concise handoffs provide durable state.
 
-The key design goal is not "agents that can message each other." It is a small,
-inspectable supervisor that cannot silently forget the next authorized step.
-
-## Questions for later analysis
-
-- Should workers remain interactive after completion, or should only selected
-  tasks use persistent conversations?
-- Should the supervisor live in a Pi extension, an external process, or the
-  current coordinator prompt-and-skill layer?
-- Is an artifact plus callback sufficient, or is a durable state ledger needed?
-- How should callback authenticity and stale callback rejection work?
-- Which transitions require explicit owner approval?
-- Can SSH transport remain a thin tmux callback, avoiding a network hub?
-- What is the smallest recovery mechanism after coordinator, worker, or tmux
-  server restart?
+A runtime workflow state machine remains unnecessary until an observed failure
+shows that the skill-layer coordinator cannot preserve this contract.

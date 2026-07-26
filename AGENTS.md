@@ -3,14 +3,9 @@
 ## Repository Context
 
 Pilearn is a private learning lab for improving our Pi Coding Agent workflow.
-It contains small, explicit launch profiles, notes, and experiments that we own,
-plus audited third-party material used only as reference.
-
-`pi-vs-claude-code/` is a vendored snapshot of
-<https://github.com/disler/pi-vs-claude-code> at commit
-`0ed11f44932fdef29bd98467700019762298f50d`. Its nested Git metadata was removed
-so this repository owns the snapshot. Do not treat its code as trusted merely
-because it is present here.
+It contains small, explicit launch profiles, notes, and experiments that we own.
+Historical findings from reviewed third-party material remain as notes rather
+than executable snapshots.
 
 ## Working Agreements
 
@@ -20,8 +15,6 @@ because it is present here.
   permissions and may inherit credentials from the environment.
 - Review third-party prompts, skills, extensions, and scripts before running
   them. Never execute reference material automatically.
-- Put experiments we own outside `pi-vs-claude-code/` unless the task explicitly
-  updates the vendored snapshot.
 - Do not commit `.env` files, credentials, sessions, logs, or generated state.
 - Do not enable automatic `.env` loading in the `justfile`.
 - Make the smallest useful change and avoid abstractions without a current need.
