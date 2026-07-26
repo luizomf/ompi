@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { initTheme, type ExtensionAPI, type MessageRenderer } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { Pong, SubagentView } from "./controller.ts";
 import subagentsExtension, { buildActiveUi, buildPongMessage } from "./index.ts";
@@ -22,6 +22,7 @@ describe("subagent tool guidance", () => {
     const pi = {
       registerTool: (tool: { name: string; description: string; promptGuidelines?: string[] }) => tools.push(tool),
       registerCommand: () => undefined,
+      registerMessageRenderer: () => undefined,
       on: () => undefined,
       getThinkingLevel: () => "medium",
       sendMessage: () => undefined,
@@ -49,6 +50,62 @@ describe("subagent presentation", () => {
     expect(presentation.lines?.[0]).toContain("#1 reader · running · 3s · read · visible progress");
     expect(presentation.lines?.join(" ")).not.toContain("#3");
     expect(buildActiveUi([view({ active: false, state: "completed" })], 5_000)).toEqual({});
+  });
+
+  it("collapses final assistant text behind Pi's native expansion state", () => {
+    initTheme(undefined, false);
+    let renderer: MessageRenderer | undefined;
+    const pi = {
+      registerTool: () => undefined,
+      registerCommand: () => undefined,
+      registerMessageRenderer: (customType: string, candidate: MessageRenderer) => {
+        if (customType === "subagent-pong") renderer = candidate;
+      },
+      on: () => undefined,
+      getThinkingLevel: () => "medium",
+      sendMessage: () => undefined,
+    } as unknown as ExtensionAPI;
+
+    subagentsExtension(pi);
+    expect(renderer).toBeDefined();
+    if (!renderer) throw new Error("subagent-pong renderer was not registered");
+    const registeredRenderer = renderer;
+
+    const marker = "FULL SUBAGENT RESULT";
+    const message = buildPongMessage({
+      id: 7,
+      name: "reader",
+      outcome: "completed",
+      sessionRef: "/sessions/7.jsonl",
+      finalText: marker,
+    });
+    const theme = {
+      fg: (_color: string, text: string) => text,
+      bg: (_color: string, text: string) => text,
+    };
+    const render = (expanded: boolean) => {
+      const component = registeredRenderer(
+        {
+          role: "custom",
+          customType: "subagent-pong",
+          content: message.content,
+          display: true,
+          details: message.details,
+          timestamp: 1,
+        },
+        { expanded },
+        theme as never,
+      );
+      if (!component) throw new Error("subagent-pong renderer returned no component");
+      return component.render(120).join("\n");
+    };
+
+    const collapsed = render(false);
+    expect(collapsed).toContain("[PONG subagent #7 reader] completed");
+    expect(collapsed).toContain("to expand");
+    expect(collapsed).not.toContain(marker);
+    expect(render(true)).toContain(marker);
+    expect(message.content).toContain(marker);
   });
 
   it("bounds final assistant text and marks truncation", () => {

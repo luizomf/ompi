@@ -1,9 +1,11 @@
 import { resolve } from "node:path";
 import {
   getAgentDir,
+  keyHint,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import {
@@ -122,6 +124,22 @@ export function buildPongMessage(pong: Pong): { content: string; details: Pong &
 }
 
 export default function subagentsExtension(pi: ExtensionAPI) {
+  pi.registerMessageRenderer("subagent-pong", (message, { expanded }, theme) => {
+    const details = message.details as (Pong & { truncated?: boolean }) | undefined;
+    const heading = details
+      ? `[PONG subagent #${details.id}${details.name ? ` ${details.name}` : ""}] ${details.outcome}`
+      : "[PONG subagent]";
+    const collapsed = [heading];
+    if (details?.sessionRef) collapsed.push(`Session: ${details.sessionRef}`);
+    if (details?.error) collapsed.push(`Error: ${details.error}`);
+    collapsed.push(keyHint("app.tools.expand", "to expand"));
+
+    const expandedContent = typeof message.content === "string" ? message.content : collapsed.join("\n");
+    const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+    box.addChild(new Text(expanded ? expandedContent : collapsed.join("\n"), 0, 0));
+    return box;
+  });
+
   let ui: ExtensionContext["ui"] | undefined;
   let timer: NodeJS.Timeout | undefined;
   let controller: SubagentController;
