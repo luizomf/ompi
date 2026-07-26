@@ -27,3 +27,6 @@ __pycache__/
 # Pi session state
 .pi/agent-sessions/
 .pi/sessions/
+
+# Local third-party reference material
+/my-pi-setup/
