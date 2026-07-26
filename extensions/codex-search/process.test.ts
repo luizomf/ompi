@@ -35,7 +35,7 @@ async function runParentLeavingDescendant(
   exitCode: number,
   descendantStdio: "ignore" | "inherit",
 ): Promise<string | undefined> {
-  const directory = await mkdtemp(join(tmpdir(), "pilearn-codex-search-exit-"));
+  const directory = await mkdtemp(join(tmpdir(), "ompi-codex-search-exit-"));
   const pidFile = join(directory, "grandchild.pid");
   let grandchildPid: number | undefined;
   const grandchildScript = [
@@ -135,7 +135,7 @@ describe("codex_search process wrapper", () => {
   });
 
   it("cancels and terminates the child process group", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "pilearn-codex-search-"));
+    const directory = await mkdtemp(join(tmpdir(), "ompi-codex-search-"));
     const pidFile = join(directory, "grandchild.pid");
     const controller = new AbortController();
     let grandchildPid: number | undefined;

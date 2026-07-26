@@ -1,6 +1,6 @@
 # Issue Tracker: GitHub
 
-Specs, tickets, and issues for this private repository live in GitHub Issues. Use the `gh` CLI from this repository so it infers `luizomf/pilearn` from the Git remote.
+Specs, tickets, and issues for this repository live in GitHub Issues. Use the `gh` CLI from this repository so it infers the repository from the Git remote.
 
 ## Operations
 

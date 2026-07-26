@@ -2,7 +2,7 @@
 
 ## Repository Context
 
-Pilearn is a private learning lab for improving our Pi Coding Agent workflow.
+ompi is a learning lab for improving our Pi Coding Agent workflow.
 It contains small, explicit launch profiles, notes, and experiments that we own.
 Historical findings from reviewed third-party material remain as notes rather
 than executable snapshots.
@@ -24,7 +24,7 @@ than executable snapshots.
 
 ### Issue tracker
 
-Specs and issues are tracked in this repository's private GitHub Issues. See
+Specs and issues are tracked in this repository's GitHub Issues. See
 `docs/agents/issue-tracker.md`.
 
 ### Triage labels
@@ -53,10 +53,11 @@ Use Git as the durable backup, checkpoint system, and memory for this project:
 - Never use Git to store secrets, raw conversations, generated state, or private
   information.
 
-Keep the GitHub repository private. Use issues and short-lived branches for
-substantial features. Tiny workflow or documentation adjustments may be
-committed directly when the owner requests them. Never force-push `main` or
-perform destructive Git operations without explicit approval.
+Keep the GitHub repository private until the owner explicitly approves public
+release after a privacy and secret-history audit. Use issues and short-lived
+branches for substantial features. Tiny workflow or documentation adjustments
+may be committed directly when the owner requests them. Never force-push `main`
+or perform destructive Git operations without explicit approval.
 
 ## Verification
 

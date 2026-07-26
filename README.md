@@ -1,6 +1,6 @@
-# Pilearn
+# ompi
 
-Private learning lab for building a small, explicit, and security-conscious
+A learning lab for building a small, explicit, and security-conscious
 [Pi Coding Agent](https://github.com/earendil-works/pi-mono) workflow.
 
 ## Requirements
