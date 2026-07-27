@@ -1,6 +1,6 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest, createServer, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
-import { connect as netConnect } from "node:net";
+import { connect as netConnect, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import ipaddr from "ipaddr.js";
 
@@ -11,6 +11,7 @@ interface LookupAddress {
 
 export interface PublicProxyOptions {
 	lookup?: (hostname: string) => Promise<LookupAddress[]>;
+	connect?: (options: { host: string; port: number }) => Socket;
 }
 
 export interface PublicProxy {
@@ -72,10 +73,12 @@ function writeProxyError(socket: Duplex, status: 403 | 502): void {
 
 export async function startPublicProxy(options: PublicProxyOptions = {}): Promise<PublicProxy> {
 	const lookup = options.lookup ?? (async (hostname) => dnsLookup(hostname, { all: true, verbatim: true }));
+	const connect = options.connect ?? netConnect;
 	const sockets = new Set<Duplex>();
 	let closed = false;
 	const track = (socket: Duplex) => {
 		sockets.add(socket);
+		socket.on("error", () => socket.destroy());
 		socket.once("close", () => sockets.delete(socket));
 		return socket;
 	};
@@ -113,7 +116,7 @@ export async function startPublicProxy(options: PublicProxyOptions = {}): Promis
 			const target = connectTargetFromAuthority(request.url ?? "");
 			const address = await resolvePublicAddress(hostnameOf(target), lookup);
 			if (closed || client.destroyed) throw new Error("Browser proxy closed");
-			const upstream = track(netConnect({ host: address, port: Number(target.port || 443) }));
+			const upstream = track(connect({ host: address, port: Number(target.port || 443) }));
 			upstream.once("connect", () => {
 				client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 				if (head.length > 0) upstream.write(head);
@@ -130,7 +133,7 @@ export async function startPublicProxy(options: PublicProxyOptions = {}): Promis
 			const target = targetFromRequest(request);
 			const address = await resolvePublicAddress(hostnameOf(target), lookup);
 			if (closed || client.destroyed) throw new Error("Browser proxy closed");
-			const upstream = track(netConnect({ host: address, port: Number(target.port || 80) }));
+			const upstream = track(connect({ host: address, port: Number(target.port || 80) }));
 			upstream.once("connect", () => {
 				const headers = forwardedHeaders(request.headers, target.host);
 				const headerLines = Object.entries(headers).flatMap(([name, value]) =>

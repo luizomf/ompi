@@ -1,5 +1,5 @@
 import { request as httpRequest } from "node:http";
-import { connect as netConnect } from "node:net";
+import { connect as netConnect, createServer } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isPublicAddress, startPublicProxy, type PublicProxy } from "./public-proxy.ts";
 
@@ -26,7 +26,7 @@ async function proxyGet(proxyUrl: string, targetUrl: string): Promise<number | u
   });
 }
 
-async function proxyConnect(proxyUrl: string, authority: string): Promise<string> {
+async function proxyConnect(proxyUrl: string, authority: string, reset = false): Promise<string> {
   const proxy = new URL(proxyUrl);
   return new Promise((resolve, reject) => {
     const socket = netConnect({ host: proxy.hostname, port: Number(proxy.port) });
@@ -35,7 +35,8 @@ async function proxyConnect(proxyUrl: string, authority: string): Promise<string
     });
     socket.once("data", (chunk) => {
       resolve(chunk.toString("utf8"));
-      socket.destroy();
+      if (reset) socket.resetAndDestroy();
+      else socket.destroy();
     });
     socket.once("error", reject);
   });
@@ -70,6 +71,28 @@ describe("public browser proxy", () => {
     await expect(proxyGet(proxy.url, "http://127.0.0.1/admin")).resolves.toBe(403);
     await expect(proxyConnect(proxy.url, "169.254.169.254:443")).resolves.toContain("403 Forbidden");
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("contains client resets after an HTTPS tunnel is established", async () => {
+    const destination = createServer((socket) => socket.on("error", () => undefined));
+    await new Promise<void>((resolve) => destination.listen(0, "127.0.0.1", resolve));
+    const address = destination.address();
+    if (!address || typeof address === "string") throw new Error("Test destination did not bind");
+    const connect = vi.fn().mockImplementation(() => netConnect({
+      host: "127.0.0.1",
+      port: address.port,
+    }));
+    const lookup = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    const proxy = await startPublicProxy({ lookup, connect });
+    openProxies.push(proxy);
+
+    try {
+      await expect(proxyConnect(proxy.url, "public.example:443", true)).resolves.toContain("200 Connection Established");
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      expect(connect).toHaveBeenCalledWith({ host: "93.184.216.34", port: 443 });
+    } finally {
+      destination.close();
+    }
   });
 
   it("rejects hostnames when any resolved address is non-public", async () => {
