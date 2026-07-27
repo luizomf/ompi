@@ -50,13 +50,27 @@ const TimingSchema = Type.Object({
   description: "Omit timing for an immediate wake. Otherwise use exactly one of in, at, or cron. Finite repetition requires in or at plus both every and count.",
 });
 const PayloadSchema = Type.Object({
-  executable: Type.String({ minLength: 1, maxLength: MAX_ARGUMENT_CHARACTERS }),
+  executable: Type.String({
+    minLength: 1,
+    maxLength: MAX_ARGUMENT_CHARACTERS,
+    description: "Executable path or command resolved by bq without a shell. Prefer an absolute path after verifying it exists and is executable.",
+  }),
   args: Type.Optional(Type.Array(
     Type.String({ maxLength: MAX_ARGUMENT_CHARACTERS }),
-    { maxItems: MAX_PAYLOAD_ARGUMENTS },
+    {
+      maxItems: MAX_PAYLOAD_ARGUMENTS,
+      description: "Literal argument vector; shell expansion, quoting, pipes, redirects, and variable interpolation do not occur.",
+    },
   )),
-  cwd: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_ARGUMENT_CHARACTERS })),
-}, { additionalProperties: false });
+  cwd: Type.Optional(Type.String({
+    minLength: 1,
+    maxLength: MAX_ARGUMENT_CHARACTERS,
+    description: "Working directory for the payload. Verify that it exists; defaults to the current Pi working directory.",
+  })),
+}, {
+  additionalProperties: false,
+  description: "Optional command run before the wake. It does not inherit the interactive shell environment wholesale; inspect the executable and directly invoked helpers for required environment variables, PATH entries, working directories, and runtimes before submission.",
+});
 const SubmitSchema = Type.Object({
   reentryPrompt: Type.String({
     minLength: 1,
@@ -146,6 +160,7 @@ export function registerSchedulerExtension(
     promptGuidelines: [
       "Use scheduler_submit only for fire-and-forget scheduler wakes; always provide a complete self-contained reentryPrompt that preserves deferred context, required checks, constraints, and the next decision.",
       "Use strict timing values: 10m/2h/1d rather than prose or seconds; finite repeats require in or at plus both every and count; omit timing for an immediate wake.",
+      "Before submitting a payload, inspect its executable and directly invoked helpers for required environment variables, PATH entries, working directories, and runtimes; do not assume wholesale inheritance from the interactive shell or expose secret values while checking.",
       "After scheduler_submit reports bq acceptance, never wait, sleep, poll, inspect OMQueue, or watch Queue completion; continue only independent work or end the response so a later scheduler wake can be delivered.",
       "When the user explicitly asks to invoke or inspect raw bq behavior, use ordinary bash instead of scheduler_submit.",
     ],
