@@ -46,16 +46,24 @@ pi --no-extensions --extension ./extensions/codex-search/index.ts
 ```
 
 It invokes `codex_search --skip-git-repo-check -` directly without a shell and
-sends the research query through stdin. The narrow trust-check bypass allows
-research from new or untrusted working directories without using `--yolo` or
-changing sandbox or approval behavior. The process has a fixed two-minute
-timeout and bounded captured output. Model and reasoning defaults remain
-controlled by the `codex_search` executable resolved from `PATH`; the extension
-passes no model, reasoning, `--yolo`, ephemeral-container, or arbitrary Codex
-flags. Its model-produced result is not a verified primary source, so requests
-should ask for URLs or citations where relevant and verify those sources
-separately. The extension is not enabled by any launch profile or package
-manifest.
+sends the research query through stdin. The tool returns immediately after a
+session-scoped background operation starts, keeps a minimal live footer count,
+and later delivers exactly one collapsible completion or failure result. After
+start confirmation, the orchestrator must not wait or poll; it may continue
+independent work or end its response so the result can enter a later turn.
+
+The background wrapper is limited to four concurrent Codex searches. Closing or
+reloading the owning Pi session aborts active searches and suppresses stale
+results; this path is intentionally not durable and does not use `bq` or
+OMQueue. The narrow trust-check bypass allows research from new or untrusted
+working directories without using `--yolo` or changing sandbox or approval
+behavior. Each process retains its fixed two-minute timeout and bounded captured
+output. Model and reasoning defaults remain controlled by the `codex_search`
+executable resolved from `PATH`; the extension passes no model, reasoning,
+`--yolo`, ephemeral-container, or arbitrary Codex flags. Its model-produced
+result is not a verified primary source, so requests should ask for URLs or
+citations where relevant and verify those sources separately. The extension is
+not enabled by any launch profile or package manifest.
 
 For comparison, start Pi with every user skill or its normal discovery
 behavior:
