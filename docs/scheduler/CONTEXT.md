@@ -61,6 +61,10 @@ _Avoid_: Queue completion event, watcher result, durable notification
   the callback runner's absolute script path because Queue Jobs do not inherit
   the submitting shell or NVM environment. Long-lived schedules depend on both
   captured paths remaining executable.
+- The callback runner prepends the captured Pi Node runtime directory to the
+  allowlisted payload `PATH`, so payload child commands that invoke `node` use
+  the same runtime as the runner without depending on the Queue service's Node
+  installation.
 - The submission returns bounded `bq` stdout, stderr, and exit status without
   waiting for Queue completion. A zero exit confirms acceptance; every other
   result leaves acceptance unknown because durable work may already have been

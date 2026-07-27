@@ -115,6 +115,8 @@ stdout (16,000 bytes), stderr (8,000 bytes), and exit status. No shell command
 strings or custom payload environment are accepted. `bq` receives an explicit
 allowlist of normal process settings; payloads receive only `HOME`, locale,
 user/shell, `PATH`, `PROJECTS_DIR`, temporary-directory, and time-zone settings.
+The callback runner prepends the captured Pi Node runtime directory to payload
+`PATH`, so child commands that invoke `node` use the same runtime as the runner.
 Credentials and arbitrary submitting-shell variables are not forwarded.
 
 Callbacks use a mode-`0600` Unix socket inside a private temporary directory and

@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
+import { delimiter, dirname } from "node:path";
 
 const PROTOCOL_VERSION = 1;
 const MAX_ACK_BYTES = 1_024;
@@ -156,6 +157,12 @@ function selectedPayloadEnvironment(source) {
   for (const key of PAYLOAD_ENVIRONMENT_KEYS) {
     if (source[key] !== undefined) environment[key] = source[key];
   }
+  const nodeDirectory = dirname(process.execPath);
+  const pathEntries = (environment.PATH ?? "").split(delimiter).filter(Boolean);
+  environment.PATH = [
+    nodeDirectory,
+    ...pathEntries.filter((entry) => entry !== nodeDirectory),
+  ].join(delimiter);
   return environment;
 }
 

@@ -238,6 +238,55 @@ describe("scheduler submission", () => {
     }
   });
 
+  it("makes the captured Pi Node runtime available to payload child commands", async () => {
+    const cwd = await temporaryDirectory();
+    let invocation: BqInvocation | undefined;
+    const wakes: SchedulerWake[] = [];
+    const session = await SchedulerSession.start({
+      onWake: (wake) => wakes.push(wake),
+      environment: { PATH: "/queue-path-without-node" },
+      runBq: async (candidate) => {
+        invocation = candidate;
+        return {
+          code: 0,
+          signal: null,
+          stdout: "accepted\n",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          cancelled: false,
+        };
+      },
+    });
+
+    try {
+      await session.submit({
+        reentryPrompt: "Verify that the payload used the captured Pi Node runtime.",
+        payload: {
+          executable: "/usr/bin/env",
+          args: ["node", "--version"],
+        },
+      }, cwd);
+      if (!invocation) throw new Error("bq invocation was not captured");
+
+      const runner = await runQueuedInvocation(invocation);
+
+      expect(runner).toMatchObject({
+        code: 0,
+        signal: null,
+        stdout: `${process.version}\n`,
+        stderr: "",
+      });
+      expect(wakes).toHaveLength(1);
+      expect(wakes[0]).toMatchObject({
+        outcome: { kind: "exit", code: 0 },
+        stdout: { preview: `${process.version}\n`, truncated: false },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   it("forwards payload streams while waking with bounded previews after success", async () => {
     const cwd = await temporaryDirectory();
     let invocation: BqInvocation | undefined;
