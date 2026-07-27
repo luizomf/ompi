@@ -25,6 +25,7 @@ just bare         # Only the /exit alias extension
 just core         # AGENTS.md and the /exit alias extension
 just research     # Core plus research skill and browser extension
 just orchestrate  # Core plus handoff, tmux-worker, and wormhole skills
+just scheduler    # Core plus the fire-and-forget scheduler wake extension
 just subagents    # Core plus the asynchronous subagent extension
 ```
 
@@ -60,6 +61,76 @@ behavior:
 just p
 just pi
 ```
+
+## Scheduler wakes
+
+`just scheduler` explicitly enables the extension in `extensions/scheduler/`.
+It exposes one `scheduler_submit` tool for immediate heartbeats, delayed or
+absolute-time work, finite repetition, and cron schedules. The extension invokes
+the existing global `bq` executable directly without a shell and returns as soon
+as `bq` exits. A zero exit confirms acceptance. Any other result leaves acceptance
+unknown because finite submission may already have created durable work; do not
+blindly retry an unknown result. The extension never waits for payload completion,
+watches OMQueue, polls Job state, or exposes Queue administration.
+
+Every submission requires a complete, self-contained `reentryPrompt`. An
+optional payload contains an executable, literal arguments, and a working
+directory; omitting it creates a heartbeat-only wake. Timing fields are passed to
+`bq`, which remains responsible for syntax and validation:
+
+```json
+{
+  "reentryPrompt": "Recheck service health against the incident criteria and report the next safe action.",
+  "timing": { "in": "15m" }
+}
+```
+
+```json
+{
+  "reentryPrompt": "Review the check result and decide whether deployment may continue.",
+  "timing": { "in": "1h", "every": "30m", "count": 4 },
+  "payload": {
+    "executable": "./check-service",
+    "args": ["--format", "json"],
+    "cwd": "./service"
+  }
+}
+```
+
+```json
+{
+  "reentryPrompt": "Run the weekday review, summarize failures, and identify the owner for each next action.",
+  "timing": { "cron": "0 9 * * 1-5", "tz": "America/Sao_Paulo" },
+  "payload": { "executable": "./weekday-review" }
+}
+```
+
+The queued callback runner forwards payload stdout and stderr for OMQueue capture
+while retaining only 4,000-byte previews for the wake. The required reentry
+prompt is limited to 8,000 UTF-8 bytes. The tool response preserves bounded `bq`
+stdout (16,000 bytes), stderr (8,000 bytes), and exit status. No shell command
+strings or custom payload environment are accepted. `bq` receives an explicit
+allowlist of normal process settings; payloads receive only `HOME`, locale,
+user/shell, `PATH`, `PROJECTS_DIR`, temporary-directory, and time-zone settings.
+Credentials and arbitrary submitting-shell variables are not forwarded.
+
+Callbacks use a mode-`0600` Unix socket inside a private temporary directory and
+a versioned, bounded frame correlated with session capability material carried
+explicitly in the queued argument vector. The endpoint exists only for the live
+owning Pi session and is removed on session shutdown. A wake is therefore best
+effort: Pi shutdown, host loss, a missing callback runner, forced runner
+termination, or failure before the runner starts can prevent delivery. Durable
+OMQueue payloads and recurring schedules may continue after Pi closes, but their
+callbacks cannot reopen the session. Manage or cancel such schedules outside
+this extension through explicitly requested ordinary shell or OMQueue
+administration.
+
+The callback runner path is stored in each accepted Job or Schedule and must
+remain executable at that absolute location. Scheduler submissions inherit the
+user's command authority and are not sandboxed. This extension is not enabled by
+any unrelated launch profile or by package discovery in this repository. When a
+user explicitly asks to invoke or inspect raw `bq`, use ordinary bash rather
+than `scheduler_submit`.
 
 ## Asynchronous subagents
 

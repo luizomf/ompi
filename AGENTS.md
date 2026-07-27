@@ -36,7 +36,9 @@ AI context for this repository. Read this before making changes.
 
 - `justfile` — explicit Pi launch profiles grouped by intent
 - `extensions/codex-search/` — bounded, shell-free Codex research fallback
+- `extensions/scheduler/` — opt-in fire-and-forget `bq` scheduler wake adapter
 - `extensions/subagents/` — asynchronous native Pi RPC conversation lifecycle
+- `docs/scheduler/CONTEXT.md` — canonical scheduler terminology and Queue boundary
 - `docs/subagents/CONTEXT.md` — canonical subagent terminology and boundaries
 - `docs/orchestration-exploration.md` — durable orchestration findings
 - `docs/research/` — cited assessments of reviewed reference material
