@@ -26,16 +26,27 @@ function valueAfter(invocation: BqInvocation, option: string): string {
   return value;
 }
 
-async function sendRawCallback(socketPath: string, frame: unknown): Promise<string> {
+async function sendCallbackChunks(socketPath: string, chunks: string[]): Promise<string> {
   return new Promise((resolveSend, reject) => {
     const socket = createConnection(socketPath);
     let response = "";
     socket.setEncoding("utf8");
-    socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`, "utf8"));
+    socket.once("connect", async () => {
+      for (const chunk of chunks) {
+        await new Promise<void>((resolveWrite, rejectWrite) => {
+          socket.write(chunk, "utf8", (error) => error ? rejectWrite(error) : resolveWrite());
+        });
+      }
+      socket.end();
+    });
     socket.on("data", (chunk: string) => { response += chunk; });
     socket.once("end", () => resolveSend(response));
     socket.once("error", reject);
   });
+}
+
+async function sendRawCallback(socketPath: string, frame: unknown): Promise<string> {
+  return sendCallbackChunks(socketPath, [`${JSON.stringify(frame)}\n`]);
 }
 
 async function runQueuedInvocation(invocation: BqInvocation): Promise<{
@@ -315,6 +326,53 @@ describe("scheduler submission", () => {
     }
   });
 
+  it("accepts maximum escaped prompt and preview content within the bounded protocol", async () => {
+    const cwd = await temporaryDirectory();
+    let invocation: BqInvocation | undefined;
+    const wakes: SchedulerWake[] = [];
+    const session = await SchedulerSession.start({
+      onWake: (wake) => wakes.push(wake),
+      runBq: async (candidate) => {
+        invocation = candidate;
+        return {
+          code: 0,
+          signal: null,
+          stdout: "accepted\n",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          cancelled: false,
+        };
+      },
+    });
+    const prompt = `Continue ${"\n".repeat(7_980)}now`;
+
+    try {
+      await session.submit({
+        reentryPrompt: prompt,
+        payload: {
+          executable: process.execPath,
+          args: [
+            "--input-type=module",
+            "--eval",
+            "process.stdout.write('\\n'.repeat(5000)); process.stderr.write('\\n'.repeat(5000));",
+          ],
+        },
+      }, cwd);
+      if (!invocation) throw new Error("bq invocation was not captured");
+
+      const runner = await runQueuedInvocation(invocation);
+
+      expect(runner.code).toBe(0);
+      expect(wakes).toHaveLength(1);
+      expect(wakes[0].reentryPrompt).toBe(prompt);
+      expect(wakes[0].stdout).toEqual({ preview: "\n".repeat(4_000), truncated: true });
+      expect(wakes[0].stderr).toEqual({ preview: "\n".repeat(4_000), truncated: true });
+    } finally {
+      await session.close();
+    }
+  });
+
   it("preserves a nonzero payload exit and delivers exactly one mechanical outcome", async () => {
     const cwd = await temporaryDirectory();
     let invocation: BqInvocation | undefined;
@@ -470,6 +528,37 @@ describe("scheduler submission", () => {
     expect(runner.stderr).toContain("scheduler callback runner: callback unavailable:");
   });
 
+  it("fails a successful payload when its wake can no longer be delivered", async () => {
+    const cwd = await temporaryDirectory();
+    let invocation: BqInvocation | undefined;
+    const session = await SchedulerSession.start({
+      onWake: () => undefined,
+      runBq: async (candidate) => {
+        invocation = candidate;
+        return {
+          code: 0,
+          signal: null,
+          stdout: "accepted\n",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          cancelled: false,
+        };
+      },
+    });
+    await session.submit({
+      reentryPrompt: "A successful payload must not hide failure to deliver its scheduler wake.",
+      payload: { executable: process.execPath, args: ["--eval", "process.exitCode = 0"] },
+    }, cwd);
+    if (!invocation) throw new Error("bq invocation was not captured");
+    await session.close();
+
+    const runner = await runQueuedInvocation(invocation);
+
+    expect(runner.code).toBe(1);
+    expect(runner.stderr).toContain("scheduler callback runner: callback unavailable:");
+  });
+
   it("rejects unauthorized and malformed callback frames without a wake", async () => {
     const cwd = await temporaryDirectory();
     const wakes: SchedulerWake[] = [];
@@ -514,9 +603,14 @@ describe("scheduler submission", () => {
         ...baseFrame,
         unexpected: true,
       });
+      const extraFrame = await sendCallbackChunks(socketPath, [
+        `${JSON.stringify(baseFrame)}\n`,
+        `${JSON.stringify(baseFrame)}\n`,
+      ]);
 
       expect(JSON.parse(unauthorized)).toEqual({ version: 1, ok: false });
       expect(JSON.parse(malformed)).toEqual({ version: 1, ok: false });
+      expect(JSON.parse(extraFrame)).toEqual({ version: 1, ok: false });
       expect(wakes).toEqual([]);
     } finally {
       await session.close();

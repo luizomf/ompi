@@ -9,7 +9,7 @@ import { runBqProcess } from "./process.ts";
 
 const CALLBACK_RUNNER = fileURLToPath(new URL("./callback-runner.mjs", import.meta.url));
 const CALLBACK_PROTOCOL_VERSION = 1;
-const MAX_CALLBACK_FRAME_BYTES = 24_000;
+const MAX_CALLBACK_FRAME_BYTES = 128_000;
 const MAX_REENTRY_PROMPT_BYTES = 8_000;
 const MAX_PREVIEW_BYTES = 4_000;
 const MAX_START_ERROR_BYTES = 2_000;
@@ -445,9 +445,11 @@ export class SchedulerSession {
         return;
       }
       buffer = Buffer.concat([buffer, chunk]);
+    });
+    socket.once("end", () => {
+      if (handled) return;
       const newline = buffer.indexOf(0x0a);
-      if (newline < 0) return;
-      if (buffer.subarray(newline + 1).toString("utf8").trim()) {
+      if (newline < 0 || newline !== buffer.length - 1) {
         reject();
         return;
       }
@@ -473,9 +475,6 @@ export class SchedulerSession {
         this.deliveredWakeIds.delete(frame.wakeId);
         socket.end(`${JSON.stringify({ version: CALLBACK_PROTOCOL_VERSION, ok: false })}\n`);
       }
-    });
-    socket.once("end", () => {
-      if (!handled) reject();
     });
     socket.once("error", () => socket.destroy());
   }

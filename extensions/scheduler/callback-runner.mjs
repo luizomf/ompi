@@ -6,6 +6,7 @@ import { createConnection } from "node:net";
 
 const PROTOCOL_VERSION = 1;
 const MAX_ACK_BYTES = 1_024;
+const MAX_CALLBACK_FRAME_BYTES = 128_000;
 const CALLBACK_TIMEOUT_MS = 2_000;
 const MAX_REENTRY_PROMPT_BYTES = 8_000;
 const MAX_PREVIEW_BYTES = 4_000;
@@ -214,6 +215,9 @@ function runPayload(payload) {
 
 function sendCallback(socketPath, frame) {
   const serialized = `${JSON.stringify(frame)}\n`;
+  if (Buffer.byteLength(serialized, "utf8") > MAX_CALLBACK_FRAME_BYTES) {
+    return Promise.reject(new Error("callback frame exceeded its limit"));
+  }
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
     let response = Buffer.alloc(0);
@@ -298,8 +302,9 @@ async function main() {
     process.stderr.write(`scheduler callback runner: callback unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 
-  if (result.outcome.kind === "exit") process.exitCode = result.outcome.code;
-  else if (result.outcome.kind === "start_error") process.exitCode = 127;
+  if (result.outcome.kind === "exit") {
+    process.exitCode = result.outcome.code === 0 && callbackFailed ? 1 : result.outcome.code;
+  } else if (result.outcome.kind === "start_error") process.exitCode = 127;
   else if (result.outcome.kind === "signal") {
     try {
       process.kill(process.pid, result.outcome.signal);
