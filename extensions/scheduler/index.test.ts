@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { registerSchedulerExtension } from "./index.ts";
+import { formatSchedulerSubmission, registerSchedulerExtension } from "./index.ts";
 import type { BqInvocation } from "./scheduler.ts";
 
 interface RegisteredTool {
@@ -39,6 +39,27 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
 }
 
 describe("scheduler extension", () => {
+  it("warns that nonzero bq completion may have partially accepted durable work", () => {
+    const text = formatSchedulerSubmission({
+      acceptance: "unknown",
+      submissionId: "submission-1",
+      bq: {
+        code: 2,
+        signal: null,
+        stdout: "bq: scheduled 1/4 at=... schedule-1\n",
+        stderr: "later schedule failed\n",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        cancelled: false,
+      },
+    });
+
+    expect(text).toContain("acceptance is unknown");
+    expect(text).toContain("durable work may already have been created");
+    expect(text).toContain("Do not blindly retry");
+    expect(text).not.toContain("was not accepted");
+  });
+
   it("submits through the Pi tool and injects the callback as a visible follow-up wake", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "ompi-scheduler-index-"));
     const tools: RegisteredTool[] = [];

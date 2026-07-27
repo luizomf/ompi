@@ -93,16 +93,17 @@ function streamSection(name: "stdout" | "stderr", value: string, truncated: bool
 }
 
 export function formatSchedulerSubmission(result: SchedulerSubmissionResult): string {
-  const heading = result.accepted
+  const confirmed = result.acceptance === "confirmed";
+  const heading = confirmed
     ? `Scheduler submission accepted by bq (${bqStatus(result.bq)}).`
-    : `Scheduler submission was not accepted by bq (${bqStatus(result.bq)}).`;
+    : `Scheduler submission acceptance is unknown (${bqStatus(result.bq)}).`;
   return [
     heading,
     streamSection("stdout", result.bq.stdout, result.bq.stdoutTruncated),
     streamSection("stderr", result.bq.stderr, result.bq.stderrTruncated),
-    result.accepted
+    confirmed
       ? "Never wait, poll, or watch Queue completion. Continue only independent work or end this response; the scheduler wake will arrive later if the live owning session is reachable."
-      : "No acceptance is claimed. Correct the reported submission problem before trying again.",
+      : "bq did not confirm complete acceptance, but durable work may already have been created. Do not blindly retry because that could duplicate work; inspect the returned diagnostics and use explicitly requested raw bq or OMQueue administration when reconciliation is needed.",
   ].join("\n\n");
 }
 

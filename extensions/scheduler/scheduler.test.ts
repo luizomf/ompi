@@ -115,7 +115,7 @@ describe("scheduler submission", () => {
         },
       }, cwd);
 
-      expect(result).toMatchObject({ accepted: true, bq: bqResult });
+      expect(result).toMatchObject({ acceptance: "confirmed", bq: bqResult });
       expect(invocations).toHaveLength(1);
       const invocation = invocations[0];
       expect(invocation.command).toBe("bq");
@@ -155,7 +155,7 @@ describe("scheduler submission", () => {
     }
   });
 
-  it("returns a failed bq acceptance result without reporting it as accepted", async () => {
+  it("reports nonzero bq acceptance as unknown because durable work may already exist", async () => {
     const cwd = await temporaryDirectory();
     const session = await SchedulerSession.start({
       onWake: () => undefined,
@@ -177,7 +177,7 @@ describe("scheduler submission", () => {
       }, cwd);
 
       expect(result).toMatchObject({
-        accepted: false,
+        acceptance: "unknown",
         bq: {
           code: 2,
           signal: null,
@@ -416,7 +416,9 @@ describe("scheduler submission", () => {
     }
   });
 
-  it("preserves payload signal termination after delivering its wake", async () => {
+  it.each(["SIGTERM", "SIGPIPE", "SIGUSR1"] as const)(
+    "preserves payload %s termination after delivering its wake",
+    async (payloadSignal) => {
     const cwd = await temporaryDirectory();
     let invocation: BqInvocation | undefined;
     const wakes: SchedulerWake[] = [];
@@ -441,16 +443,20 @@ describe("scheduler submission", () => {
         reentryPrompt: "Handle the terminated check and choose whether a safer retry is appropriate.",
         payload: {
           executable: process.execPath,
-          args: ["--input-type=module", "--eval", "process.kill(process.pid, 'SIGTERM');"],
+          args: [
+            "--input-type=module",
+            "--eval",
+            `const restore=()=>{}; process.on('${payloadSignal}', restore); process.off('${payloadSignal}', restore); process.kill(process.pid, '${payloadSignal}');`,
+          ],
         },
       }, cwd);
       if (!invocation) throw new Error("bq invocation was not captured");
 
       const runner = await runQueuedInvocation(invocation);
 
-      expect(runner).toMatchObject({ code: null, signal: "SIGTERM" });
+      expect(runner).toMatchObject({ code: null, signal: payloadSignal });
       expect(wakes).toHaveLength(1);
-      expect(wakes[0]).toMatchObject({ outcome: { kind: "signal", signal: "SIGTERM" } });
+      expect(wakes[0]).toMatchObject({ outcome: { kind: "signal", signal: payloadSignal } });
     } finally {
       await session.close();
     }
@@ -528,7 +534,7 @@ describe("scheduler submission", () => {
     expect(runner.stderr).toContain("scheduler callback runner: callback unavailable:");
   });
 
-  it("fails a successful payload when its wake can no longer be delivered", async () => {
+  it("preserves a successful payload outcome when its best-effort wake cannot be delivered", async () => {
     const cwd = await temporaryDirectory();
     let invocation: BqInvocation | undefined;
     const session = await SchedulerSession.start({
@@ -555,7 +561,7 @@ describe("scheduler submission", () => {
 
     const runner = await runQueuedInvocation(invocation);
 
-    expect(runner.code).toBe(1);
+    expect(runner.code).toBe(0);
     expect(runner.stderr).toContain("scheduler callback runner: callback unavailable:");
   });
 

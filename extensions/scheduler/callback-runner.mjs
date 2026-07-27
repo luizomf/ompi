@@ -302,11 +302,15 @@ async function main() {
     process.stderr.write(`scheduler callback runner: callback unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 
-  if (result.outcome.kind === "exit") {
-    process.exitCode = result.outcome.code === 0 && callbackFailed ? 1 : result.outcome.code;
-  } else if (result.outcome.kind === "start_error") process.exitCode = 127;
+  if (result.outcome.kind === "exit") process.exitCode = result.outcome.code;
+  else if (result.outcome.kind === "start_error") process.exitCode = 127;
   else if (result.outcome.kind === "signal") {
     try {
+      if (result.outcome.signal !== "SIGKILL" && result.outcome.signal !== "SIGSTOP") {
+        const restoreDefaultDisposition = () => {};
+        process.on(result.outcome.signal, restoreDefaultDisposition);
+        process.off(result.outcome.signal, restoreDefaultDisposition);
+      }
       process.kill(process.pid, result.outcome.signal);
     } catch (error) {
       process.stderr.write(`scheduler callback runner: cannot preserve payload signal ${result.outcome.signal}: ${boundedError(error)}\n`);

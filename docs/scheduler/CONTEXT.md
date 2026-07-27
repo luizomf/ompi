@@ -56,7 +56,9 @@ _Avoid_: Queue completion event, watcher result, durable notification
 - OMQueue remains opaque to the scheduler extension.
 - A scheduler submission invokes `bq` directly with a literal argument vector
   and returns its bounded stdout, stderr, and exit status without waiting for
-  Queue completion.
+  Queue completion. A zero exit confirms acceptance; every other result leaves
+  acceptance unknown because durable work may already have been created and
+  must not be retried blindly.
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
   database, or exposes cancellation, retry, history, output retrieval, or other
   Queue administration.

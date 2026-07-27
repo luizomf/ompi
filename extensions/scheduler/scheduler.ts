@@ -74,7 +74,7 @@ export interface BqProcessResult {
 }
 
 export interface SchedulerSubmissionResult {
-  accepted: boolean;
+  acceptance: "confirmed" | "unknown";
   submissionId: string;
   bq: BqProcessResult;
 }
@@ -419,7 +419,9 @@ export class SchedulerSession {
     // A nonzero finite-repeat submission may have accepted earlier occurrences
     // before a later one failed, so retain callback correlation once bq started.
     return {
-      accepted: bq.code === 0 && bq.signal === null && !bq.cancelled,
+      acceptance: bq.code === 0 && bq.signal === null && !bq.cancelled
+        ? "confirmed"
+        : "unknown",
       submissionId,
       bq,
     };

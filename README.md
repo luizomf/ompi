@@ -68,7 +68,9 @@ just pi
 It exposes one `scheduler_submit` tool for immediate heartbeats, delayed or
 absolute-time work, finite repetition, and cron schedules. The extension invokes
 the existing global `bq` executable directly without a shell and returns as soon
-as `bq` reports acceptance or failure. It never waits for payload completion,
+as `bq` exits. A zero exit confirms acceptance. Any other result leaves acceptance
+unknown because finite submission may already have created durable work; do not
+blindly retry an unknown result. The extension never waits for payload completion,
 watches OMQueue, polls Job state, or exposes Queue administration.
 
 Every submission requires a complete, self-contained `reentryPrompt`. An
