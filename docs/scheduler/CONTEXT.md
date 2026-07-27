@@ -30,10 +30,12 @@ Payloads are never shell command strings.
 _Avoid_: Shell script text, Queue Job definition
 
 **Callback runner**:
-The scheduler-owned executable submitted as the actual `bq` payload. It runs the
-optional payload, forwards its original streams for OMQueue capture, keeps
-bounded previews, sends one callback when mechanically possible, and preserves
-the payload exit or signal outcome.
+The scheduler-owned script invoked by the active Pi process's captured absolute
+Node runtime. The runtime is the actual executable submitted to `bq`, and the
+runner's absolute path is its first argument. The runner executes the optional
+payload, forwards its original streams for OMQueue capture, keeps bounded
+previews, sends one callback when mechanically possible, and preserves the
+payload exit or signal outcome.
 _Avoid_: Queue worker, completion watcher
 
 **Callback endpoint**:
@@ -54,11 +56,15 @@ _Avoid_: Queue completion event, watcher result, durable notification
 - `bq` owns timing syntax, timing validation, durable Job or Schedule
   acceptance, and OMQueue integration.
 - OMQueue remains opaque to the scheduler extension.
-- A scheduler submission invokes `bq` directly with a literal argument vector
-  and returns its bounded stdout, stderr, and exit status without waiting for
-  Queue completion. A zero exit confirms acceptance; every other result leaves
-  acceptance unknown because durable work may already have been created and
-  must not be retried blindly.
+- A scheduler submission invokes `bq` directly with a literal argument vector.
+  Its queued invocation uses the active Pi process's absolute Node runtime and
+  the callback runner's absolute script path because Queue Jobs do not inherit
+  the submitting shell or NVM environment. Long-lived schedules depend on both
+  captured paths remaining executable.
+- The submission returns bounded `bq` stdout, stderr, and exit status without
+  waiting for Queue completion. A zero exit confirms acceptance; every other
+  result leaves acceptance unknown because durable work may already have been
+  created and must not be retried blindly.
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
   database, or exposes cancellation, retry, history, output retrieval, or other
   Queue administration.
