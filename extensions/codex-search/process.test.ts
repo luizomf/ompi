@@ -72,9 +72,12 @@ describe("codex_search process wrapper", () => {
     const signal = new AbortController().signal;
     const request = buildCodexSearchRequest("find primary sources", "/repo", signal);
 
+    expect([request.command, ...request.args]).toEqual([
+      "codex_search",
+      "--skip-git-repo-check",
+      "-",
+    ]);
     expect(request).toMatchObject({
-      command: "codex_search",
-      args: ["-"],
       input: "find primary sources",
       cwd: "/repo",
       signal,

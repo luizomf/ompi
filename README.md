@@ -45,14 +45,17 @@ Enable it explicitly for one Pi process:
 pi --no-extensions --extension ./extensions/codex-search/index.ts
 ```
 
-It invokes `codex_search -` directly without a shell and sends the research
-query through stdin. The process has a fixed two-minute timeout and bounded
-captured output. Model and reasoning defaults remain controlled by the
-`codex_search` executable resolved from `PATH`; the extension passes no model,
-reasoning, `--yolo`, ephemeral-container, or arbitrary Codex flags. Its
-model-produced result is not a verified primary source, so requests should ask
-for URLs or citations where relevant and verify those sources separately. The extension is not enabled by any launch profile or
-package manifest.
+It invokes `codex_search --skip-git-repo-check -` directly without a shell and
+sends the research query through stdin. The narrow trust-check bypass allows
+research from new or untrusted working directories without using `--yolo` or
+changing sandbox or approval behavior. The process has a fixed two-minute
+timeout and bounded captured output. Model and reasoning defaults remain
+controlled by the `codex_search` executable resolved from `PATH`; the extension
+passes no model, reasoning, `--yolo`, ephemeral-container, or arbitrary Codex
+flags. Its model-produced result is not a verified primary source, so requests
+should ask for URLs or citations where relevant and verify those sources
+separately. The extension is not enabled by any launch profile or package
+manifest.
 
 For comparison, start Pi with every user skill or its normal discovery
 behavior:
