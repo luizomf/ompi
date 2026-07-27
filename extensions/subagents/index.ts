@@ -6,7 +6,6 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import {
   SubagentController,
@@ -18,11 +17,9 @@ import {
 } from "./controller.ts";
 import { buildChildInvocation, RpcSubprocess } from "./rpc-child.ts";
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const NATIVE_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 const PONG_TEXT_LIMIT = 8_000;
 
-const ThinkingSchema = StringEnum(THINKING_LEVELS);
 const ToolsSchema = Type.Array(Type.String(), {
   minItems: 1,
   description: "Allowlist of native Pi tools: read, bash, edit, write, grep, find, ls",
@@ -31,8 +28,6 @@ const ToolsSchema = Type.Array(Type.String(), {
 const StartSchema = Type.Object({
   prompt: Type.String({ description: "Complete initial prompt for the clean subagent conversation" }),
   name: Type.Optional(Type.String({ description: "Native Pi session display name" })),
-  model: Type.Optional(Type.String({ description: "Model override, preferably provider/model" })),
-  thinking: Type.Optional(ThinkingSchema),
   cwd: Type.Optional(Type.String({ description: "Initial working directory; fixed for this conversation" })),
   tools: Type.Optional(ToolsSchema),
 });
@@ -40,8 +35,6 @@ const StartSchema = Type.Object({
 const ContinueSchema = Type.Object({
   id: Type.Integer({ minimum: 1 }),
   prompt: Type.String({ description: "Prompt for the next turn in the existing conversation" }),
-  model: Type.Optional(Type.String()),
-  thinking: Type.Optional(ThinkingSchema),
   tools: Type.Optional(ToolsSchema),
 });
 
@@ -189,20 +182,20 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     const input: StartInput = {
       prompt: params.prompt,
       name: params.name,
-      model: params.model ?? activeModel(ctx),
-      thinking: (params.thinking ?? pi.getThinkingLevel()) as ThinkingLevel,
+      model: activeModel(ctx),
+      thinking: pi.getThinkingLevel() as ThinkingLevel,
       cwd: resolve(ctx.cwd, params.cwd ?? "."),
       tools: validateTools(params.tools),
     };
     return controller.start(input);
   };
 
-  const continueSubagent = (params: ContinueParams): Promise<SubagentView> => {
+  const continueSubagent = (params: ContinueParams, ctx: ExtensionContext): Promise<SubagentView> => {
     const input: ContinueInput = {
       id: params.id,
       prompt: params.prompt,
-      model: params.model,
-      thinking: params.thinking as ThinkingLevel | undefined,
+      model: activeModel(ctx),
+      thinking: pi.getThinkingLevel() as ThinkingLevel,
       tools: validateTools(params.tools),
     };
     return controller.continue(input);
@@ -237,8 +230,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "After subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
     ],
     parameters: ContinueSchema,
-    async execute(_id, params) {
-      const view = await continueSubagent(params);
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const view = await continueSubagent(params, ctx);
       return {
         content: [{
           type: "text",
@@ -310,7 +303,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           const parsed = parseIdMessage(args, "Usage: /subcont <id> <prompt>");
           return { id: parsed.id, prompt: parsed.message };
         })();
-        const view = await continueSubagent(params);
+        const view = await continueSubagent(params, ctx);
         ctx.ui.notify(`Subagent #${view.id} continued.`, "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");

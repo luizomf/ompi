@@ -166,8 +166,10 @@ The extension exposes these tools and matching commands:
 | `subagent_list` | `/sublist` | List session-scoped known conversations |
 
 Use plain command arguments for common operations, or JSON with `/sub` and
-`/subcont` for model, thinking-level, working-directory, tool, and name options.
-For example:
+`/subcont` for working-directory, tool, and name options. Every start and
+continuation inherits the orchestrator's active model and thinking level at the
+moment that turn is dispatched; agent and command inputs cannot override either
+choice. For example:
 
 ```text
 /sub Inspect the authentication flow and report risks.

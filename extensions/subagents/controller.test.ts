@@ -95,6 +95,7 @@ describe("SubagentController", () => {
 
     children[0].acceptPrompt();
     await expect(starting).resolves.toMatchObject({ id: 1, state: "running" });
+    expect(children[0].spec).toMatchObject({ model: "p/m", thinking: "high" });
     expect(pongs).toEqual([]);
   });
 
@@ -142,14 +143,14 @@ describe("SubagentController", () => {
     expect(pongs[0]).toMatchObject({ outcome: "failed", error: "provider failed" });
   });
 
-  it("continues with the same session and inherited prior configuration", async () => {
+  it("continues the same session with the routing values supplied for the new turn", async () => {
     const { controller, children } = setup();
-    await controller.start({ prompt: "one", cwd: "/repo", model: "p/m", thinking: "high", tools: ["read"] });
+    await controller.start({ prompt: "one", cwd: "/repo", model: "p/old", thinking: "low", tools: ["read"] });
     await settle(children[0]);
 
-    await controller.continue({ id: 1, prompt: "two" });
-    expect(children[1].spec).toMatchObject({ session: "/sessions/1.jsonl", cwd: "/repo", model: "p/m", thinking: "high", tools: ["read"] });
-    await expect(controller.continue({ id: 1, prompt: "three" })).rejects.toThrow("active");
+    await controller.continue({ id: 1, prompt: "two", model: "p/current", thinking: "high" });
+    expect(children[1].spec).toMatchObject({ session: "/sessions/1.jsonl", cwd: "/repo", model: "p/current", thinking: "high", tools: ["read"] });
+    await expect(controller.continue({ id: 1, prompt: "three", model: "p/current", thinking: "high" })).rejects.toThrow("active");
   });
 
   it("allows steering only while active", async () => {
