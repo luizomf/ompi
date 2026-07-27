@@ -1,0 +1,46 @@
+name: Feature request
+description: Capture a proposed capability or improvement for later evaluation.
+title: ""
+labels:
+  - enhancement
+  - needs-triage
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement. Describe the user problem and desired outcome; implementation details can remain open during triage.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What limitation, cost, or workflow problem should this address?
+      placeholder: Describe the current behavior and why it is insufficient.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should become possible from the user's perspective?
+      placeholder: Describe the observable result without requiring a specific implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and possible direction
+      description: Add relevant constraints, prior art, policy considerations, or implementation ideas.
+    validations:
+      required: false
+
+  - type: textarea
+    id: open_questions
+    attributes:
+      label: Open questions
+      description: What decisions or unknowns should be explored before implementation?
+    validations:
+      required: false
