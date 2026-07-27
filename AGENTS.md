@@ -35,7 +35,9 @@ AI context for this repository. Read this before making changes.
 ## Project map
 
 - `justfile` — explicit Pi launch profiles grouped by intent
-- `extensions/codex-search/` — bounded, shell-free asynchronous Codex research fallback and its reusable read-only background wrapper
+- `extensions/background-tool.ts` — reusable session-scoped wrapper for explicitly selected read-only text tools
+- `extensions/browser-fetch/` — bounded asynchronous Chromium page fetcher
+- `extensions/codex-search/` — bounded, shell-free asynchronous Codex research fallback
 - `extensions/scheduler/` — opt-in fire-and-forget `bq` scheduler wake adapter
 - `extensions/subagents/` — asynchronous native Pi RPC conversation lifecycle
 - `docs/background-tools/CONTEXT.md` — canonical background-tool terminology and lifecycle boundary

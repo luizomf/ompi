@@ -33,6 +33,10 @@ _Avoid_: Scheduler wake, pong, polling response
 - Mutating tools must not use this wrapper because their delayed effects could race with later agent turns and file operations.
 - A live footer count exposes active operations without transcript polling.
 
+## Implementation ownership
+
+The canonical wrapper source is `extensions/background-tool.ts`. Eligible extension directories expose relative `background-tool.ts` symlink aliases so imports remain loadable when those directories are themselves reached through Pi's global extension symlinks. Browser Fetch and Codex Search must import those aliases rather than maintain copies.
+
 ## Turn-release contract
 
 After start confirmation, the orchestrator must not wait, sleep, or poll for the background result. It may continue useful work independent of that result; otherwise it ends its response so the later result can enter the conversation as a follow-up turn.

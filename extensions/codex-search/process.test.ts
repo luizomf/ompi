@@ -81,6 +81,7 @@ describe("codex_search process wrapper", () => {
       input: "find primary sources",
       cwd: "/repo",
       signal,
+      timeoutMs: 600_000,
     });
     expect(request).not.toHaveProperty("shell");
   });

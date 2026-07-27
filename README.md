@@ -34,6 +34,28 @@ These profiles disable automatic discovery of agent-facing resources. Explicit
 unrelated Claude, Codex, project, package, or global resources do not enter the
 agent context.
 
+### Browser fetch
+
+The extension in `extensions/browser-fetch/` provides the read-only
+`browser_fetch` tool used by `just research`. It launches a fresh headless
+Chromium profile for each request, returns immediately after a session-scoped
+background operation starts, and later delivers one collapsible rendered-text
+result. At most four Browser Fetch operations run concurrently. Output remains
+bounded, Chromium is closed on completion or cancellation, and login, CAPTCHA,
+anti-bot, and unreadable-page responses are reported rather than bypassed.
+An ephemeral loopback proxy resolves every navigation, redirect, HTTP
+subresource, and WebSocket destination, rejects any non-public result, and
+connects to the exact validated IP so Chromium cannot re-resolve it. The proxy
+preserves the original hostname and TLS verification. Service workers are
+disabled so they cannot bypass this network boundary.
+
+The extension keeps its `playwright-core` dependency local. Install it after a
+fresh checkout with:
+
+```sh
+npm ci --prefix extensions/browser-fetch
+```
+
 ### Codex search fallback
 
 The extension in `extensions/codex-search/` provides a narrow
@@ -57,13 +79,27 @@ reloading the owning Pi session aborts active searches and suppresses stale
 results; this path is intentionally not durable and does not use `bq` or
 OMQueue. The narrow trust-check bypass allows research from new or untrusted
 working directories without using `--yolo` or changing sandbox or approval
-behavior. Each process retains its fixed two-minute timeout and bounded captured
+behavior. Each process retains its fixed ten-minute timeout and bounded captured
 output. Model and reasoning defaults remain controlled by the `codex_search`
 executable resolved from `PATH`; the extension passes no model, reasoning,
 `--yolo`, ephemeral-container, or arbitrary Codex flags. Its model-produced
 result is not a verified primary source, so requests should ask for URLs or
 citations where relevant and verify those sources separately. The extension is
 not enabled by any launch profile or package manifest.
+
+Browser Fetch and Codex Search share the single background wrapper maintained at
+`extensions/background-tool.ts`. Their extension-local aliases preserve jiti
+module resolution when each global extension directory is a symlink. To restore
+the audited global installation from a fresh checkout, install Browser Fetch's
+dependency as above, then create the links from the repository root:
+
+```sh
+ln -s "$(pwd)/extensions/browser-fetch" "${HOME}/.pi/agent/extensions/browser-fetch"
+ln -s "$(pwd)/extensions/codex-search" "${HOME}/.pi/agent/extensions/codex-search"
+```
+
+Existing real directories or links must be moved or removed deliberately before
+running these commands.
 
 For comparison, start Pi with every user skill or its normal discovery
 behavior:

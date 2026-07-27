@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run --exclude 'my-pi-setup/**'",
+    "test:browser-fetch": "vitest run extensions/browser-fetch",
     "test:codex-search": "vitest run extensions/codex-search",
     "typecheck": "tsc --noEmit"
   },

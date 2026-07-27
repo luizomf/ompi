@@ -3,7 +3,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 
-const CODEX_SEARCH_TIMEOUT_MS = 120_000;
+const CODEX_SEARCH_TIMEOUT_MS = 600_000;
 const CODEX_SEARCH_STDOUT_BYTES = 48_000;
 const CODEX_SEARCH_STDERR_BYTES = 2_000;
 const FORCE_KILL_DELAY_MS = 500;
