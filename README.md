@@ -128,10 +128,14 @@ callbacks cannot reopen the session. Manage or cancel such schedules outside
 this extension through explicitly requested ordinary shell or OMQueue
 administration.
 
-The callback runner path is stored in each accepted Job or Schedule and must
-remain executable at that absolute location. Scheduler submissions inherit the
-user's command authority and are not sandboxed. This extension is not enabled by
-any unrelated launch profile or by package discovery in this repository. When a
+The wrapper captures the active Pi process's absolute Node runtime because Queue
+Jobs do not inherit the submitting shell or NVM environment. That runtime is the
+literal executable submitted to `bq`, with the callback runner's absolute path as
+its first argument. Both paths are stored in each accepted Job or Schedule and
+must remain executable at those locations for long-lived schedules. Scheduler
+submissions inherit the user's command authority and are not sandboxed. This
+extension is not enabled by any unrelated launch profile or by package discovery
+in this repository. When a
 user explicitly asks to invoke or inspect raw `bq`, use ordinary bash rather
 than `scheduler_submit`.
 

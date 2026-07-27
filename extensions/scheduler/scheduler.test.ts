@@ -121,28 +121,27 @@ describe("scheduler submission", () => {
       expect(invocation.command).toBe("bq");
       expect(invocation.cwd).toBe(cwd);
       expect(invocation).not.toHaveProperty("shell");
-      expect(invocation.args.slice(0, 9)).toEqual([
+      const runnerPath = invocation.args[10];
+      const socketPath = valueAfter(invocation, "--socket");
+      const capability = valueAfter(invocation, "--capability");
+      expect(runnerPath).toMatch(/\/extensions\/scheduler\/callback-runner\.mjs$/);
+      expect(socketPath).toMatch(/\/ompi-scheduler-[^/]+\/wake\.sock$/);
+      expect(capability).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(invocation.args).toEqual([
         "--cwd", cwd,
         "--in", "10m",
         "--every", "30m",
         "--count", "4",
         "--",
-      ]);
-      expect(invocation.args[9]).toMatch(/\/extensions\/scheduler\/callback-runner\.mjs$/);
-      const socketPath = valueAfter(invocation, "--socket");
-      const capability = valueAfter(invocation, "--capability");
-      expect(socketPath).toMatch(/\/ompi-scheduler-[^/]+\/wake\.sock$/);
-      expect(capability).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect(invocation.args.slice(10, 16)).toEqual([
+        process.execPath,
+        runnerPath,
         "--socket", socketPath,
         "--capability", capability,
         "--submission", result.submissionId,
-      ]);
-      expect(invocation.args[16]).toBe("--prompt-base64");
-      expect(Buffer.from(invocation.args[17], "base64url").toString("utf8")).toBe(
-        "Recheck the deployment and report whether it is healthy.",
-      );
-      expect(invocation.args.slice(18)).toEqual([
+        "--prompt-base64", Buffer.from(
+          "Recheck the deployment and report whether it is healthy.",
+          "utf8",
+        ).toString("base64url"),
         "--",
         "/usr/bin/printf",
         "%s",
@@ -196,6 +195,7 @@ describe("scheduler submission", () => {
     const wakes: SchedulerWake[] = [];
     const session = await SchedulerSession.start({
       onWake: (wake) => wakes.push(wake),
+      environment: { PATH: "/queue-path-without-node" },
       runBq: async (candidate) => {
         invocation = candidate;
         return {
@@ -215,6 +215,12 @@ describe("scheduler submission", () => {
         reentryPrompt: "Review the current incident state and decide the next safe action.",
       }, cwd);
       if (!invocation) throw new Error("bq invocation was not captured");
+      const separator = invocation.args.indexOf("--");
+      expect(invocation.env).toEqual({ PATH: "/queue-path-without-node" });
+      expect(invocation.args[separator + 1]).toBe(process.execPath);
+      expect(invocation.args[separator + 2]).toMatch(
+        /\/extensions\/scheduler\/callback-runner\.mjs$/,
+      );
 
       const runner = await runQueuedInvocation(invocation);
 
@@ -691,6 +697,37 @@ describe("scheduler submission", () => {
         reentryPrompt: "Correct the oversized command request before resubmitting it.",
         payload: { executable: "/usr/bin/true", args: Array(129).fill("argument") },
       }, cwd)).rejects.toThrow("at most 128 literal arguments");
+      expect(bqCalls).toBe(0);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("rejects an unavailable Node runtime before invoking bq", async () => {
+    const cwd = await temporaryDirectory();
+    let bqCalls = 0;
+    const missingRuntime = join(cwd, "missing-node");
+    const session = await SchedulerSession.start({
+      onWake: () => undefined,
+      nodeRuntimePath: missingRuntime,
+      runBq: async () => {
+        bqCalls++;
+        return {
+          code: 0,
+          signal: null,
+          stdout: "accepted\n",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          cancelled: false,
+        };
+      },
+    });
+
+    try {
+      await expect(session.submit({
+        reentryPrompt: "Retry only after restoring the captured Node runtime.",
+      }, cwd)).rejects.toThrow(`Scheduler Node runtime is unavailable: ${missingRuntime}.`);
       expect(bqCalls).toBe(0);
     } finally {
       await session.close();

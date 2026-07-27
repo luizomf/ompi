@@ -107,6 +107,7 @@ interface CallbackFrame extends SchedulerWake {
 interface SchedulerSessionOptions {
   onWake(wake: SchedulerWake): void;
   runBq?: (invocation: BqInvocation) => Promise<BqProcessResult>;
+  nodeRuntimePath?: string;
   callbackRunnerPath?: string;
   environment?: NodeJS.ProcessEnv;
 }
@@ -274,14 +275,14 @@ async function assertDirectory(path: string): Promise<void> {
   }
 }
 
-async function assertExecutable(path: string): Promise<void> {
+async function assertExecutable(path: string, name: string): Promise<void> {
   try {
     const metadata = await stat(path);
     if (!metadata.isFile()) throw new Error("not a regular file");
     await access(path, constants.X_OK);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Scheduler callback helper is unavailable: ${path}. ${message}`);
+    throw new Error(`Scheduler ${name} is unavailable: ${path}. ${message}`);
   }
 }
 
@@ -308,6 +309,7 @@ export class SchedulerSession {
   private readonly server: Server;
   private readonly sockets = new Set<Socket>();
   private readonly runBq: (invocation: BqInvocation) => Promise<BqProcessResult>;
+  private readonly nodeRuntimePath: string;
   private readonly callbackRunnerPath: string;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly onWake: (wake: SchedulerWake) => void;
@@ -327,6 +329,7 @@ export class SchedulerSession {
     this.capability = capability;
     this.server = server;
     this.runBq = options.runBq ?? runBqProcess;
+    this.nodeRuntimePath = options.nodeRuntimePath ?? process.execPath;
     this.callbackRunnerPath = options.callbackRunnerPath ?? CALLBACK_RUNNER;
     this.environment = selectedEnvironment(options.environment ?? process.env);
     this.onWake = options.onWake;
@@ -378,7 +381,8 @@ export class SchedulerSession {
 
     const cwd = resolve(sessionCwd, input.payload?.cwd ?? ".");
     await assertDirectory(cwd);
-    await assertExecutable(this.callbackRunnerPath);
+    await assertExecutable(this.nodeRuntimePath, "Node runtime");
+    await assertExecutable(this.callbackRunnerPath, "callback helper");
     const socketMetadata = await lstat(this.socketPath).catch(() => undefined);
     if (!socketMetadata?.isSocket()) {
       throw new Error(`Scheduler callback endpoint is unavailable: ${this.socketPath}.`);
@@ -400,6 +404,7 @@ export class SchedulerSession {
       "--cwd", cwd,
       ...timingArguments(input.timing),
       "--",
+      this.nodeRuntimePath,
       ...runnerArguments,
     ];
     let bq: BqProcessResult;
