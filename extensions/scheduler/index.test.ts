@@ -106,6 +106,9 @@ describe("scheduler extension", () => {
       expect(discovery).toContain("one-minute precision");
       expect(discovery).toContain("inspect its executable and directly invoked helpers");
       expect(discovery).toContain("do not assume wholesale inheritance from the interactive shell");
+      expect(discovery).toContain("Write payload reentry prompts outcome-conditionally");
+      expect(discovery).toContain("never infer payload success from scheduler acceptance");
+      expect(discovery).toContain("state the next action or stopping point");
       expect(discovery).toContain("never wait, sleep, poll");
       expect(discovery).toContain("ordinary bash");
       await handlers.get("session_start")?.({}, ctx);
