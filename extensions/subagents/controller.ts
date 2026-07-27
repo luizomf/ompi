@@ -32,8 +32,8 @@ export interface StartInput extends LaunchSpec {
 export interface ContinueInput {
   id: number;
   prompt: string;
-  model?: string;
-  thinking?: ThinkingLevel;
+  model: string;
+  thinking: ThinkingLevel;
   tools?: string[];
 }
 
@@ -162,8 +162,8 @@ export class SubagentController {
       thinking: record.thinking,
       tools: record.tools ? [...record.tools] : undefined,
     };
-    record.model = input.model ?? record.model;
-    record.thinking = input.thinking ?? record.thinking;
+    record.model = input.model;
+    record.thinking = input.thinking;
     if (input.tools !== undefined) record.tools = [...input.tools];
     record.state = "handshaking";
     record.active = true;
