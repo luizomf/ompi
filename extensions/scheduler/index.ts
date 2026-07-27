@@ -69,7 +69,7 @@ const PayloadSchema = Type.Object({
   })),
 }, {
   additionalProperties: false,
-  description: "Optional command run before the wake. It does not inherit the interactive shell environment wholesale; inspect the executable and directly invoked helpers for required environment variables, PATH entries, working directories, and runtimes before submission.",
+  description: "Optional command run before the wake. It does not inherit the interactive shell environment wholesale; inspect the executable and directly invoked helpers for required environment variables, PATH entries, working directories, runtimes, stdin or TTY assumptions, and detached child processes before submission.",
 });
 const SubmitSchema = Type.Object({
   reentryPrompt: Type.String({
@@ -160,7 +160,7 @@ export function registerSchedulerExtension(
     promptGuidelines: [
       "Use scheduler_submit only for fire-and-forget scheduler wakes; always provide a complete self-contained reentryPrompt that preserves deferred context, required checks, constraints, and the next decision.",
       "Use strict timing values: 10m/2h/1d rather than prose or seconds; finite repeats require in or at plus both every and count; omit timing for an immediate wake.",
-      "Before submitting a payload, inspect its executable and directly invoked helpers for required environment variables, PATH entries, working directories, and runtimes; do not assume wholesale inheritance from the interactive shell or expose secret values while checking.",
+      "Before submitting a payload, inspect its executable and directly invoked helpers for required environment variables, PATH entries, working directories, runtimes, stdin or TTY assumptions, and detached child processes; do not assume wholesale inheritance from the interactive shell or expose secret values while checking.",
       "After scheduler_submit reports bq acceptance, never wait, sleep, poll, inspect OMQueue, or watch Queue completion; continue only independent work or end the response so a later scheduler wake can be delivered.",
       "When the user explicitly asks to invoke or inspect raw bq behavior, use ordinary bash instead of scheduler_submit.",
     ],
