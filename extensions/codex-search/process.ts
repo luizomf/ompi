@@ -95,7 +95,7 @@ export function buildCodexSearchRequest(
 ): ProcessRequest {
   return {
     command: "codex_search",
-    args: ["-"],
+    args: ["--skip-git-repo-check", "-"],
     input: query,
     cwd,
     signal,
