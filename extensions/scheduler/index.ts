@@ -15,15 +15,40 @@ const MAX_ARGUMENT_CHARACTERS = 8_000;
 const MAX_PAYLOAD_ARGUMENTS = 128;
 const MAX_TIMING_CHARACTERS = 1_024;
 
-const TimingValue = Type.String({ minLength: 1, maxLength: MAX_TIMING_CHARACTERS });
+const DurationValue = Type.String({
+  minLength: 1,
+  maxLength: MAX_TIMING_CHARACTERS,
+  description: "Strict bq duration: a positive integer followed by m, h, or d (for example 10m, 2h, or 1d). Seconds and prose such as '30 seconds' are invalid.",
+});
 const TimingSchema = Type.Object({
-  in: Type.Optional(TimingValue),
-  at: Type.Optional(TimingValue),
-  cron: Type.Optional(TimingValue),
-  tz: Type.Optional(TimingValue),
-  every: Type.Optional(TimingValue),
-  count: Type.Optional(Type.Integer()),
-}, { additionalProperties: false });
+  in: Type.Optional(Type.String({
+    minLength: 1,
+    maxLength: MAX_TIMING_CHARACTERS,
+    description: "Delay before the first run as a strict bq duration such as 10m, 2h, or 1d. OMQueue rounds relative targets up to whole-minute precision.",
+  })),
+  at: Type.Optional(Type.String({
+    minLength: 1,
+    maxLength: MAX_TIMING_CHARACTERS,
+    description: "ISO 8601 whole-minute date-time with Z or a numeric UTC offset, for example 2026-07-28T09:00:00-03:00.",
+  })),
+  cron: Type.Optional(Type.String({
+    minLength: 1,
+    maxLength: MAX_TIMING_CHARACTERS,
+    description: "Numeric five-field cron expression. Cannot be combined with in, at, every, or count.",
+  })),
+  tz: Type.Optional(Type.String({
+    minLength: 1,
+    maxLength: MAX_TIMING_CHARACTERS,
+    description: "IANA time zone used only with cron, for example America/Sao_Paulo.",
+  })),
+  every: Type.Optional(DurationValue),
+  count: Type.Optional(Type.Integer({
+    description: "Total finite runs from 2 through 100. Requires every, and every requires either in or at for the first run.",
+  })),
+}, {
+  additionalProperties: false,
+  description: "Omit timing for an immediate wake. Otherwise use exactly one of in, at, or cron. Finite repetition requires in or at plus both every and count.",
+});
 const PayloadSchema = Type.Object({
   executable: Type.String({ minLength: 1, maxLength: MAX_ARGUMENT_CHARACTERS }),
   args: Type.Optional(Type.Array(
@@ -116,10 +141,11 @@ export function registerSchedulerExtension(
   pi.registerTool({
     name: "scheduler_submit",
     label: "Submit Scheduler Wake",
-    description: "Submit an immediate, delayed, absolute-time, finite-repeat, or cron scheduler wake through the existing global bq wrapper. Use for scheduler, cron, heartbeat, reminder, delayed command, or deferred recheck requests. Returns after bounded bq acceptance output and never waits for Queue completion. A complete reentryPrompt is required; an optional executable and literal argument vector run without a shell before the wake. Raw bq invocation or inspection remains ordinary bash work.",
+    description: "Submit an immediate, delayed, absolute-time, finite-repeat, or cron scheduler wake through the existing global bq wrapper. Use for scheduler, cron, heartbeat, reminder, delayed command, or deferred recheck requests. Timing follows strict bq syntax: durations are positive integers ending in m, h, or d (for example 10m), absolute times are ISO 8601 whole minutes with an explicit offset, and finite repeats require in or at together with every and count. OMQueue has one-minute precision. Returns after bounded bq acceptance output and never waits for Queue completion. A complete reentryPrompt is required; an optional executable and literal argument vector run without a shell before the wake. Raw bq invocation or inspection remains ordinary bash work.",
     promptSnippet: "Submit a fire-and-forget scheduler, cron, heartbeat, reminder, delayed command, or deferred recheck wake",
     promptGuidelines: [
       "Use scheduler_submit only for fire-and-forget scheduler wakes; always provide a complete self-contained reentryPrompt that preserves deferred context, required checks, constraints, and the next decision.",
+      "Use strict timing values: 10m/2h/1d rather than prose or seconds; finite repeats require in or at plus both every and count; omit timing for an immediate wake.",
       "After scheduler_submit reports bq acceptance, never wait, sleep, poll, inspect OMQueue, or watch Queue completion; continue only independent work or end the response so a later scheduler wake can be delivered.",
       "When the user explicitly asks to invoke or inspect raw bq behavior, use ordinary bash instead of scheduler_submit.",
     ],

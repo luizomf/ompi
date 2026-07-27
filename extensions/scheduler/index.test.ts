@@ -101,6 +101,9 @@ describe("scheduler extension", () => {
         expect(discovery).toContain(term);
       }
       expect(discovery).toContain("complete self-contained reentryPrompt");
+      expect(discovery).toContain("10m/2h/1d rather than prose or seconds");
+      expect(discovery).toContain("finite repeats require in or at plus both every and count");
+      expect(discovery).toContain("one-minute precision");
       expect(discovery).toContain("never wait, sleep, poll");
       expect(discovery).toContain("ordinary bash");
       await handlers.get("session_start")?.({}, ctx);
