@@ -31,7 +31,7 @@ _Avoid_: Scheduler wake, pong, polling response
 - The wrapped tool remains responsible for bounded output, process cleanup, timeout behavior, and safe read-only operation.
 - Eligible tools produce text and do not depend on synchronous `usage`, `addedToolNames`, `terminate`, image delivery, or a custom result renderer. Structured result details are retained for inspection; non-text content is marked as omitted rather than silently discarded.
 - Mutating tools must not use this wrapper because their delayed effects could race with later agent turns and file operations.
-- A live footer count exposes active operations without transcript polling.
+- A live success-themed footer count exposes active operations without transcript polling. Each owner supplies the tool-facing status label used by that count.
 
 ## Implementation ownership
 

@@ -15,6 +15,7 @@ export type CodexSearchInput = Static<typeof QuerySchema>;
 export default function codexSearchExtension(pi: ExtensionAPI) {
   const background = createBackgroundToolManager(pi, {
     namespace: "codex-search",
+    statusLabel: "codex_search",
     maxActive: 4,
   });
 

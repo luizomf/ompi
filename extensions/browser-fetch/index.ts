@@ -201,6 +201,7 @@ function formatPage(page: ExtractedPage): string {
 export default function (pi: ExtensionAPI) {
 	const background = createBackgroundToolManager(pi, {
 		namespace: "browser-fetch",
+		statusLabel: "browser_fetch",
 		maxActive: 4,
 	});
 

@@ -25,6 +25,7 @@ export interface BackgroundCompletionDetails {
 
 export interface BackgroundToolManagerOptions {
   namespace: string;
+  statusLabel?: string;
   maxActive?: number;
   now?: () => number;
 }
@@ -60,6 +61,7 @@ export function createBackgroundToolManager(
   }
   const now = options.now ?? Date.now;
   const customType = `background-${options.namespace}`;
+  const statusLabel = options.statusLabel ?? options.namespace;
 
   pi.registerMessageRenderer(customType, (message, { expanded }, theme) => {
     const details = message.details as BackgroundCompletionDetails | undefined;
@@ -82,7 +84,8 @@ export function createBackgroundToolManager(
   let ui: ExtensionContext["ui"] | undefined;
   const active = new Map<number, AbortController>();
   const refreshUi = () => {
-    ui?.setStatus(customType, active.size > 0 ? `${options.namespace}: ${active.size}` : undefined);
+    const status = active.size > 0 ? `${statusLabel}: ${active.size}` : undefined;
+    ui?.setStatus(customType, status ? ui.theme.fg("success", status) : undefined);
   };
 
   pi.on("session_start", (_event, ctx) => {

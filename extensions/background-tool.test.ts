@@ -155,16 +155,22 @@ describe("background tool wrapper", () => {
         return completion.promise;
       },
     };
-    const manager = createBackgroundToolManager(pi, { namespace: "test" });
+    const manager = createBackgroundToolManager(pi, {
+      namespace: "test",
+      statusLabel: "slow_search",
+    });
     const wrapped = manager.wrapReadOnly(original);
     const ctx = {
       cwd: "/repo",
-      ui: { setStatus: (key: string, value: string | undefined) => statuses.push([key, value]) },
+      ui: {
+        theme: { fg: (color: string, text: string) => `[${color}]${text}` },
+        setStatus: (key: string, value: string | undefined) => statuses.push([key, value]),
+      },
     } as unknown as ExtensionContext;
 
     for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
     await wrapped.execute("call-1", { query: "bash" }, undefined, undefined, ctx);
-    expect(statuses.at(-1)).toEqual(["background-test", "test: 1"]);
+    expect(statuses.at(-1)).toEqual(["background-test", "[success]slow_search: 1"]);
 
     completion.resolve({ content: [{ type: "text", text: "done" }], details: undefined });
     await vi.waitFor(() => expect(statuses.at(-1)).toEqual(["background-test", undefined]));
