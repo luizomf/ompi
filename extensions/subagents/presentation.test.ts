@@ -47,7 +47,7 @@ describe("subagent presentation", () => {
 
     expect(presentation.status).toBe("subagents: 2");
     expect(presentation.lines).toHaveLength(2);
-    expect(presentation.lines?.[0]).toContain("#1 reader · running · 3s · read · visible progress");
+    expect(presentation.lines?.[0]).toContain("#1 reader · running · 3s · provider/model · reasoning medium · read · visible progress");
     expect(presentation.lines?.join(" ")).not.toContain("#3");
     expect(buildActiveUi([view({ active: false, state: "completed" })], 5_000)).toEqual({});
   });

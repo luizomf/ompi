@@ -178,7 +178,8 @@ Use plain command arguments for common operations, or JSON with `/sub` and
 `/subcont` for working-directory, tool, and name options. Every start and
 continuation inherits the orchestrator's active model and thinking level at the
 moment that turn is dispatched; agent and command inputs cannot override either
-choice. For example:
+choice. The live subagent widget and `/sublist` output show both inherited
+routing values. For example:
 
 ```text
 /sub Inspect the authentication flow and report risks.

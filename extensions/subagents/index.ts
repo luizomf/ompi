@@ -70,7 +70,7 @@ function formatView(view: SubagentView): string {
   const name = view.name ? ` (${view.name})` : "";
   const session = view.sessionRef ? `\n  session: ${view.sessionRef}` : "";
   const error = view.error ? `\n  error: ${view.error}` : "";
-  return `#${view.id}${name}: ${view.state} — ${view.model} @ ${view.cwd}${session}${error}`;
+  return `#${view.id}${name}: ${view.state} — ${view.model} · reasoning ${view.thinking} @ ${view.cwd}${session}${error}`;
 }
 
 function parseObject<T>(args: string): T | undefined {
@@ -97,9 +97,10 @@ export function buildActiveUi(views: SubagentView[], now: number): { lines?: str
   const lines = active.map((view) => {
     const elapsed = view.startedAt ? Math.max(0, Math.floor((now - view.startedAt) / 1_000)) : 0;
     const name = view.name ? ` ${oneLine(view.name, 20)}` : "";
+    const model = oneLine(view.model, 40);
     const tool = view.currentTool ? ` · ${view.currentTool}` : "";
     const preview = view.preview ? ` · ${oneLine(view.preview, 72)}` : "";
-    return `#${view.id}${name} · ${view.state} · ${elapsed}s${tool}${preview}`;
+    return `#${view.id}${name} · ${view.state} · ${elapsed}s · ${model} · reasoning ${view.thinking}${tool}${preview}`;
   });
   return { lines, status: `subagents: ${active.length}` };
 }
