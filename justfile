@@ -17,6 +17,10 @@ research:
 orchestrate:
     pi --no-skills --skill "${HOME}/.pi/agent/skills/handoff" --skill "${HOME}/.pi/agent/skills/tmux-worker" --skill "${HOME}/.pi/agent/skills/wormhole" --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
 
+# Start Pi with the fire-and-forget scheduler wake extension and the exit alias
+scheduler:
+    pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --extension ./extensions/scheduler/index.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
+
 # Start Pi with the asynchronous subagent extension and the exit alias
 subagents:
     pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --extension ./extensions/subagents/index.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
