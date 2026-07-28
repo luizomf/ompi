@@ -31,6 +31,9 @@ const BQ_ENVIRONMENT_KEYS = [
   "TMPDIR",
   "TZ",
   "USER",
+  "XDG_CONFIG_HOME",
+  "XDG_STATE_HOME",
+  "XDG_RUNTIME_DIR",
   "BQ_OMQUEUE",
 ] as const;
 

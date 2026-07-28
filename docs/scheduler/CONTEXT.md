@@ -57,6 +57,9 @@ _Avoid_: Queue completion event, watcher result, durable notification
   acceptance, and OMQueue integration.
 - OMQueue remains opaque to the scheduler extension.
 - A scheduler submission invokes `bq` directly with a literal argument vector.
+  It forwards valid XDG configuration, state, and runtime roots so `bq` reaches
+  the same per-host Queue installation as the active Pi process without
+  inheriting unrelated client environment or credentials.
   Its queued invocation uses the active Pi process's absolute Node runtime and
   the callback runner's absolute script path because Queue Jobs do not inherit
   the submitting shell or NVM environment. Long-lived schedules depend on both

@@ -154,6 +154,48 @@ describe("scheduler submission", () => {
     }
   });
 
+  it("forwards Queue XDG roots without inheriting unrelated client environment", async () => {
+    const cwd = await temporaryDirectory();
+    let invocation: BqInvocation | undefined;
+    const session = await SchedulerSession.start({
+      onWake: () => undefined,
+      environment: {
+        PATH: "/queue-path",
+        XDG_CONFIG_HOME: "/queue-config",
+        XDG_STATE_HOME: "/queue-state",
+        XDG_RUNTIME_DIR: "/queue-runtime",
+        OPENAI_API_KEY: "must-not-be-forwarded",
+      },
+      runBq: async (candidate) => {
+        invocation = candidate;
+        return {
+          code: 0,
+          signal: null,
+          stdout: "bq: accepted Job job-1 (queued)\n",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          cancelled: false,
+        };
+      },
+    });
+
+    try {
+      await session.submit({
+        reentryPrompt: "Confirm the Queue client uses the daemon installation roots.",
+      }, cwd);
+
+      expect(invocation?.env).toEqual({
+        PATH: "/queue-path",
+        XDG_CONFIG_HOME: "/queue-config",
+        XDG_STATE_HOME: "/queue-state",
+        XDG_RUNTIME_DIR: "/queue-runtime",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   it("reports nonzero bq acceptance as unknown because durable work may already exist", async () => {
     const cwd = await temporaryDirectory();
     const session = await SchedulerSession.start({
