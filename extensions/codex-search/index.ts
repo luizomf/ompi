@@ -26,6 +26,7 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
     promptSnippet: "Start asynchronous Codex web research as a fallback or independent second research path",
     promptGuidelines: [
       "Use codex_search when ordinary browser fetching is blocked or insufficient, or for an independent second research path; request URLs or citations when relevant and verify primary sources separately.",
+      "When multiple codex_search calls or other background research calls are independently useful, start them in the same turn so Pi can run them concurrently; do not wait for one result before starting another.",
       "After codex_search starts background research, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so the later background result can be delivered.",
     ],
     parameters: QuerySchema,

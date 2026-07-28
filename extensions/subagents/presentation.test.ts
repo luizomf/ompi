@@ -33,6 +33,7 @@ describe("subagent tool guidance", () => {
     const guidance = tools.flatMap((tool) => tool.promptGuidelines ?? []).join(" ");
     expect(guidance).toContain("never wait, sleep, or poll");
     expect(guidance).toContain("end the response");
+    expect(guidance).toMatch(/independent delegations.*same turn.*concurrently.*do not wait/s);
     expect(guidance).toContain("subagent_list");
   });
 });

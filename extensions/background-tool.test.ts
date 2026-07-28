@@ -86,7 +86,10 @@ describe("background tool wrapper", () => {
       { cwd: "/repo" } as ExtensionContext,
     );
 
-    expect(accepted.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Background task #1") });
+    expect(accepted.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringMatching(/Do not wait, sleep, or poll.*start it without waiting/s),
+    });
     expect(accepted.details).toMatchObject({ id: 1, toolName: "slow_search", active: true });
     expect(messages).toEqual([]);
     expect(wrapped.parameters).toBe(original.parameters);

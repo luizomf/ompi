@@ -43,9 +43,12 @@ background operation starts, and later delivers one collapsible rendered-text
 result. At most four Browser Fetch operations run concurrently. Output remains
 bounded, Chromium is closed on completion or cancellation, and login, CAPTCHA,
 anti-bot, and unreadable-page responses are reported rather than bypassed.
-An ephemeral loopback proxy resolves every navigation, redirect, HTTP
-subresource, and WebSocket destination, rejects any non-public result, and
-connects to the exact validated IP so Chromium cannot re-resolve it. The proxy
+When multiple rendered-page or other background research calls are independently
+useful, the orchestrator starts them in the same turn so Pi can run them
+concurrently; it does not await one result before starting another. An ephemeral
+loopback proxy resolves every navigation, redirect, HTTP subresource, and
+WebSocket destination, rejects any non-public result, and connects to the exact
+validated IP so Chromium cannot re-resolve it. The proxy
 preserves the original hostname and TLS verification. Service workers are
 disabled so they cannot bypass this network boundary.
 
@@ -74,7 +77,9 @@ and later delivers exactly one collapsible completion or failure result. After
 start confirmation, the orchestrator must not wait or poll; it may continue
 independent work or end its response so the result can enter a later turn.
 
-The background wrapper is limited to four concurrent Codex searches. Closing or
+The background wrapper is limited to four concurrent Codex searches. Independently
+useful Codex or other background research calls can be started in the same turn;
+the orchestrator does not await one result before starting another. Closing or
 reloading the owning Pi session aborts active searches and suppresses stale
 results; this path is intentionally not durable and does not use `bq` or
 OMQueue. The narrow trust-check bypass allows research from new or untrusted
@@ -117,8 +122,11 @@ absolute-time work, finite repetition, and cron schedules. The extension invokes
 the existing global `bq` executable directly without a shell and returns as soon
 as `bq` exits. A zero exit confirms acceptance. Any other result leaves acceptance
 unknown because finite submission may already have created durable work; do not
-blindly retry an unknown result. The extension never waits for payload completion,
-watches OMQueue, polls Job state, or exposes Queue administration.
+blindly retry an unknown result. Independently requested submissions can be
+issued in the same turn so Pi handles their bounded acceptance requests
+concurrently; the orchestrator never waits for one wake before submitting
+another. The extension never waits for payload completion, watches OMQueue,
+polls Job state, or exposes Queue administration.
 
 Every submission requires a complete, self-contained `reentryPrompt`. An
 optional payload contains an executable, literal arguments, and a working
@@ -194,9 +202,11 @@ queues exactly one completion, failure, or interruption pong in the orchestrator
 conversation.
 
 After acceptance, the orchestrator must not sleep, run a wait loop, or repeatedly
-call `subagent_list` for completion. It may continue useful work independent of
-the subagent result; otherwise it must end its response so user input and the
-later pong can enter the conversation.
+call `subagent_list` for completion. When multiple independent delegations are
+useful, it starts them in the same turn so Pi can run them concurrently rather
+than awaiting an earlier pong. It may then continue useful work independent of
+the subagent results; otherwise it must end its response so user input and the
+later pongs can enter the conversation.
 
 For daily use, link this audited extension into Pi's global extension directory:
 

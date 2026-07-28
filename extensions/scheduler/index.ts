@@ -162,6 +162,7 @@ export function registerSchedulerExtension(
       "Use strict timing values: 10m/2h/1d rather than prose or seconds; finite repeats require in or at plus both every and count; omit timing for an immediate wake.",
       "Before submitting a payload, inspect its executable and directly invoked helpers for required environment variables, PATH entries, working directories, runtimes, stdin or TTY assumptions, and detached child processes; do not assume wholesale inheritance from the interactive shell or expose secret values while checking.",
       "Write payload reentry prompts outcome-conditionally: inspect the wake's mechanical outcome and bounded previews, never infer payload success from scheduler acceptance or call the result an official OMQueue Job state, prohibit unauthorized reruns and Queue inspection, and state the next action or stopping point.",
+      "When multiple independent scheduler submissions are requested, issue their scheduler_submit calls in the same turn so Pi can run them concurrently; do not wait for one wake before submitting another.",
       "After scheduler_submit reports bq acceptance, never wait, sleep, poll, inspect OMQueue, or watch Queue completion; continue only independent work or end the response so a later scheduler wake can be delivered.",
       "When the user explicitly asks to invoke or inspect raw bq behavior, use ordinary bash instead of scheduler_submit.",
     ],

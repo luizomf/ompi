@@ -212,6 +212,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "Start an asynchronous rendered-page fetch with headless Chromium",
 		promptGuidelines: [
 			"Use browser_fetch when curl fails, returns blocked or nearly empty HTML, or the requested page requires JavaScript rendering.",
+			"When multiple browser_fetch calls or other background research calls are independently useful, start them in the same turn so Pi can run them concurrently; do not wait for one result before starting another.",
 			"After browser_fetch starts background work, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so the later background result can be delivered.",
 			"If browser_fetch reports a login, CAPTCHA, anti-bot block, or unreadable page, mark the source unverified instead of guessing.",
 		],

@@ -39,4 +39,4 @@ The canonical wrapper source is `extensions/background-tool.ts`. Eligible extens
 
 ## Turn-release contract
 
-After start confirmation, the orchestrator must not wait, sleep, or poll for the background result. It may continue useful work independent of that result; otherwise it ends its response so the later result can enter the conversation as a follow-up turn.
+After start confirmation, the orchestrator must not wait, sleep, or poll for the background result. When multiple background operations are independently useful, it starts their calls without awaiting earlier results so Pi can run sibling tool calls concurrently. It may then continue useful work independent of those results; otherwise it ends its response so the later results can enter the conversation as follow-up turns.

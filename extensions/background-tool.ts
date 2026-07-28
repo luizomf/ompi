@@ -165,7 +165,7 @@ export function createBackgroundToolManager(
           return {
             content: [{
               type: "text",
-              text: `Background task #${id} (${tool.name}) started. Do not wait or poll for completion; its result will arrive later.`,
+              text: `Background task #${id} (${tool.name}) started. Do not wait, sleep, or poll for completion; its result will arrive later. If another independent background call is useful, start it without waiting for this result.`,
             }],
             details: view,
           };

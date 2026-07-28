@@ -69,6 +69,9 @@ _Avoid_: Queue completion event, watcher result, durable notification
   waiting for Queue completion. A zero exit confirms acceptance; every other
   result leaves acceptance unknown because durable work may already have been
   created and must not be retried blindly.
+- Independently requested scheduler submissions may be issued as sibling tool
+  calls so Pi can run their bounded acceptance requests concurrently. The
+  orchestrator never waits for one scheduler wake before submitting another.
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
   database, or exposes cancellation, retry, history, output retrieval, or other
   Queue administration.
