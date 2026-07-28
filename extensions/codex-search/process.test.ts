@@ -9,6 +9,10 @@ import {
 
 const node = process.execPath;
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function nodeRequest(script: string, overrides: Partial<Parameters<typeof runProcess>[0]> = {}) {
   return {
     command: node,
@@ -109,18 +113,35 @@ describe("codex_search process wrapper", () => {
     expect(result.stderrTruncated).toBe(true);
   });
 
-  it("reports process startup failure", async () => {
+  it("reports process startup failure with invocation context", async () => {
+    const cwd = process.cwd();
+    const command = join(tmpdir(), `missing-codex-search-${process.pid}`);
+
     await expect(runProcess({
       ...nodeRequest(""),
-      command: join(tmpdir(), `missing-codex-search-${process.pid}`),
-    })).rejects.toThrow("Failed to start");
+      command,
+    })).rejects.toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(
+          new RegExp(`Failed to start[\\s\\S]*Command: ${escapeRegex(JSON.stringify(command))}[\\s\\S]*Working directory: ${escapeRegex(JSON.stringify(cwd))}[\\s\\S]*Pi session cwd`),
+        ),
+      }),
+    );
   });
 
-  it("reports a nonzero exit with bounded diagnostics", async () => {
+  it("reports a nonzero exit with bounded diagnostics and invocation context", async () => {
+    const cwd = process.cwd();
+
     await expect(runProcess(nodeRequest(
       "process.stdout.write('partial'); process.stderr.write('x'.repeat(30)); process.exitCode=7;",
       { maxStderrBytes: 8 },
-    ))).rejects.toThrow(/exited with code 7[\s\S]*xxxxxxxx/);
+    ))).rejects.toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(
+          new RegExp(`exited with code 7[\\s\\S]*xxxxxxxx[\\s\\S]*Command: ${escapeRegex(JSON.stringify(node))}[\\s\\S]*Working directory: ${escapeRegex(JSON.stringify(cwd))}[\\s\\S]*directory access`),
+        ),
+      }),
+    );
   });
 
   it("cleans up a successful parent's descendant that inherits output pipes", async () => {

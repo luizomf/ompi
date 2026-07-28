@@ -67,6 +67,21 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function invocationContext(request: ProcessRequest): string {
+  const command = [request.command, ...request.args]
+    .map((part) => JSON.stringify(part))
+    .join(" ");
+  return [
+    `Command: ${command}`,
+    `Working directory: ${JSON.stringify(request.cwd)}`,
+    "Hint: codex_search runs from the Pi session cwd. Verify directory access (existence plus traversal/read permissions), or start Pi from an accessible working directory.",
+  ].join("\n");
+}
+
+function processError(message: string, request: ProcessRequest): Error {
+  return new Error(`${message}\n\n${invocationContext(request)}`);
+}
+
 function killProcessGroup(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
   if (child.pid && process.platform !== "win32") {
     try {
@@ -115,7 +130,9 @@ export async function runCodexSearch(
 }
 
 export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
-  if (request.signal?.aborted) return Promise.reject(new Error("codex_search was cancelled."));
+  if (request.signal?.aborted) {
+    return Promise.reject(processError("codex_search was cancelled.", request));
+  }
 
   return new Promise((resolve, reject) => {
     const stdout = new BoundedCapture(request.maxStdoutBytes);
@@ -152,7 +169,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (error) {
-      reject(new Error(`Failed to start ${request.command}: ${errorText(error)}`));
+      reject(processError(`Failed to start ${request.command}: ${errorText(error)}`, request));
       return;
     }
 
@@ -190,19 +207,19 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       };
 
       if (startupError) {
-        reject(new Error(`Failed to start ${request.command}: ${startupError.message}`));
+        reject(processError(`Failed to start ${request.command}: ${startupError.message}`, request));
         return;
       }
       if (termination === "cancelled") {
-        reject(new Error(`${request.command} was cancelled.`));
+        reject(processError(`${request.command} was cancelled.`, request));
         return;
       }
       if (termination === "timed out") {
-        reject(new Error(`${request.command} timed out after ${request.timeoutMs}ms.`));
+        reject(processError(`${request.command} timed out after ${request.timeoutMs}ms.`, request));
         return;
       }
       if (inputError) {
-        reject(new Error(`Failed to send the query to ${request.command}: ${inputError.message}`));
+        reject(processError(`Failed to send the query to ${request.command}: ${inputError.message}`, request));
         return;
       }
       if (code !== 0) {
@@ -211,7 +228,10 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
           result.stdout ? `stdout:\n${result.stdout}${truncationNotice("stdout", result.stdoutTruncated, request.maxStdoutBytes)}` : "",
           result.stderr ? `stderr:\n${result.stderr}${truncationNotice("stderr", result.stderrTruncated, request.maxStderrBytes)}` : "",
         ].filter(Boolean).join("\n\n");
-        reject(new Error(`${request.command} exited with ${status}.${diagnostics ? `\n\n${diagnostics}` : ""}`));
+        reject(processError(
+          `${request.command} exited with ${status}.${diagnostics ? `\n\n${diagnostics}` : ""}`,
+          request,
+        ));
         return;
       }
 
