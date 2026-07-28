@@ -208,6 +208,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     description: "Start a clean persistent Pi conversation asynchronously. Returns after RPC prompt acceptance; completion arrives later as one pong. Never wait or poll for that pong.",
     promptSnippet: "Start an independent asynchronous Pi conversation with a complete prompt",
     promptGuidelines: [
+      "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; do not wait for one pong before starting another.",
       "After subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
     ],
     parameters: StartSchema,
@@ -216,7 +217,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       return {
         content: [{
           type: "text",
-          text: `Subagent #${view.id} accepted the prompt and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Continue independent work or end this response; the pong will arrive later.`,
+          text: `Subagent #${view.id} accepted the prompt and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Start any other useful independent delegation without waiting, then continue independent work or end this response; the pong will arrive later.`,
         }],
         details: view,
       };

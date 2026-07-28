@@ -59,7 +59,9 @@ describe("codex_search background delivery", () => {
     expect(accepted.content[0].text).toContain("Background task #1");
     expect(messages).toEqual([]);
     expect(tool.description).toContain("asynchronously");
-    expect(tool.promptGuidelines.join(" ")).toContain("never wait");
+    const guidance = tool.promptGuidelines.join(" ");
+    expect(guidance).toContain("never wait");
+    expect(guidance).toMatch(/independently useful.*same turn.*concurrently.*do not wait/s);
 
     search.resolve({
       stdout: "primary research",

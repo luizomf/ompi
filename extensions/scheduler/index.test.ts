@@ -110,6 +110,7 @@ describe("scheduler extension", () => {
       expect(discovery).toContain("never infer payload success from scheduler acceptance");
       expect(discovery).toContain("state the next action or stopping point");
       expect(discovery).toContain("never wait, sleep, poll");
+      expect(discovery).toMatch(/independent scheduler submissions.*same turn.*concurrently.*do not wait/s);
       expect(discovery).toContain("ordinary bash");
       await handlers.get("session_start")?.({}, ctx);
       const result = await tools[0].execute("call-1", {

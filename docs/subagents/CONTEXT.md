@@ -50,4 +50,4 @@ turn, including a continuation of an existing conversation.
 
 ## Turn-release contract
 
-After a start confirmation, the orchestrator must never keep its current turn alive merely to await the pong. It must not use sleeps, shell wait loops, or repeated status snapshots. It may continue useful work that does not depend on the subagent's result; otherwise it ends its response immediately. Ending the response returns control to the user and lets the queued pong enter the orchestrator conversation in a later turn.
+After a start confirmation, the orchestrator must never keep its current turn alive merely to await the pong. It must not use sleeps, shell wait loops, or repeated status snapshots. When multiple independent delegations are useful, it starts their subagent calls without awaiting earlier pongs so Pi can run sibling tool calls concurrently. It may then continue useful work that does not depend on the subagents' results; otherwise it ends its response immediately. Ending the response returns control to the user and lets the queued pongs enter the orchestrator conversation in later turns.
