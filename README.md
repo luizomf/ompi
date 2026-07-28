@@ -70,12 +70,22 @@ Enable it explicitly for one Pi process:
 pi --no-extensions --extension ./extensions/codex-search/index.ts
 ```
 
-It invokes `codex_search --skip-git-repo-check -` directly without a shell and
-sends the research query through stdin. The tool returns immediately after a
-session-scoped background operation starts, keeps a minimal live footer count,
-and later delivers exactly one collapsible completion or failure result. After
-start confirmation, the orchestrator must not wait or poll; it may continue
-independent work or end its response so the result can enter a later turn.
+It invokes `codex_search --profile <effort> --skip-git-repo-check -` directly
+without a shell and sends the research query through stdin. The optional
+`effort` is a bounded semantic choice: `quick` (the default) covers search,
+scraping, extraction, and source cleanup, while `research` delegates complex
+source comparison or synthesis. The helper resolved from `PATH` owns the actual
+model and reasoning mappings, so model catalog changes do not alter the tool
+schema.
+
+The tool returns immediately after a session-scoped background operation starts,
+keeps a minimal live footer count, and later delivers exactly one collapsible
+completion or failure result. After start confirmation, the orchestrator must
+not wait or poll; it may continue independent work or end its response so the
+result can enter a later turn. Only a failure result adds an instruction that
+the orchestrator must mention the failure in its next user-facing response; it
+must not stop or abandon the task solely because of the failure and should
+continue with another appropriate tool when useful or available.
 
 The background wrapper is limited to four concurrent Codex searches. Independently
 useful Codex or other background research calls can be started in the same turn;
@@ -86,10 +96,11 @@ OMQueue. The narrow trust-check bypass allows research from new or untrusted
 working directories without using `--yolo` or changing sandbox or approval
 behavior. Each process retains its fixed ten-minute timeout and bounded captured
 output. Model and reasoning defaults remain controlled by the `codex_search`
-executable resolved from `PATH`; the extension passes no model, reasoning,
-`--yolo`, ephemeral-container, or arbitrary Codex flags. Its model-produced
-result is not a verified primary source, so requests should ask for URLs or
-citations where relevant and verify those sources separately. The extension is
+executable resolved from `PATH`; the extension passes only the bounded profile,
+not a model, reasoning value, `--yolo`, ephemeral-container, or arbitrary Codex
+flags. Its model-produced result is not a verified primary source, so requests
+should ask for URLs or citations where relevant and verify those sources
+separately. The extension is
 not enabled by any launch profile or package manifest.
 
 Browser Fetch and Codex Search share the single background wrapper maintained at

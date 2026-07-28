@@ -8,6 +8,8 @@ const CODEX_SEARCH_STDOUT_BYTES = 48_000;
 const CODEX_SEARCH_STDERR_BYTES = 2_000;
 const FORCE_KILL_DELAY_MS = 500;
 
+export type CodexSearchEffort = "quick" | "research";
+
 export interface ProcessRequest {
   command: string;
   args: string[];
@@ -106,11 +108,12 @@ function truncationNotice(stream: "stdout" | "stderr", truncated: boolean, limit
 export function buildCodexSearchRequest(
   query: string,
   cwd: string,
+  effort: CodexSearchEffort,
   signal?: AbortSignal,
 ): ProcessRequest {
   return {
     command: "codex_search",
-    args: ["--skip-git-repo-check", "-"],
+    args: ["--profile", effort, "--skip-git-repo-check", "-"],
     input: query,
     cwd,
     signal,
@@ -123,10 +126,11 @@ export function buildCodexSearchRequest(
 export async function runCodexSearch(
   query: string,
   cwd: string,
+  effort: CodexSearchEffort,
   signal?: AbortSignal,
 ): Promise<ProcessResult> {
   if (!query.trim()) throw new Error("codex_search requires a non-empty query.");
-  return runProcess(buildCodexSearchRequest(query, cwd, signal));
+  return runProcess(buildCodexSearchRequest(query, cwd, effort, signal));
 }
 
 export function runProcess(request: ProcessRequest): Promise<ProcessResult> {

@@ -72,12 +72,14 @@ async function runParentLeavingDescendant(
 }
 
 describe("codex_search process wrapper", () => {
-  it("builds a fixed shell-free invocation with the query on stdin", () => {
+  it("builds a fixed shell-free quick invocation with the query on stdin", () => {
     const signal = new AbortController().signal;
-    const request = buildCodexSearchRequest("find primary sources", "/repo", signal);
+    const request = buildCodexSearchRequest("find primary sources", "/repo", "quick", signal);
 
     expect([request.command, ...request.args]).toEqual([
       "codex_search",
+      "--profile",
+      "quick",
       "--skip-git-repo-check",
       "-",
     ]);
@@ -88,6 +90,18 @@ describe("codex_search process wrapper", () => {
       timeoutMs: 600_000,
     });
     expect(request).not.toHaveProperty("shell");
+  });
+
+  it("passes the bounded research profile without exposing arbitrary Codex options", () => {
+    const request = buildCodexSearchRequest("compare conflicting sources", "/repo", "research");
+
+    expect([request.command, ...request.args]).toEqual([
+      "codex_search",
+      "--profile",
+      "research",
+      "--skip-git-repo-check",
+      "-",
+    ]);
   });
 
   it("passes shell syntax through stdin as inert text", async () => {

@@ -8,6 +8,12 @@ const QuerySchema = Type.Object({
     minLength: 1,
     description: "Focused research request. Ask for source URLs or citations when they are relevant.",
   }),
+  effort: Type.Optional(Type.Union([
+    Type.Literal("quick"),
+    Type.Literal("research"),
+  ], {
+    description: "Choose only a semantic effort profile; the helper owns actual model and reasoning selection. Use quick (default) for search, scraping, extraction, and source cleanup. Use research only when the delegated work itself requires complex comparison or synthesis.",
+  })),
 });
 
 export type CodexSearchInput = Static<typeof QuerySchema>;
@@ -22,7 +28,7 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
   pi.registerTool(background.wrapReadOnly({
     name: "codex_search",
     label: "Codex Search",
-    description: "Run the existing codex_search helper asynchronously as a fallback when ordinary browser fetching is blocked or insufficient, or as an independent second research path. Returns immediately after starting bounded background work; completion arrives later as one background result. Model-produced research is not itself a verified primary source: ask for URLs or citations in the query when relevant, then verify those sources separately. The query is sent through stdin without a shell; captured research output is limited to 48,000 bytes.",
+    description: "Run the existing codex_search helper asynchronously as a fallback when ordinary browser fetching is blocked or insufficient, or as an independent second research path. Choose quick (default) for search and extraction, or research when the delegated work requires complex comparison or synthesis. Returns immediately after starting bounded background work; completion arrives later as one background result. Model-produced research is not itself a verified primary source: ask for URLs or citations in the query when relevant, then verify those sources separately. The query is sent through stdin without a shell; captured research output is limited to 48,000 bytes.",
     promptSnippet: "Start asynchronous Codex web research as a fallback or independent second research path",
     promptGuidelines: [
       "Use codex_search when ordinary browser fetching is blocked or insufficient, or for an independent second research path; request URLs or citations when relevant and verify primary sources separately.",
@@ -31,7 +37,16 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
     ],
     parameters: QuerySchema,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const result = await runCodexSearch(params.query, ctx.cwd, signal);
+      let result;
+      try {
+        result = await runCodexSearch(params.query, ctx.cwd, params.effort ?? "quick", signal);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error([
+          message,
+          "IMPORTANT: You MUST report this codex_search failure in your next user-facing response. You MUST NOT stop or abandon the task solely because codex_search failed; continue with another appropriate tool when useful or available.",
+        ].join("\n\n"));
+      }
       let text = result.stdout.trimEnd();
       if (!text) text = "codex_search completed without returning research output.";
       if (result.stdoutTruncated) text += "\n\n[Research output truncated to 48,000 bytes.]";
