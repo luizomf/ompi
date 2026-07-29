@@ -21,6 +21,10 @@ orchestrate:
 scheduler:
     pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --extension ./extensions/scheduler/index.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
 
+# Start Pi with the session-scoped managed-process extension and the exit alias
+managed-processes:
+    pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --extension ./extensions/managed-process/index.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
+
 # Start Pi with the asynchronous subagent extension and the exit alias
 subagents:
     pi --no-skills --no-extensions --extension "${HOME}/.pi/agent/extensions/exit-alias.ts" --extension ./extensions/subagents/index.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md

@@ -25,8 +25,9 @@ just bare         # Only the /exit alias extension
 just core         # AGENTS.md and the /exit alias extension
 just research     # Core plus research skill and browser extension
 just orchestrate  # Core plus handoff, tmux-worker, and wormhole skills
-just scheduler    # Core plus the fire-and-forget scheduler wake extension
-just subagents    # Core plus the asynchronous subagent extension
+just scheduler          # Core plus the fire-and-forget scheduler wake extension
+just managed-processes  # Core plus session-scoped long-running processes
+just subagents          # Core plus the asynchronous subagent extension
 ```
 
 These profiles disable automatic discovery of agent-facing resources. Explicit
@@ -124,6 +125,47 @@ behavior:
 just p
 just pi
 ```
+
+## Managed processes
+
+`just managed-processes` explicitly enables the extension in
+`extensions/managed-process/`. It is a separate lifecycle from the finite
+read-only background-tool wrapper. Four tools start a long-running local process,
+list retained process state, retrieve recent output, and stop a process:
+
+| Tool | Purpose |
+| --- | --- |
+| `managed_process_start` | Start an executable with literal arguments and an optional cwd |
+| `managed_process_list` | Take one snapshot of retained lifecycle state |
+| `managed_process_output` | Retrieve bounded recent stdout and stderr tails |
+| `managed_process_stop` | Terminate a known process and its owned Unix process group |
+
+Start returns after the operating system accepts the spawn; it does not wait for
+completion or prove that a server is ready. Commands run directly with no shell,
+stdin is ignored, and no interactive TTY is allocated. The child inherits Pi's
+current environment, including any credentials or SSH-agent authority, and is
+not sandboxed. The extension does not load `.env` files or accept custom
+environment values. Arguments are retained in the Pi session and may be visible
+in the host process table, so do not put secrets in argv.
+
+The manager cannot force an application to bind loopback. Inspect the
+application and pass its verified host/listen option when network exposure
+matters. On Unix, each child owns a detached process group. Stop, leader exit,
+startup cancellation, and Pi session shutdown send SIGTERM, then SIGKILL after a
+bounded grace period and verifies that the group is gone. Permission failures,
+a surviving group, or a missing leader outcome are reported as cleanup failures.
+Descendants that deliberately create another session or process group can escape
+this mechanism. Starts are rejected on Windows because direct-child signaling
+cannot satisfy the ownership contract.
+
+State is session-local and in memory. At most eight processes are active, at
+most sixty-four records are retained, and argument vectors are limited to 128
+items, 8,000 UTF-8 bytes per item, and 64 KiB total. Each record keeps the
+latest 64 KiB from each output stream. One output request returns at most 20 KiB
+per stream and reports omitted earlier bytes. The extension does not inject automatic
+completion turns; list and output calls are concrete snapshots, not polling or
+wait operations. See [Managed Processes](docs/managed-processes/CONTEXT.md) for
+the canonical lifecycle and security contract.
 
 ## Scheduler wakes
 
