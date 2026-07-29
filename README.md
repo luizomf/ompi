@@ -25,7 +25,7 @@ just bare         # Only the /exit alias extension
 just core         # AGENTS.md and the /exit alias extension
 just research     # Core plus research skill and browser extension
 just orchestrate  # Core plus handoff, tmux-worker, and wormhole skills
-just scheduler          # Core plus the fire-and-forget scheduler wake extension
+just scheduler          # Core plus the OMQueue background runner and scheduler
 just managed-processes  # Core plus session-scoped long-running processes
 just subagents          # Core plus the asynchronous subagent extension
 ```
@@ -163,28 +163,57 @@ most sixty-four records are retained, and argument vectors are limited to 128
 items, 8,000 UTF-8 bytes per item, and 64 KiB total. Each record keeps the
 latest 64 KiB from each output stream. One output request returns at most 20 KiB
 per stream and reports omitted earlier bytes. The extension does not inject automatic
-completion turns; list and output calls are concrete snapshots, not polling or
-wait operations. See [Managed Processes](docs/managed-processes/CONTEXT.md) for
-the canonical lifecycle and security contract.
+completion turns or wakes; list and output calls are concrete snapshots, not
+polling or wait operations. Use ordinary bash instead for finite work that should
+complete synchronously in the current turn. Use `scheduler_submit` for fixed,
+non-interactive finite work that should run through OMQueue and wake Pi after its
+outcome. See [Managed Processes](docs/managed-processes/CONTEXT.md) for the
+canonical lifecycle and security contract.
 
-## Scheduler wakes
+## OMQueue background runner and scheduler
 
 `just scheduler` explicitly enables the extension in `extensions/scheduler/`.
-It exposes one `scheduler_submit` tool for immediate heartbeats, delayed or
-absolute-time work, finite repetition, and cron schedules. The extension invokes
-the existing global `bq` executable directly without a shell and returns as soon
-as `bq` exits. A zero exit confirms acceptance. Any other result leaves acceptance
-unknown because finite submission may already have created durable work; do not
-blindly retry an unknown result. Independently requested submissions can be
-issued in the same turn so Pi handles their bounded acceptance requests
-concurrently; the orchestrator never waits for one wake before submitting
-another. The extension never waits for payload completion, watches OMQueue,
-polls Job state, or exposes Queue administration.
+Its `scheduler_submit` tool is Pi's unified OMQueue-backed background runner and
+scheduler. A fixed, non-interactive payload runs immediately through the Queue
+when timing is omitted, or after a delay, at an absolute time, as a finite
+repeat, or on cron when timing is present. Omitting the payload creates a
+heartbeat, reminder, or deferred-recheck wake.
 
-Every submission requires a complete, self-contained `reentryPrompt`. An
-optional payload contains an executable, literal arguments, and a working
-directory; omitting it creates a heartbeat-only wake. Timing fields are passed to
-`bq`, which remains responsible for syntax and validation:
+Immediate Queue submission is not a blanket replacement for synchronous bash. A
+trivial finite command such as `ls` is normally simpler to run directly. The
+scheduler is useful when finite work should continue outside the current turn
+and Pi should wake automatically after it terminates. Use managed processes
+instead for genuinely long-running servers, watchers, tails, or development
+processes that need explicit snapshots and stop operations and do not emit a
+completion wake.
+
+The extension invokes the existing global `bq` executable directly without a
+shell and the tool call returns as soon as `bq` exits. A zero exit confirms
+acceptance, not payload completion. Any other result leaves acceptance unknown
+because finite submission may already have created durable work; do not blindly
+retry an unknown result. Independently requested submissions can be issued in
+the same turn so Pi handles their bounded acceptance requests concurrently; the
+orchestrator never waits for one wake before submitting another. The tool call
+never watches OMQueue, polls Job state, or exposes Queue administration. The
+callback runner later waits for the heartbeat or payload outcome and attempts a
+required best-effort wake into the live owning Pi session.
+
+Every submission requires a complete, self-contained `reentryPrompt` delivered
+back to Pi after the heartbeat fires or payload terminates. An optional payload
+contains an executable, literal arguments, and a working directory; omitting it
+creates a heartbeat-only wake. Timing fields are passed to `bq`, which remains
+responsible for syntax and validation:
+
+```json
+{
+  "reentryPrompt": "Inspect the command outcome and bounded previews, then report the next safe action without rerunning it.",
+  "payload": {
+    "executable": "./slow-check",
+    "args": ["--format", "json"],
+    "cwd": "./service"
+  }
+}
+```
 
 ```json
 {
@@ -242,9 +271,11 @@ its first argument. Both paths are stored in each accepted Job or Schedule and
 must remain executable at those locations for long-lived schedules. Scheduler
 submissions inherit the user's command authority and are not sandboxed. This
 extension is not enabled by any unrelated launch profile or by package discovery
-in this repository. When a
-user explicitly asks to invoke or inspect raw `bq`, use ordinary bash rather
-than `scheduler_submit`.
+in this repository. Equivalent `bq` syntax supplied as an example does not by
+itself select ordinary bash; route by whether the requested work should run
+through the Queue and wake Pi. For `bq`-related requests, use ordinary bash only
+when the user explicitly asks to invoke, test, debug, or inspect the raw `bq` CLI
+or administer OMQueue.
 
 ## Asynchronous subagents
 

@@ -5,6 +5,7 @@ import { registerManagedProcessExtension } from "./index.ts";
 interface RegisteredTool {
   name: string;
   description: string;
+  promptSnippet?: string;
   promptGuidelines?: string[];
   execute(
     id: string,
@@ -16,6 +17,27 @@ interface RegisteredTool {
 }
 
 describe("managed-process extension", () => {
+  it("discovers its explicit lifecycle without implying an automatic completion wake", () => {
+    const tools: RegisteredTool[] = [];
+    const pi = {
+      registerTool: (tool: RegisteredTool) => tools.push(tool),
+      on: () => {},
+    } as unknown as ExtensionAPI;
+
+    registerManagedProcessExtension(pi);
+
+    const discovery = tools.flatMap((tool) => [
+      tool.description,
+      tool.promptSnippet ?? "",
+      ...(tool.promptGuidelines ?? []),
+    ]).join(" ");
+    expect(discovery).toContain("does not send a completion wake or trigger a turn when the process exits");
+    expect(discovery).toContain("scheduler_submit");
+    expect(discovery).toContain("run through OMQueue and wake Pi after its outcome");
+    expect(discovery).toContain("finite work that should complete synchronously in the current turn");
+    expect(discovery).not.toContain("use ordinary bash for finite commands");
+  });
+
   it("exposes explicit session-scoped lifecycle tools and cleans up on shutdown", async () => {
     const tools: RegisteredTool[] = [];
     const handlers = new Map<string, (...args: unknown[]) => unknown>();

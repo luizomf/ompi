@@ -39,7 +39,7 @@ AI context for this repository. Read this before making changes.
 - `extensions/browser-fetch/` — bounded asynchronous Chromium page fetcher
 - `extensions/codex-search/` — bounded, shell-free asynchronous Codex research fallback
 - `extensions/managed-process/` — opt-in session-scoped manager for long-running local processes
-- `extensions/scheduler/` — opt-in fire-and-forget `bq` scheduler wake adapter
+- `extensions/scheduler/` — opt-in OMQueue-backed background runner and scheduler with session wake callbacks
 - `extensions/subagents/` — asynchronous native Pi RPC conversation lifecycle
 - `docs/background-tools/CONTEXT.md` — canonical background-tool terminology and lifecycle boundary
 - `docs/managed-processes/CONTEXT.md` — canonical managed-process lifecycle and security boundaries
