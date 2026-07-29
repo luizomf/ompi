@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  initTheme,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type MessageRenderer,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { formatSchedulerSubmission, registerSchedulerExtension } from "./index.ts";
 import type { BqInvocation } from "./scheduler.ts";
@@ -19,6 +24,12 @@ interface RegisteredTool {
     onUpdate: undefined,
     ctx: ExtensionContext,
   ): Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
+  renderResult?: (
+    result: { content: Array<{ type: "text"; text: string }>; details?: unknown },
+    options: { expanded: boolean; isPartial: boolean },
+    theme: unknown,
+    context: unknown,
+  ) => { render(width: number): string[] };
 }
 
 async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
@@ -60,6 +71,76 @@ describe("scheduler extension", () => {
     expect(text).not.toContain("was not accepted");
   });
 
+  it("collapses submission results and scheduler wakes behind Pi's native expansion state", () => {
+    initTheme(undefined, false);
+    const tools: RegisteredTool[] = [];
+    const renderers = new Map<string, MessageRenderer>();
+    const pi = {
+      registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerMessageRenderer: (customType: string, renderer: MessageRenderer) => renderers.set(customType, renderer),
+      on: () => {},
+    } as unknown as ExtensionAPI;
+    const theme = {
+      fg: (_color: string, text: string) => text,
+      bg: (_color: string, text: string) => text,
+    };
+
+    registerSchedulerExtension(pi);
+
+    const submission = {
+      content: [{ type: "text" as const, text: "FULL SUBMISSION RESULT" }],
+      details: {
+        acceptance: "confirmed" as const,
+        submissionId: "submission-1",
+        bq: {
+          code: 0,
+          signal: null,
+          stdout: "accepted\n",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          cancelled: false,
+        },
+      },
+    };
+    const renderSubmission = (expanded: boolean) => tools[0].renderResult?.(
+      submission,
+      { expanded, isPartial: false },
+      theme,
+      {},
+    ).render(120).join("\n");
+
+    expect(renderSubmission(false)).toContain("Scheduler submission accepted by bq");
+    expect(renderSubmission(false)).toContain("to expand");
+    expect(renderSubmission(false)).not.toContain("FULL SUBMISSION RESULT");
+    expect(renderSubmission(true)).toContain("FULL SUBMISSION RESULT");
+
+    const wakeRenderer = renderers.get("scheduler-wake");
+    expect(wakeRenderer).toBeDefined();
+    if (!wakeRenderer) throw new Error("scheduler wake renderer was not registered");
+    const wake = {
+      role: "custom" as const,
+      customType: "scheduler-wake",
+      content: "[SCHEDULER WAKE]\n\nFULL WAKE RESULT",
+      display: true,
+      details: {
+        submissionId: "submission-1",
+        reentryPrompt: "Recheck the service.",
+        outcome: { kind: "exit" as const, code: 0 },
+        stdout: { preview: "", truncated: false },
+        stderr: { preview: "", truncated: false },
+      },
+      timestamp: 1,
+    };
+    const collapsedWake = wakeRenderer(wake, { expanded: false }, theme as never)?.render(120).join("\n");
+    const expandedWake = wakeRenderer(wake, { expanded: true }, theme as never)?.render(120).join("\n");
+
+    expect(collapsedWake).toContain("[SCHEDULER WAKE] payload exited with code 0");
+    expect(collapsedWake).toContain("to expand");
+    expect(collapsedWake).not.toContain("FULL WAKE RESULT");
+    expect(expandedWake).toContain("FULL WAKE RESULT");
+  });
+
   it("submits through the Pi tool and injects the callback as a visible follow-up wake", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "ompi-scheduler-index-"));
     const tools: RegisteredTool[] = [];
@@ -68,6 +149,7 @@ describe("scheduler extension", () => {
     let invocation: BqInvocation | undefined;
     const pi = {
       registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerMessageRenderer: () => {},
       on: (event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler),
       sendMessage: (message: Record<string, unknown>, options: Record<string, unknown>) => {
         messages.push({ message, options });

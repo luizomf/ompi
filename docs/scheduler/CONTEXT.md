@@ -71,7 +71,9 @@ _Avoid_: Queue completion event, watcher result, durable notification
 - The submission returns bounded `bq` stdout, stderr, and exit status without
   waiting for Queue completion. A zero exit confirms acceptance; every other
   result leaves acceptance unknown because durable work may already have been
-  created and must not be retried blindly.
+  created and must not be retried blindly. In the interactive TUI, submission
+  diagnostics and scheduler wake details are collapsed by default and remain
+  available through Pi's native tool expansion control.
 - Independently requested scheduler submissions may be issued as sibling tool
   calls so Pi can run their bounded acceptance requests concurrently. The
   orchestrator never waits for one scheduler wake before submitting another.

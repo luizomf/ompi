@@ -1,4 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  keyHint,
+  type AgentToolResult,
+  type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import {
   SchedulerSession,
@@ -120,6 +125,12 @@ export function formatSchedulerWake(wake: SchedulerWake): string {
   return parts.join("\n\n");
 }
 
+function toolResultText(result: AgentToolResult<unknown>): string {
+  return result.content
+    .map((item) => item.type === "text" ? item.text : "[Non-text scheduler output omitted.]")
+    .join("\n");
+}
+
 function bqStatus(result: BqProcessResult): string {
   if (result.cancelled) return "cancelled before bq finished reporting acceptance";
   if (result.code !== null) return `exit code: ${result.code}`;
@@ -152,6 +163,18 @@ export function registerSchedulerExtension(
 ): void {
   let session: SchedulerSession | undefined;
 
+  pi.registerMessageRenderer("scheduler-wake", (message, { expanded }, theme) => {
+    const wake = message.details as SchedulerWake | undefined;
+    const heading = wake
+      ? `[SCHEDULER WAKE] ${outcomeText(wake.outcome)}`
+      : "[SCHEDULER WAKE]";
+    const collapsed = `${heading}\n${keyHint("app.tools.expand", "to expand")}`;
+    const content = expanded && typeof message.content === "string" ? message.content : collapsed;
+    const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+    box.addChild(new Text(content, 0, 0));
+    return box;
+  });
+
   pi.registerTool({
     name: "scheduler_submit",
     label: "Submit Scheduler Wake",
@@ -174,6 +197,18 @@ export function registerSchedulerExtension(
         content: [{ type: "text", text: formatSchedulerSubmission(result) }],
         details: result,
       };
+    },
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return new Text(theme.fg("warning", "Submitting scheduler wake..."), 0, 0);
+      if (expanded) return new Text(toolResultText(result), 0, 0);
+
+      const submission = result.details as SchedulerSubmissionResult | undefined;
+      const heading = submission
+        ? submission.acceptance === "confirmed"
+          ? `Scheduler submission accepted by bq (${bqStatus(submission.bq)}).`
+          : `Scheduler submission acceptance is unknown (${bqStatus(submission.bq)}).`
+        : "Scheduler submission finished.";
+      return new Text(`${heading}\n${keyHint("app.tools.expand", "to expand")}`, 0, 0);
     },
   });
 
