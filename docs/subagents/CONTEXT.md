@@ -40,13 +40,15 @@ _Avoid_: Model callback, polling, status check
 A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the orchestrator conversation. A minimal footer count remains visible while any subagent turn is active.
 _Avoid_: Transcript message, progress polling, full output
 
-## Routing inheritance
+## Routing selection
 
-Every clean start and continuation inherits the orchestrator's active model and
-current Pi thinking level when that turn is dispatched. Agent-facing tools and
-command JSON cannot override those human-controlled choices. A model or thinking
-change in the orchestrator therefore applies to the next dispatched subagent
-turn, including a continuation of an existing conversation.
+Every clean start and continuation independently inherits each omitted routing
+value from the orchestrator's active model and current Pi thinking level when
+that turn is dispatched. Agent-facing tools and command JSON may provide a
+non-empty Pi `provider/model` selector, a supported `reasoning` level, or both
+for that dispatch only. The orchestrator agent must omit these overrides unless
+the user explicitly requests that routing. An override never becomes a default
+for later continuations.
 
 ## Turn-release contract
 

@@ -240,15 +240,17 @@ The extension exposes these tools and matching commands:
 | `subagent_list` | `/sublist` | List session-scoped known conversations |
 
 Use plain command arguments for common operations, or JSON with `/sub` and
-`/subcont` for working-directory, tool, and name options. Every start and
-continuation inherits the orchestrator's active model and thinking level at the
-moment that turn is dispatched; agent and command inputs cannot override either
-choice. The live subagent widget and `/sublist` output show both inherited
+`/subcont` for routing, working-directory, tool, and name options. Each omitted
+routing value inherits the orchestrator's active value when that turn is
+dispatched. Optional `model` (`provider/model`) and `reasoning` overrides apply
+to one dispatch only and must be supplied only when the user explicitly requests
+that routing. The live subagent widget and `/sublist` output show the effective
 routing values. For example:
 
 ```text
 /sub Inspect the authentication flow and report risks.
 /sub {"prompt":"Run the focused tests","name":"tests","tools":["read","bash"]}
+/sub {"prompt":"Inspect memory handling","model":"openai-codex/gpt-5.6-luna","reasoning":"high"}
 /subcont 1 Check the newly changed files.
 /substeer 1 Focus only on the parser.
 /substop 1
