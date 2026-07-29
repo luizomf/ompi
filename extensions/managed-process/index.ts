@@ -125,10 +125,10 @@ export function registerManagedProcessExtension(
     description: "Start a session-scoped long-running process from an executable plus literal arguments and cwd, without a shell. Returns after spawn acceptance instead of waiting for completion. The child inherits the Pi process environment, which may include credentials; stdin is ignored and no interactive TTY is allocated. On Unix the extension owns a process group for bounded stop and shutdown cleanup. It does not sandbox network access or force servers to bind loopback.",
     promptSnippet: "Start a session-scoped long-running server, watcher, tail, or development process",
     promptGuidelines: [
-      "Use managed_process_start only for commands expected to remain active; use ordinary bash for finite commands.",
-      "Before managed_process_start, inspect the executable, literal arguments, cwd, inherited-environment needs, stdin or TTY assumptions, and network binding options without exposing credential values; prefer a verified absolute executable path.",
+      "Use managed_process_start whenever the current task genuinely requires a long-running local process that would otherwise block a synchronous tool call, such as a server, watcher, tail, or development process. No separate confirmation is required merely because it runs in the background when it remains within the user's existing task authorization and safety constraints. Expected lifecycle, not elapsed seconds, distinguishes managed processes from finite commands; use ordinary bash for finite commands.",
+      "Before managed_process_start, inspect the executable, its direct helpers, literal arguments, cwd, inherited-environment needs, stdin or TTY assumptions, and network binding options without exposing credential values; prefer a verified absolute executable path.",
       "managed_process_start does not enforce loopback binding or sandbox network access; pass an application's verified loopback option when network exposure matters.",
-      "After managed_process_start accepts a process, do not wait, sleep, or repeatedly poll. Continue independent work; use managed_process_output or managed_process_list only when a concrete snapshot is needed.",
+      "After managed_process_start accepts a process, do not wait, sleep, or repeatedly poll. Continue independent work. One concrete bounded output/list snapshot or readiness probe is allowed when needed; later snapshots require a real diagnostic or decision need rather than waiting for change.",
     ],
     parameters: StartSchema,
     async execute(_id, params: StartParams, signal, _onUpdate, ctx) {
@@ -190,6 +190,9 @@ export function registerManagedProcessExtension(
     name: "managed_process_stop",
     label: "Stop Managed Process",
     description: "Explicitly stop a known session-scoped managed process. On Unix this terminates its owned process group with SIGTERM and bounded SIGKILL escalation; a process that deliberately creates a new session or process group may escape that OS mechanism. Repeating stop for a known terminal process is safe.",
+    promptGuidelines: [
+      "Use managed_process_stop once a managed process is no longer needed. Session-shutdown cleanup is a fallback, not a reason to leave unnecessary processes active.",
+    ],
     parameters: StopSchema,
     async execute(_id, params) {
       const view = await controller.stop(params.id);

@@ -43,6 +43,18 @@ describe("managed-process extension", () => {
     for (const boundary of ["without a shell", "inherits", "credentials", "loopback", "stdin", "TTY", "session-scoped", "process group"]) {
       expect(discovery).toContain(boundary);
     }
+    for (const intent of [
+      "whenever the current task genuinely requires",
+      "No separate confirmation is required",
+      "Expected lifecycle, not elapsed seconds",
+      "direct helpers",
+      "One concrete bounded output/list snapshot or readiness probe",
+      "later snapshots",
+      "no longer needed",
+      "fallback",
+    ]) {
+      expect(discovery).toContain(intent);
+    }
 
     await handlers.get("session_start")?.({}, ctx);
     const start = await tools[0].execute("start-1", {
