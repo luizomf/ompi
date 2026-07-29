@@ -15,7 +15,7 @@ Create a new context lazily when another experiment develops domain-specific lan
 
 ## Current Layout
 
-- `docs/scheduler/CONTEXT.md` — Pi scheduler wake extension language and Queue boundary
+- `docs/scheduler/CONTEXT.md` — Pi background-runner and scheduler language and Queue boundary
 - `docs/subagents/CONTEXT.md` — Pi subagent extension language
 - `docs/subagents/docs/adr/` — future context-specific ADRs
 - `docs/adr/` — future repository-wide ADRs

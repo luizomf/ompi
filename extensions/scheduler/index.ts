@@ -52,7 +52,7 @@ const TimingSchema = Type.Object({
   })),
 }, {
   additionalProperties: false,
-  description: "Omit timing for an immediate wake. Otherwise use exactly one of in, at, or cron. Finite repetition requires in or at plus both every and count.",
+  description: "Omit timing to submit a payload for immediate Queue execution or to fire an immediate payload-free heartbeat. Otherwise use exactly one of in, at, or cron. Finite repetition requires in or at plus both every and count.",
 });
 const PayloadSchema = Type.Object({
   executable: Type.String({
@@ -74,13 +74,13 @@ const PayloadSchema = Type.Object({
   })),
 }, {
   additionalProperties: false,
-  description: "Optional command run before the wake. It does not inherit the interactive shell environment wholesale; inspect the executable and directly invoked helpers for required environment variables, PATH entries, working directories, runtimes, stdin or TTY assumptions, and detached child processes before submission.",
+  description: "Optional fixed, non-interactive command run before the required best-effort wake. It runs immediately through OMQueue when timing is omitted, or according to the supplied timing, and the wake is attempted after the payload terminates. The command does not inherit the interactive shell environment wholesale; inspect the executable and directly invoked helpers for required environment variables, PATH entries, working directories, runtimes, stdin or TTY assumptions, and detached child processes before submission.",
 });
 const SubmitSchema = Type.Object({
   reentryPrompt: Type.String({
     minLength: 1,
     maxLength: MAX_REENTRY_PROMPT_CHARACTERS,
-    description: "Required self-contained prompt that explains the deferred context, completed event, checks to perform, constraints, and next decision.",
+    description: "Required self-contained prompt delivered back to the owning Pi session in the best-effort wake after a heartbeat fires or the payload terminates. Explain the deferred context, completed event, checks to perform, constraints, and next decision.",
   }),
   timing: Type.Optional(TimingSchema),
   payload: Type.Optional(PayloadSchema),
@@ -177,17 +177,18 @@ export function registerSchedulerExtension(
 
   pi.registerTool({
     name: "scheduler_submit",
-    label: "Submit Scheduler Wake",
-    description: "Submit an immediate, delayed, absolute-time, finite-repeat, or cron scheduler wake through the existing global bq wrapper. Use for scheduler, cron, heartbeat, reminder, delayed command, or deferred recheck requests. Timing follows strict bq syntax: durations are positive integers ending in m, h, or d (for example 10m), absolute times are ISO 8601 whole minutes with an explicit offset, and finite repeats require in or at together with every and count. OMQueue has one-minute precision. Returns after bounded bq acceptance output and never waits for Queue completion. A complete reentryPrompt is required; an optional executable and literal argument vector run without a shell before the wake. Raw bq invocation or inspection remains ordinary bash work.",
-    promptSnippet: "Submit a fire-and-forget scheduler, cron, heartbeat, reminder, delayed command, or deferred recheck wake",
+    label: "Submit Background or Scheduled Work",
+    description: "Submit fixed, non-interactive work through OMQueue immediately when timing is omitted, or after a delay, at an absolute time, as a finite repeat, or on cron. Use scheduler_submit when finite work should run in the Queue background and wake Pi after its outcome, or for payload-free reminders, heartbeats, and deferred rechecks. The tool returns after bounded bq acceptance output, never after payload completion. After a heartbeat fires or a shell-free payload terminates, it attempts the required best-effort wake into the live owning Pi session with the complete reentryPrompt, mechanical outcome, and bounded stream previews. OMQueue timing has one-minute precision. Direct raw bq CLI testing, debugging, inspection, or administration remains ordinary bash work.",
+    promptSnippet: "Run finite commands through OMQueue now or later and wake Pi after completion; create cron, repeats, reminders, heartbeats, and deferred rechecks",
     promptGuidelines: [
-      "Use scheduler_submit only for fire-and-forget scheduler wakes; always provide a complete self-contained reentryPrompt that preserves deferred context, required checks, constraints, and the next decision.",
-      "Use strict timing values: 10m/2h/1d rather than prose or seconds; finite repeats require in or at plus both every and count; omit timing for an immediate wake.",
+      "Use scheduler_submit for fixed, non-interactive finite work when Queue-backed background execution plus an automatic best-effort completion wake is useful, including work submitted immediately with no timing. Use ordinary bash for finite work that should complete synchronously in the current turn. Use managed_process_start for genuinely long-running servers, watchers, tails, or development processes that need snapshot and stop operations and emit no automatic completion wake.",
+      "Always provide scheduler_submit with a complete self-contained reentryPrompt that preserves deferred context, required checks, constraints, and the next decision after the heartbeat fires or payload terminates.",
+      "Use strict timing values: 10m/2h/1d rather than prose or seconds; finite repeats require in or at plus both every and count; omit timing to submit a payload for immediate Queue execution or fire an immediate payload-free heartbeat.",
       "Before submitting a payload, inspect its executable and directly invoked helpers for required environment variables, PATH entries, working directories, runtimes, stdin or TTY assumptions, and detached child processes; do not assume wholesale inheritance from the interactive shell or expose secret values while checking.",
       "Write payload reentry prompts outcome-conditionally: inspect the wake's mechanical outcome and bounded previews, never infer payload success from scheduler acceptance or call the result an official OMQueue Job state, prohibit unauthorized reruns and Queue inspection, and state the next action or stopping point.",
-      "When multiple independent scheduler submissions are requested, issue their scheduler_submit calls in the same turn so Pi can run them concurrently; do not wait for one wake before submitting another.",
-      "After scheduler_submit reports bq acceptance, never wait, sleep, poll, inspect OMQueue, or watch Queue completion; continue only independent work or end the response so a later scheduler wake can be delivered.",
-      "When the user explicitly asks to invoke or inspect raw bq behavior, use ordinary bash instead of scheduler_submit.",
+      "When multiple independent scheduler submissions are requested, issue their scheduler_submit calls in the same turn so Pi can run their bounded acceptance requests concurrently; do not wait for one wake before submitting another.",
+      "After scheduler_submit reports bq acceptance, never wait, sleep, poll, inspect OMQueue, or watch Queue completion; continue only independent work or end the response so the later wake can be delivered when the live owning Pi session is reachable.",
+      "A user-provided equivalent bq command or syntax example does not by itself request ordinary bash; route by the requested lifecycle. For bq-related requests, use ordinary bash only when the user explicitly asks to invoke, test, debug, or inspect the raw bq CLI or administer OMQueue.",
     ],
     parameters: SubmitSchema,
     async execute(_toolCallId, params: SubmitParams, signal, _onUpdate, ctx) {

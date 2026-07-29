@@ -14,9 +14,17 @@ import type { BqInvocation } from "./scheduler.ts";
 
 interface RegisteredTool {
   name: string;
+  label: string;
   description: string;
   promptSnippet?: string;
   promptGuidelines?: string[];
+  parameters: {
+    properties?: {
+      reentryPrompt?: { description?: string };
+      timing?: { description?: string };
+      payload?: { description?: string };
+    };
+  };
   execute(
     id: string,
     params: Record<string, unknown>,
@@ -50,6 +58,39 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
 }
 
 describe("scheduler extension", () => {
+  it("discovers Queue-backed finite work by completion lifecycle instead of command duration", () => {
+    const tools: RegisteredTool[] = [];
+    const pi = {
+      registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerMessageRenderer: () => {},
+      on: () => {},
+    } as unknown as ExtensionAPI;
+
+    registerSchedulerExtension(pi);
+
+    expect(tools).toHaveLength(1);
+    const tool = tools[0];
+    const discovery = [
+      tool.label,
+      tool.description,
+      tool.promptSnippet ?? "",
+      ...(tool.promptGuidelines ?? []),
+      tool.parameters.properties?.reentryPrompt?.description ?? "",
+      tool.parameters.properties?.timing?.description ?? "",
+      tool.parameters.properties?.payload?.description ?? "",
+    ].join(" ");
+
+    expect(tool.label).toBe("Submit Background or Scheduled Work");
+    expect(discovery).toContain("immediately through OMQueue when timing is omitted");
+    expect(discovery).toContain("finite work that should complete synchronously in the current turn");
+    expect(discovery).toContain("after the payload terminates");
+    expect(discovery).toContain("managed_process_start");
+    expect(discovery).toContain("no automatic completion wake");
+    expect(discovery).toContain("equivalent bq command or syntax example does not by itself");
+    expect(discovery).toContain("required best-effort wake");
+    expect(discovery).not.toContain("Use scheduler_submit only for fire-and-forget scheduler wakes");
+  });
+
   it("warns that nonzero bq completion may have partially accepted durable work", () => {
     const text = formatSchedulerSubmission({
       acceptance: "unknown",
@@ -179,7 +220,7 @@ describe("scheduler extension", () => {
         tools[0].promptSnippet ?? "",
         ...(tools[0].promptGuidelines ?? []),
       ].join(" ");
-      for (const term of ["cron", "scheduler", "heartbeat", "reminder", "delayed command", "deferred recheck"]) {
+      for (const term of ["cron", "scheduler", "heartbeat", "reminder", "after a delay", "deferred recheck"]) {
         expect(discovery).toContain(term);
       }
       expect(discovery).toContain("complete self-contained reentryPrompt");

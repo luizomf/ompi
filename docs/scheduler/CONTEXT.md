@@ -1,32 +1,36 @@
 # Pi Scheduler
 
-Language and boundaries for the opt-in Pi extension that submits
-fire-and-forget scheduler wakes through the existing global `bq` wrapper.
+Language and boundaries for the opt-in Pi extension that submits fixed finite
+work and scheduler wakes through the existing global `bq` wrapper and OMQueue.
 
 ## Language
 
 **Scheduler extension**:
-The Pi-facing adapter that owns scheduler submission, the live session callback
-endpoint, and visible scheduler wake delivery. It delegates timing and durable
-execution to `bq` and OMQueue.
+The Pi-facing OMQueue-backed background runner and scheduler. It owns submission,
+the live session callback endpoint, and visible scheduler wake delivery while
+delegating timing and durable execution to `bq` and OMQueue.
 _Avoid_: OMQueue client, Queue administrator, watcher, workflow engine
 
 **Scheduler submission**:
-One immediate `bq` acceptance request containing timing options, a required
-reentry prompt, and an optional payload. The extension returns when `bq` exits;
-it does not wait for the queued payload.
-_Avoid_: Job completion, synchronous scheduler run, Queue watch
+One immediate `bq` acceptance request containing optional timing, a required
+reentry prompt, and an optional payload. Without timing, a payload is submitted
+for immediate Queue execution or a payload-free heartbeat fires immediately.
+The tool returns when `bq` exits; it does not wait for the queued payload.
+_Avoid_: Job completion, synchronous command execution, Queue watch
 
 **Reentry prompt**:
 The required self-contained instruction carried by every scheduler submission
-and repeated in its wake. It preserves the deferred context, checks,
-constraints, and next decision after delay or context compaction.
+and delivered in the required best-effort wake after a heartbeat fires or a
+payload terminates. It preserves the deferred context, checks, constraints, and
+next decision after delay or context compaction.
 _Avoid_: Label, short notification, implicit conversation memory
 
 **Payload**:
-The optional executable, literal argument vector, and working directory run by
-the callback runner before waking Pi. Omitting it creates a heartbeat-only wake.
-Payloads are never shell command strings.
+The optional fixed, non-interactive executable, literal argument vector, and
+working directory run by the callback runner. It runs immediately when timing
+is omitted or according to the supplied timing, then the runner attempts the
+required best-effort wake after termination. Omitting the payload creates a
+heartbeat-only wake. Payloads are never shell command strings.
 _Avoid_: Shell script text, Queue Job definition
 
 **Callback runner**:
@@ -55,6 +59,16 @@ _Avoid_: Queue completion event, watcher result, durable notification
 
 - `bq` owns timing syntax, timing validation, durable Job or Schedule
   acceptance, and OMQueue integration.
+- Lifecycle intent controls routing. Ordinary bash owns finite work that should
+  complete synchronously in the current turn. `scheduler_submit` owns fixed,
+  non-interactive finite work that should run through OMQueue now or later and
+  wake Pi after its outcome. `managed_process_start` owns genuinely long-running
+  servers, watchers, tails, and development processes with explicit snapshot and
+  stop operations and no automatic completion wake.
+- Immediate scheduler submission is not a blanket replacement for synchronous
+  bash. It is useful when Queue-backed background execution and an automatic
+  best-effort completion wake matter; a trivial current-turn command is normally
+  simpler through ordinary bash.
 - OMQueue remains opaque to the scheduler extension.
 - A scheduler submission invokes `bq` directly with a literal argument vector.
   It forwards valid XDG configuration, state, and runtime roots so `bq` reaches
@@ -80,8 +94,11 @@ _Avoid_: Queue completion event, watcher result, durable notification
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
   database, or exposes cancellation, retry, history, output retrieval, or other
   Queue administration.
-- Raw `bq` invocation or inspection requested by the user remains ordinary bash
-  work, not a scheduler submission.
+- Equivalent `bq` syntax supplied as an example does not by itself select
+  ordinary bash. Use `scheduler_submit` when the requested lifecycle is Queue
+  background execution, scheduling, repetition, heartbeat, reminder, or deferred
+  recheck. For `bq`-related requests, reserve ordinary bash for explicit raw-CLI
+  invocation, testing, debugging, inspection, or OMQueue administration.
 - Scheduler wakes are best effort and session-scoped. Closing Pi, host loss,
   forced runner termination, or failure before the runner starts can prevent a
   wake. Durable schedules and payloads may continue after the owning Pi session

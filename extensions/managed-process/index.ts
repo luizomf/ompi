@@ -122,10 +122,11 @@ export function registerManagedProcessExtension(
   pi.registerTool({
     name: "managed_process_start",
     label: "Start Managed Process",
-    description: "Start a session-scoped long-running process from an executable plus literal arguments and cwd, without a shell. Returns after spawn acceptance instead of waiting for completion. The child inherits the Pi process environment, which may include credentials; stdin is ignored and no interactive TTY is allocated. On Unix the extension owns a process group for bounded stop and shutdown cleanup. It does not sandbox network access or force servers to bind loopback.",
-    promptSnippet: "Start a session-scoped long-running server, watcher, tail, or development process",
+    description: "Start a session-scoped long-running process from an executable plus literal arguments and cwd, without a shell. Returns after spawn acceptance instead of waiting for completion. It does not send a completion wake or trigger a turn when the process exits; observation and stop are explicit snapshot operations. The child inherits the Pi process environment, which may include credentials; stdin is ignored and no interactive TTY is allocated. On Unix the extension owns a process group for bounded stop and shutdown cleanup. It does not sandbox network access or force servers to bind loopback.",
+    promptSnippet: "Start and explicitly manage a session-scoped long-running server, watcher, tail, or development process without an automatic completion wake",
     promptGuidelines: [
-      "Use managed_process_start whenever the current task genuinely requires a long-running local process that would otherwise block a synchronous tool call, such as a server, watcher, tail, or development process. No separate confirmation is required merely because it runs in the background when it remains within the user's existing task authorization and safety constraints. Expected lifecycle, not elapsed seconds, distinguishes managed processes from finite commands; use ordinary bash for finite commands.",
+      "Use managed_process_start whenever the current task genuinely requires a long-running local process with an explicit snapshot and stop lifecycle, such as a server, watcher, tail, or development process. No separate confirmation is required merely because it runs in the background when it remains within the user's existing task authorization and safety constraints. Expected lifecycle, not elapsed seconds, distinguishes managed processes from finite work.",
+      "Use ordinary bash for finite work that should complete synchronously in the current turn. Use scheduler_submit for fixed, non-interactive finite work that should run through OMQueue and wake Pi after its outcome.",
       "Before managed_process_start, inspect the executable, its direct helpers, literal arguments, cwd, inherited-environment needs, stdin or TTY assumptions, and network binding options without exposing credential values; prefer a verified absolute executable path.",
       "managed_process_start does not enforce loopback binding or sandbox network access; pass an application's verified loopback option when network exposure matters.",
       "After managed_process_start accepts a process, do not wait, sleep, or repeatedly poll. Continue independent work. One concrete bounded output/list snapshot or readiness probe is allowed when needed; later snapshots require a real diagnostic or decision need rather than waiting for change.",
@@ -141,7 +142,7 @@ export function registerManagedProcessExtension(
       return {
         content: [{
           type: "text",
-          text: `Managed process #${view.id} started and is ${view.state}. It is session-scoped; Pi shutdown will attempt bounded process-group cleanup, but descendants that deliberately escape the group may survive. Do not wait, sleep, or repeatedly poll it; continue useful work and request a bounded snapshot only when needed.`,
+          text: `Managed process #${view.id} started and is ${view.state}. It is session-scoped and will not send a completion wake or trigger a turn when it exits. Pi shutdown will attempt bounded process-group cleanup, but descendants that deliberately escape the group may survive. Do not wait, sleep, or repeatedly poll it; continue useful work and request a bounded snapshot only when needed.`,
         }],
         details: view,
       };
