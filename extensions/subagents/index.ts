@@ -5,6 +5,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import {
@@ -17,9 +18,14 @@ import {
 } from "./controller.ts";
 import { buildChildInvocation, RpcSubprocess } from "./rpc-child.ts";
 
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
 const NATIVE_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 const PONG_TEXT_LIMIT = 8_000;
 
+const ReasoningSchema = StringEnum(THINKING_LEVELS, {
+  description: "Reasoning override for this dispatch; omit to inherit the orchestrator's current level",
+});
 const ToolsSchema = Type.Array(Type.String(), {
   minItems: 1,
   description: "Allowlist of native Pi tools: read, bash, edit, write, grep, find, ls",
@@ -28,6 +34,11 @@ const ToolsSchema = Type.Array(Type.String(), {
 const StartSchema = Type.Object({
   prompt: Type.String({ description: "Complete initial prompt for the clean subagent conversation" }),
   name: Type.Optional(Type.String({ description: "Native Pi session display name" })),
+  model: Type.Optional(Type.String({
+    minLength: 1,
+    description: "Pi provider/model override for this dispatch; omit to inherit the orchestrator's active model",
+  })),
+  reasoning: Type.Optional(ReasoningSchema),
   cwd: Type.Optional(Type.String({ description: "Initial working directory; fixed for this conversation" })),
   tools: Type.Optional(ToolsSchema),
 });
@@ -35,6 +46,11 @@ const StartSchema = Type.Object({
 const ContinueSchema = Type.Object({
   id: Type.Integer({ minimum: 1 }),
   prompt: Type.String({ description: "Prompt for the next turn in the existing conversation" }),
+  model: Type.Optional(Type.String({
+    minLength: 1,
+    description: "Pi provider/model override for this dispatch; omit to inherit the orchestrator's active model",
+  })),
+  reasoning: Type.Optional(ReasoningSchema),
   tools: Type.Optional(ToolsSchema),
 });
 
@@ -59,6 +75,22 @@ function validateTools(tools?: string[]): string[] | undefined {
 function activeModel(ctx: ExtensionContext): string {
   if (!ctx.model) throw new Error("The orchestrator has no active model to inherit.");
   return `${ctx.model.provider}/${ctx.model.id}`;
+}
+
+function selectedModel(value: unknown, ctx: ExtensionContext): string {
+  if (value === undefined) return activeModel(ctx);
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("Model override must be a non-empty Pi provider/model selector.");
+  }
+  return value;
+}
+
+function selectedThinking(value: unknown, inherited: ThinkingLevel): ThinkingLevel {
+  if (value === undefined) return inherited;
+  if (typeof value !== "string" || !THINKING_LEVEL_SET.has(value)) {
+    throw new Error(`Reasoning override must be one of: ${THINKING_LEVELS.join(", ")}.`);
+  }
+  return value as ThinkingLevel;
 }
 
 function oneLine(value: string, limit: number): string {
@@ -183,8 +215,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     const input: StartInput = {
       prompt: params.prompt,
       name: params.name,
-      model: activeModel(ctx),
-      thinking: pi.getThinkingLevel() as ThinkingLevel,
+      model: selectedModel(params.model, ctx),
+      thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
       cwd: resolve(ctx.cwd, params.cwd ?? "."),
       tools: validateTools(params.tools),
     };
@@ -195,8 +227,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     const input: ContinueInput = {
       id: params.id,
       prompt: params.prompt,
-      model: activeModel(ctx),
-      thinking: pi.getThinkingLevel() as ThinkingLevel,
+      model: selectedModel(params.model, ctx),
+      thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
       tools: validateTools(params.tools),
     };
     return controller.continue(input);
@@ -205,9 +237,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: "Start a clean persistent Pi conversation asynchronously. Returns after RPC prompt acceptance; completion arrives later as one pong. Never wait or poll for that pong.",
+    description: "Start a clean persistent Pi conversation asynchronously. Optional model or reasoning overrides apply to this dispatch and are only for an explicit user request. Returns after RPC prompt acceptance; completion arrives later as one pong. Never wait or poll for that pong.",
     promptSnippet: "Start an independent asynchronous Pi conversation with a complete prompt",
     promptGuidelines: [
+      "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
       "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; do not wait for one pong before starting another.",
       "After subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
     ],
@@ -227,8 +260,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: "Start another asynchronous turn in a settled known subagent conversation. Returns after prompt acceptance; never wait or poll for completion.",
+    description: "Start another asynchronous turn in a settled known subagent conversation. Optional model or reasoning overrides apply to this dispatch and are only for an explicit user request. Returns after prompt acceptance; never wait or poll for completion.",
     promptGuidelines: [
+      "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
       "After subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
     ],
     parameters: ContinueSchema,
