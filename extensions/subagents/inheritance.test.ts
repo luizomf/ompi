@@ -94,7 +94,7 @@ describe("subagent routing inheritance", () => {
     rpc.children.length = 0;
   });
 
-  it("exposes opt-in routing schemas and explicit-request guidance", () => {
+  it("exposes opt-in routing schemas and default-routing guidance", () => {
     const { tools } = setup();
 
     for (const name of ["subagent_start", "subagent_continue"]) {
@@ -108,6 +108,8 @@ describe("subagent routing inheritance", () => {
       expect(tool.description).toContain("explicit user request");
       expect(tool.promptGuidelines.join(" ")).toContain("only when the user explicitly requests");
       expect(tool.promptGuidelines.join(" ")).toContain("omit every unrequested override");
+      expect(tool.promptGuidelines.join(" ")).toContain("openai-codex/gpt-5.6-sol with medium reasoning");
+      expect(tool.promptGuidelines.join(" ")).toContain("override only values that differ");
     }
   });
 

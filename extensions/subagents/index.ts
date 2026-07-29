@@ -241,6 +241,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     promptSnippet: "Start an independent asynchronous Pi conversation with a complete prompt",
     promptGuidelines: [
       "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
+      "Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
       "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; do not wait for one pong before starting another.",
       "After subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
     ],
@@ -263,6 +264,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     description: "Start another asynchronous turn in a settled known subagent conversation. Optional model or reasoning overrides apply to this dispatch and are only for an explicit user request. Returns after prompt acceptance; never wait or poll for completion.",
     promptGuidelines: [
       "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
+      "Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
       "After subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
     ],
     parameters: ContinueSchema,
