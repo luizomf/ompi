@@ -63,10 +63,18 @@ describe("codex_search background delivery", () => {
       "quick",
       "research",
     ]);
-    expect(tool.parameters.properties.effort.description).toMatch(/helper owns actual model and reasoning selection/i);
+    expect(tool.parameters.properties.effort.description).toMatch(/helper owns.*default model and reasoning/i);
     expect(tool.parameters.properties).not.toHaveProperty("model");
     expect(tool.parameters.properties).not.toHaveProperty("reasoning");
-    expect(processMock.run).toHaveBeenCalledWith("find Bash sources", "/repo", "quick", expect.any(AbortSignal));
+    expect(tool.parameters.properties).toHaveProperty("write");
+    expect(tool.parameters.properties).toHaveProperty("yolo");
+    expect(processMock.run).toHaveBeenCalledWith(
+      "find Bash sources",
+      "/repo",
+      "quick",
+      { write: undefined, yolo: undefined },
+      expect.any(AbortSignal),
+    );
     const guidance = tool.promptGuidelines.join(" ");
     expect(guidance).toContain("never wait");
     expect(guidance).toMatch(/independently useful.*same turn.*concurrently.*do not wait/s);
@@ -96,7 +104,12 @@ describe("codex_search background delivery", () => {
 
     await tool.execute(
       "search-2",
-      { query: "synthesize conflicting primary sources", effort: "research" },
+      {
+        query: "synthesize conflicting primary sources",
+        effort: "research",
+        write: true,
+        yolo: true,
+      },
       undefined,
       undefined,
       { cwd: "/repo" } as ExtensionContext,
@@ -105,6 +118,7 @@ describe("codex_search background delivery", () => {
       "synthesize conflicting primary sources",
       "/repo",
       "research",
+      { write: true, yolo: true },
       expect.any(AbortSignal),
     );
 

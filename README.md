@@ -71,13 +71,14 @@ Enable it explicitly for one Pi process:
 pi --no-extensions --extension ./extensions/codex-search/index.ts
 ```
 
-It invokes `codex_search --profile <effort> --skip-git-repo-check -` directly
-without a shell and sends the research query through stdin. The optional
-`effort` is a bounded semantic choice: `quick` (the default) covers search,
-scraping, extraction, and source cleanup, while `research` delegates complex
-source comparison or synthesis. The helper resolved from `PATH` owns the actual
-model and reasoning mappings, so model catalog changes do not alter the tool
-schema.
+It invokes `codex_search --profile <effort> --skip-git-repo-check --cd
+<pi-cwd> -` directly without a shell and sends the prompt through stdin. The
+optional `effort` is a bounded semantic choice: `quick` (the default) covers
+search, scraping, extraction, and source cleanup, while `research` delegates
+complex source comparison or synthesis. The helper resolved from `PATH` owns
+the fixed model and reasoning mappings, isolating calls from machine-local Codex
+configuration. Run `codex_search --list-models` (or `codex debug models`) outside
+Pi to inspect the account's current model catalog.
 
 The tool returns immediately after a session-scoped background operation starts,
 keeps a minimal live footer count, and later delivers exactly one collapsible
@@ -93,15 +94,19 @@ useful Codex or other background research calls can be started in the same turn;
 the orchestrator does not await one result before starting another. Closing or
 reloading the owning Pi session aborts active searches and suppresses stale
 results; this path is intentionally not durable and does not use `bq` or
-OMQueue. The narrow trust-check bypass allows research from new or untrusted
-working directories without using `--yolo` or changing sandbox or approval
-behavior. Each process retains its fixed ten-minute timeout and bounded captured
-output. Model and reasoning defaults remain controlled by the `codex_search`
-executable resolved from `PATH`; the extension passes only the bounded profile,
-not a model, reasoning value, `--yolo`, ephemeral-container, or arbitrary Codex
-flags. Its model-produced result is not a verified primary source, so requests
-should ask for URLs or citations where relevant and verify those sources
-separately. The extension is
+OMQueue. The helper ignores `~/.codex/config.toml` while retaining Codex authentication,
+then explicitly enables search, ephemeral execution, and a read-only sandbox.
+This makes a fresh logged-in machine use the same operational defaults. The
+narrow trust-check bypass allows work from new or untrusted directories. The
+tool exposes only two permission opt-ins: `write: true` selects
+`workspace-write` with the Pi session cwd as its primary workspace, while
+`yolo: true` bypasses approvals and sandboxing entirely. The orchestrator must omit both
+unless the user explicitly requests the capability. Each process retains its
+fixed ten-minute timeout and bounded captured output. Model and reasoning
+defaults remain controlled by the `codex_search` executable resolved from
+`PATH`; the extension does not expose arbitrary Codex flags. Its model-produced
+result is not a verified primary source, so requests should ask for URLs or
+citations where relevant and verify those sources separately. The extension is
 not enabled by any launch profile or package manifest.
 
 Browser Fetch and Codex Search share the single background wrapper maintained at

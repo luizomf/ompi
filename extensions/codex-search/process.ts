@@ -10,6 +10,11 @@ const FORCE_KILL_DELAY_MS = 500;
 
 export type CodexSearchEffort = "quick" | "research";
 
+export interface CodexSearchOptions {
+  write?: boolean;
+  yolo?: boolean;
+}
+
 export interface ProcessRequest {
   command: string;
   args: string[];
@@ -109,11 +114,17 @@ export function buildCodexSearchRequest(
   query: string,
   cwd: string,
   effort: CodexSearchEffort,
+  options: CodexSearchOptions = {},
   signal?: AbortSignal,
 ): ProcessRequest {
+  const args = ["--profile", effort];
+  if (options.write) args.push("--write");
+  if (options.yolo) args.push("--yolo");
+  args.push("--skip-git-repo-check", "--cd", cwd, "-");
+
   return {
     command: "codex_search",
-    args: ["--profile", effort, "--skip-git-repo-check", "-"],
+    args,
     input: query,
     cwd,
     signal,
@@ -127,10 +138,11 @@ export async function runCodexSearch(
   query: string,
   cwd: string,
   effort: CodexSearchEffort,
+  options: CodexSearchOptions = {},
   signal?: AbortSignal,
 ): Promise<ProcessResult> {
   if (!query.trim()) throw new Error("codex_search requires a non-empty query.");
-  return runProcess(buildCodexSearchRequest(query, cwd, effort, signal));
+  return runProcess(buildCodexSearchRequest(query, cwd, effort, options, signal));
 }
 
 export function runProcess(request: ProcessRequest): Promise<ProcessResult> {

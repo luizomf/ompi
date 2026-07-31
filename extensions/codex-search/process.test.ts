@@ -74,13 +74,15 @@ async function runParentLeavingDescendant(
 describe("codex_search process wrapper", () => {
   it("builds a fixed shell-free quick invocation with the query on stdin", () => {
     const signal = new AbortController().signal;
-    const request = buildCodexSearchRequest("find primary sources", "/repo", "quick", signal);
+    const request = buildCodexSearchRequest("find primary sources", "/repo", "quick", {}, signal);
 
     expect([request.command, ...request.args]).toEqual([
       "codex_search",
       "--profile",
       "quick",
       "--skip-git-repo-check",
+      "--cd",
+      "/repo",
       "-",
     ]);
     expect(request).toMatchObject({
@@ -92,14 +94,23 @@ describe("codex_search process wrapper", () => {
     expect(request).not.toHaveProperty("shell");
   });
 
-  it("passes the bounded research profile without exposing arbitrary Codex options", () => {
-    const request = buildCodexSearchRequest("compare conflicting sources", "/repo", "research");
+  it("passes only explicit write and yolo capability opt-ins", () => {
+    const request = buildCodexSearchRequest(
+      "create an artifact from compared sources",
+      "/repo",
+      "research",
+      { write: true, yolo: true },
+    );
 
     expect([request.command, ...request.args]).toEqual([
       "codex_search",
       "--profile",
       "research",
+      "--write",
+      "--yolo",
       "--skip-git-repo-check",
+      "--cd",
+      "/repo",
       "-",
     ]);
   });

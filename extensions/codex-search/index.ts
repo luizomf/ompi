@@ -12,7 +12,13 @@ const QuerySchema = Type.Object({
     Type.Literal("quick"),
     Type.Literal("research"),
   ], {
-    description: "Choose only a semantic effort profile; the helper owns actual model and reasoning selection. Use quick (default) for search, scraping, extraction, and source cleanup. Use research only when the delegated work itself requires complex comparison or synthesis.",
+    description: "Semantic effort profile. Omit to use quick. The helper owns the profile's default model and reasoning.",
+  })),
+  write: Type.Optional(Type.Boolean({
+    description: "Use Codex workspace-write with the Pi session cwd as the primary workspace for this call. Omit or use false for read-only research.",
+  })),
+  yolo: Type.Optional(Type.Boolean({
+    description: "Explicitly bypass Codex approvals and sandboxing for this call. Extremely dangerous; use only when the user specifically requests it.",
   })),
 });
 
@@ -28,10 +34,11 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
   pi.registerTool(background.wrapReadOnly({
     name: "codex_search",
     label: "Codex Search",
-    description: "Run the existing codex_search helper asynchronously as a fallback when ordinary browser fetching is blocked or insufficient, or as an independent second research path. Choose quick (default) for search and extraction, or research when the delegated work requires complex comparison or synthesis. Returns immediately after starting bounded background work; completion arrives later as one background result. Model-produced research is not itself a verified primary source: ask for URLs or citations in the query when relevant, then verify those sources separately. The query is sent through stdin without a shell; captured research output is limited to 48,000 bytes.",
+    description: "Run the codex_search helper asynchronously for blocked-page fallback, independent web research, or another bounded Codex task. The fixed quick/research profiles isolate model and reasoning selection from the host Codex config. Calls are read-only by default; write explicitly selects workspace-write with the Pi session cwd as its primary workspace, and yolo is an explicit unsandboxed opt-in. Returns immediately after starting bounded background work; completion arrives later as one background result. Model-produced research is not itself a verified primary source: verify cited URLs and primary sources before relying on it. The prompt is sent through stdin without a shell; captured output is limited to 48,000 bytes.",
     promptSnippet: "Start asynchronous Codex web research as a fallback or independent second research path",
     promptGuidelines: [
       "Use codex_search when ordinary browser fetching is blocked or insufficient, or for an independent second research path; request URLs or citations when relevant and verify primary sources separately.",
+      "Omit write and yolo unless the user explicitly requests the capability. write uses workspace-write with the Pi session cwd as its primary workspace; yolo bypasses both approvals and sandboxing and is extremely dangerous.",
       "When multiple codex_search calls or other background research calls are independently useful, start them in the same turn so Pi can run them concurrently; do not wait for one result before starting another.",
       "After codex_search starts background research, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so the later background result can be delivered.",
     ],
@@ -39,7 +46,10 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       let result;
       try {
-        result = await runCodexSearch(params.query, ctx.cwd, params.effort ?? "quick", signal);
+        result = await runCodexSearch(params.query, ctx.cwd, params.effort ?? "quick", {
+          write: params.write,
+          yolo: params.yolo,
+        }, signal);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error([
