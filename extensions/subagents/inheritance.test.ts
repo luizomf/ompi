@@ -63,6 +63,7 @@ function valueAfter(args: string[], flag: string): string | undefined {
 function setup() {
   const tools = new Map<string, any>();
   const commands = new Map<string, any>();
+  const messages: unknown[] = [];
   let thinking = "low";
   const pi = {
     registerTool: (tool: { name: string }) => tools.set(tool.name, tool),
@@ -70,7 +71,7 @@ function setup() {
     registerMessageRenderer: () => undefined,
     on: () => undefined,
     getThinkingLevel: () => thinking,
-    sendMessage: () => undefined,
+    sendMessage: (message: unknown) => messages.push(message),
   } as unknown as ExtensionAPI;
   const notifications: string[] = [];
   const ctx = {
@@ -80,7 +81,7 @@ function setup() {
   } as unknown as ExtensionContext;
 
   subagentsExtension(pi);
-  return { tools, commands, ctx, notifications, setThinking: (level: string) => { thinking = level; } };
+  return { tools, commands, ctx, messages, notifications, setThinking: (level: string) => { thinking = level; } };
 }
 
 async function settle(index: number): Promise<void> {
@@ -111,6 +112,51 @@ describe("subagent routing inheritance", () => {
       expect(tool.promptGuidelines.join(" ")).toContain("openai-codex/gpt-5.6-sol with medium reasoning");
       expect(tool.promptGuidelines.join(" ")).toContain("override only values that differ");
     }
+  });
+
+  it("returns the terminal subagent result directly in print mode without a pong follow-up", async () => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "print";
+    const start = tools.get("subagent_start");
+    let completed = false;
+
+    const running = start.execute("start", { prompt: "one" }, undefined, undefined, ctx)
+      .then((result: unknown) => {
+        completed = true;
+        return result;
+      });
+
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+    expect(completed).toBe(false);
+    await settle(0);
+
+    await expect(running).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("done") }],
+      details: { id: 1, outcome: "completed", finalText: "done" },
+    });
+    expect(messages).toEqual([]);
+  });
+
+  it("returns a terminal continuation directly in print mode", async () => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "print";
+    const start = tools.get("subagent_start");
+    const continuation = tools.get("subagent_continue");
+
+    const starting = start.execute("start", { prompt: "one" }, undefined, undefined, ctx);
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+    await settle(0);
+    await starting;
+
+    const continuing = continuation.execute("continue", { id: 1, prompt: "two" }, undefined, undefined, ctx);
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
+    await settle(1);
+
+    await expect(continuing).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("done") }],
+      details: { id: 1, outcome: "completed", finalText: "done" },
+    });
+    expect(messages).toEqual([]);
   });
 
   it("uses explicit routing for a registered-tool start", async () => {

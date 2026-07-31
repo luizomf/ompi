@@ -116,6 +116,80 @@ describe("background tool wrapper", () => {
     });
   });
 
+  it("waits for the original result in print mode without sending a background completion", async () => {
+    const { pi, messages } = setup();
+    const completion = deferred<AgentToolResult<{ source: string }>>();
+    const original: ToolDefinition<typeof Params, { source: string }> = {
+      name: "slow_search",
+      label: "Slow Search",
+      description: "Search slowly",
+      parameters: Params,
+      async execute() {
+        return completion.promise;
+      },
+    };
+    const manager = createBackgroundToolManager(pi, { namespace: "test" });
+    const wrapped = manager.wrapReadOnly(original);
+    let settled = false;
+
+    const executing = wrapped.execute(
+      "call-1",
+      { query: "bash" },
+      undefined,
+      undefined,
+      { cwd: "/repo", mode: "print" } as ExtensionContext,
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(messages).toEqual([]);
+
+    completion.resolve({
+      content: [{ type: "text", text: "research complete" }],
+      details: { source: "primary" },
+    });
+
+    await expect(executing).resolves.toEqual({
+      content: [{ type: "text", text: "research complete" }],
+      details: { source: "primary" },
+    });
+    expect(messages).toEqual([]);
+  });
+
+  it("cancels synchronous print work during session shutdown", async () => {
+    const { pi, handlers } = setup();
+    let taskSignal: AbortSignal | undefined;
+    const original: ToolDefinition<typeof Params, undefined> = {
+      name: "slow_search",
+      label: "Slow Search",
+      description: "Search slowly",
+      parameters: Params,
+      async execute(_id, _params, signal) {
+        taskSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        });
+      },
+    };
+    const wrapped = createBackgroundToolManager(pi, { namespace: "test" }).wrapReadOnly(original);
+    const executing = wrapped.execute(
+      "call-1",
+      { query: "bash" },
+      undefined,
+      undefined,
+      { cwd: "/repo", mode: "print" } as ExtensionContext,
+    );
+
+    await vi.waitFor(() => expect(taskSignal).toBeDefined());
+    await Promise.all((handlers.get("session_shutdown") ?? []).map((handler) => handler({}, {})));
+
+    expect(taskSignal?.aborted).toBe(true);
+    await expect(executing).rejects.toThrow("cancelled");
+  });
+
   it("collapses completed output behind Pi's native expansion state", () => {
     initTheme(undefined, false);
     const { pi, renderers } = setup();

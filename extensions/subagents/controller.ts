@@ -71,6 +71,7 @@ interface RecordState extends SubagentView {
   pendingSettled: boolean;
   pendingExitError?: string;
   terminalError?: string;
+  directResolve?: (pong: Pong) => void;
 }
 
 export interface ControllerOptions {
@@ -111,45 +112,78 @@ export class SubagentController {
   }
 
   list(): SubagentView[] {
-    return [...this.records.values()].map(({ child: _child, accepted: _accepted, finalizing: _finalizing, ponged: _ponged, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, ...view }) => ({
+    return [...this.records.values()].map(({ child: _child, accepted: _accepted, finalizing: _finalizing, ponged: _ponged, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, directResolve: _directResolve, ...view }) => ({
       ...view,
       tools: view.tools ? [...view.tools] : undefined,
     }));
   }
 
   async start(input: StartInput): Promise<SubagentView> {
-    this.assertCanLaunch();
-    const id = this.nextId++;
-    const record: RecordState = {
-      id,
-      name: input.name,
-      state: "handshaking",
-      active: true,
-      startedAt: this.options.now(),
-      cwd: input.cwd,
-      model: input.model,
-      thinking: input.thinking,
-      tools: input.tools ? [...input.tools] : undefined,
-      accepted: false,
-      finalizing: false,
-      ponged: false,
-      interruptRequested: false,
-      pendingSettled: false,
-    };
-    this.records.set(id, record);
-    this.changed();
-
+    const record = this.createStartRecord(input);
     try {
       await this.launch(record, input.prompt);
       return this.view(record);
     } catch (error) {
-      this.records.delete(id);
+      this.records.delete(record.id);
       this.changed();
       throw error;
     }
   }
 
+  async run(input: StartInput, signal?: AbortSignal): Promise<Pong> {
+    if (signal?.aborted) throw new Error("Subagent run was cancelled before launch.");
+    let resolveCompletion!: (pong: Pong) => void;
+    const completion = new Promise<Pong>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const record = this.createStartRecord(input, resolveCompletion);
+    let launched = false;
+    const abort = () => {
+      record.interruptRequested = true;
+      if (launched && record.active) void this.interrupt(record.id).catch(() => undefined);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      await this.launch(record, input.prompt);
+      launched = true;
+      if (signal?.aborted && record.active) await this.interrupt(record.id);
+      return await completion;
+    } catch (error) {
+      this.records.delete(record.id);
+      this.changed();
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
   async continue(input: ContinueInput): Promise<SubagentView> {
+    return this.continueWithDelivery(input);
+  }
+
+  async runContinuation(input: ContinueInput, signal?: AbortSignal): Promise<Pong> {
+    if (signal?.aborted) throw new Error("Subagent continuation was cancelled before launch.");
+    let resolveCompletion!: (pong: Pong) => void;
+    const completion = new Promise<Pong>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    await this.continueWithDelivery(input, resolveCompletion);
+    const abort = () => {
+      if (this.records.get(input.id)?.active) void this.interrupt(input.id).catch(() => undefined);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      if (signal?.aborted && this.records.get(input.id)?.active) await this.interrupt(input.id);
+      return await completion;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
+  private async continueWithDelivery(
+    input: ContinueInput,
+    directResolve?: (pong: Pong) => void,
+  ): Promise<SubagentView> {
     this.assertCanLaunch();
     const record = this.requireRecord(input.id);
     if (record.active) throw new Error(`Subagent ${input.id} is already active; use steer instead.`);
@@ -161,6 +195,7 @@ export class SubagentController {
       model: record.model,
       thinking: record.thinking,
       tools: record.tools ? [...record.tools] : undefined,
+      directResolve: record.directResolve,
     };
     record.model = input.model;
     record.thinking = input.thinking;
@@ -178,6 +213,7 @@ export class SubagentController {
     record.pendingSettled = false;
     record.pendingExitError = undefined;
     record.terminalError = undefined;
+    record.directResolve = directResolve;
     this.changed();
 
     try {
@@ -189,6 +225,7 @@ export class SubagentController {
       record.model = previous.model;
       record.thinking = previous.thinking;
       record.tools = previous.tools;
+      record.directResolve = previous.directResolve;
       record.active = false;
       record.startedAt = undefined;
       record.child = undefined;
@@ -357,14 +394,42 @@ export class SubagentController {
 
     if (this.shuttingDown || record.ponged || !record.sessionRef) return;
     record.ponged = true;
-    this.options.onPong({
+    const pong: Pong = {
       id: record.id,
       name: record.name,
       outcome,
       sessionRef: record.sessionRef,
       finalText,
       error: record.error,
-    });
+    };
+    const directResolve = record.directResolve;
+    record.directResolve = undefined;
+    if (directResolve) directResolve(pong);
+    else this.options.onPong(pong);
+  }
+
+  private createStartRecord(input: StartInput, directResolve?: (pong: Pong) => void): RecordState {
+    this.assertCanLaunch();
+    const record: RecordState = {
+      id: this.nextId++,
+      name: input.name,
+      state: "handshaking",
+      active: true,
+      startedAt: this.options.now(),
+      cwd: input.cwd,
+      model: input.model,
+      thinking: input.thinking,
+      tools: input.tools ? [...input.tools] : undefined,
+      accepted: false,
+      finalizing: false,
+      ponged: false,
+      interruptRequested: false,
+      pendingSettled: false,
+      directResolve,
+    };
+    this.records.set(record.id, record);
+    this.changed();
+    return record;
   }
 
   private assertCanLaunch(): void {
