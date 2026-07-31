@@ -60,12 +60,13 @@ fresh checkout with:
 npm ci --prefix extensions/browser-fetch
 ```
 
-### Codex search fallback
+### Codex research and image generation
 
-The extension in `extensions/codex-search/` provides a narrow
-`codex_search` tool for difficult web research when normal browser fetching is
-blocked or insufficient, or when an independent second research path is useful.
-Enable it explicitly for one Pi process:
+The extension in `extensions/codex-search/` provides one narrow `codex_search`
+tool for difficult web research and image generation. Research remains useful
+when normal browser fetching is blocked or insufficient, or when an independent
+second research path is useful. Image generation is an explicit mode of the same
+tool, not a second backend. Enable it explicitly for one Pi process:
 
 ```sh
 pi --no-extensions --extension ./extensions/codex-search/index.ts
@@ -75,8 +76,11 @@ It invokes `codex_search --profile <effort> --skip-git-repo-check --cd
 <pi-cwd> -` directly without a shell and sends the prompt through stdin. The
 optional `effort` is a bounded semantic choice: `quick` (the default) covers
 search, scraping, extraction, and source cleanup, while `research` delegates
-complex source comparison or synthesis. The helper resolved from `PATH` owns
-the fixed model and reasoning mappings, isolating calls from machine-local Codex
+complex source comparison or synthesis. Existing research calls preserve these
+profiles. Setting `image: true` always selects `research`; Codex/ImageGen
+generates the pixels, while Pi operationally requests and delivers the final
+image artifact. The helper resolved from `PATH` owns the fixed model and reasoning
+mappings, isolating calls from machine-local Codex
 configuration. Run `codex_search --list-models` (or `codex debug models`) outside
 Pi to inspect the account's current model catalog.
 
@@ -89,8 +93,8 @@ the orchestrator must mention the failure in its next user-facing response; it
 must not stop or abandon the task solely because of the failure and should
 continue with another appropriate tool when useful or available.
 
-The background wrapper is limited to four concurrent Codex searches. Independently
-useful Codex or other background research calls can be started in the same turn;
+The background wrapper is limited to four concurrent Codex tasks. Independently
+useful Codex or other background calls can be started in the same turn;
 the orchestrator does not await one result before starting another. Closing or
 reloading the owning Pi session aborts active searches and suppresses stale
 results; this path is intentionally not durable and does not use `bq` or
@@ -100,13 +104,19 @@ This makes a fresh logged-in machine use the same operational defaults. The
 narrow trust-check bypass allows work from new or untrusted directories. The
 tool exposes only two permission opt-ins: `write: true` selects
 `workspace-write` with the Pi session cwd as its primary workspace, while
-`yolo: true` bypasses approvals and sandboxing entirely. The orchestrator must omit both
-unless the user explicitly requests the capability. Each process retains its
-fixed ten-minute timeout and bounded captured output. Model and reasoning
-defaults remain controlled by the `codex_search` executable resolved from
-`PATH`; the extension does not expose arbitrary Codex flags. Its model-produced
-result is not a verified primary source, so requests should ask for URLs or
-citations where relevant and verify those sources separately. The extension is
+`yolo: true` bypasses approvals and sandboxing entirely. Image generation
+requires explicit `image: true` and `write: true`. The agent forwards the user's
+free-form image intent without imposing a visual template, excessive rewriting,
+or mandatory post-processing. It may request candidates, inspect the saved file
+at the returned path, and iterate it; mechanical conversions remain part of the
+calling task when requested. The orchestrator must never use YOLO without the
+user's specific authorization for YOLO. Each process retains its fixed ten-minute
+timeout and bounded captured output. Model and reasoning defaults remain
+controlled by the `codex_search` executable resolved from
+`PATH`; the extension does not expose arbitrary Codex flags. Model-produced
+research is not a verified primary source, so research requests should ask for
+URLs or citations where relevant and verify those sources separately. Image
+results do not receive that research-verification reminder. The extension is
 not enabled by any launch profile or package manifest.
 
 Browser Fetch and Codex Search share the single background wrapper maintained at

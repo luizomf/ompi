@@ -97,6 +97,71 @@ describe("codex_search background delivery", () => {
     });
   });
 
+  it("generates images through the research profile without adding research-verification reminders", async () => {
+    processMock.run.mockResolvedValueOnce({
+      stdout: "Saved final image to /repo/output.png",
+      stderr: "",
+      code: 0,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
+    const { tools, messages } = setup();
+    const tool = tools.get("codex_search");
+
+    expect(tool.label).toContain("Image");
+    expect(tool.description).toMatch(/image generation.*Codex\/ImageGen/i);
+    expect(tool.promptSnippet).toMatch(/image generation/i);
+    expect(tool.parameters.properties.image.description).toMatch(/save.*inspect.*iterate/i);
+    expect(tool.parameters.properties.query.description).toMatch(/free-form.*without.*template/i);
+    expect(tool.promptGuidelines.join(" ")).toMatch(/do not rewrite.*post-processing/i);
+
+    await tool.execute(
+      "image-1",
+      {
+        query: "Generate a cinematic 16:9 mountain landscape and save the final PNG",
+        effort: "quick",
+        image: true,
+        write: true,
+      },
+      undefined,
+      undefined,
+      { cwd: "/repo" } as ExtensionContext,
+    );
+
+    expect(processMock.run).toHaveBeenCalledWith(
+      "Generate a cinematic 16:9 mountain landscape and save the final PNG",
+      "/repo",
+      "research",
+      { write: true, yolo: undefined },
+      expect.any(AbortSignal),
+    );
+    const guidance = tool.promptGuidelines.join(" ");
+    expect(guidance).toMatch(/Codex\/ImageGen generates.*Pi.*deliver/i);
+    expect(guidance).toMatch(/workspace-write.*Pi session cwd.*primary workspace/i);
+    expect(guidance).toMatch(/never.*yolo.*specific.*authoriz/i);
+
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(messages[0].message.content).toContain("Saved final image to /repo/output.png");
+    expect(messages[0].message.content).not.toContain("not a verified primary source");
+  });
+
+  it("requires an explicit workspace-write opt-in before image generation", async () => {
+    const { tools, messages } = setup();
+    const tool = tools.get("codex_search");
+
+    await tool.execute(
+      "image-2",
+      { query: "Generate an icon", image: true },
+      undefined,
+      undefined,
+      { cwd: "/repo" } as ExtensionContext,
+    );
+
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(processMock.run).not.toHaveBeenCalled();
+    expect(messages[0].message.content).toMatch(/requires explicit write: true/i);
+  });
+
   it("passes the research profile and makes failures require user-visible reporting without stopping fallback work", async () => {
     processMock.run.mockRejectedValueOnce(new Error("configured model is unavailable"));
     const { tools, messages } = setup();
