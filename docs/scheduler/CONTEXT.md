@@ -103,3 +103,7 @@ _Avoid_: Queue completion event, watcher result, durable notification
   forced runner termination, or failure before the runner starts can prevent a
   wake. Durable schedules and payloads may continue after the owning Pi session
   closes.
+- `--no-scheduler` disables `scheduler_submit` and prevents callback endpoint
+  startup for the current Pi process. Use it when the extension is discovered
+  globally but the process must not host scheduler callbacks, including Pi
+  payloads already running inside OMQueue.

@@ -163,6 +163,12 @@ export function registerSchedulerExtension(
 ): void {
   let session: SchedulerSession | undefined;
 
+  pi.registerFlag("no-scheduler", {
+    description: "Disable the scheduler tool and callback endpoint for this Pi process",
+    type: "boolean",
+    default: false,
+  });
+
   pi.registerMessageRenderer("scheduler-wake", (message, { expanded }, theme) => {
     const wake = message.details as SchedulerWake | undefined;
     const heading = wake
@@ -217,6 +223,12 @@ export function registerSchedulerExtension(
     const previous = session;
     session = undefined;
     await previous?.close();
+
+    if (pi.getFlag("no-scheduler") === true) {
+      pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "scheduler_submit"));
+      return;
+    }
+
     session = await SchedulerSession.start({
       runBq: options.runBq,
       onWake: (wake) => {

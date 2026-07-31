@@ -189,8 +189,17 @@ canonical lifecycle and security contract.
 
 `just scheduler` explicitly enables the extension in `extensions/scheduler/`.
 Its `scheduler_submit` tool is Pi's unified OMQueue-backed background runner and
-scheduler. A fixed, non-interactive payload runs immediately through the Queue
-when timing is omitted, or after a delay, at an absolute time, as a finite
+scheduler. When the extension is globally discovered but a process must not
+open its callback endpoint—for example, when Pi itself runs inside OMQueue—pass
+`--no-scheduler`. The flag removes `scheduler_submit` from that process's active
+tools and skips callback endpoint startup:
+
+```sh
+pi --no-scheduler -p "Só teste. Responda OK"
+```
+
+A fixed, non-interactive payload runs immediately through the Queue when timing
+is omitted, or after a delay, at an absolute time, as a finite
 repeat, or on cron when timing is present. Omitting the payload creates a
 heartbeat, reminder, or deferred-recheck wake.
 
@@ -286,8 +295,10 @@ its first argument. Both paths are stored in each accepted Job or Schedule and
 must remain executable at those locations for long-lived schedules. Scheduler
 submissions inherit the user's command authority and are not sandboxed. This
 extension is not enabled by any unrelated launch profile or by package discovery
-in this repository. Equivalent `bq` syntax supplied as an example does not by
-itself select ordinary bash; route by whether the requested work should run
+in this repository. When loaded through global discovery, `--no-scheduler`
+disables its tool and callback endpoint for the current Pi process without
+disabling other extensions. Equivalent `bq` syntax supplied as an example does
+not by itself select ordinary bash; route by whether the requested work should run
 through the Queue and wake Pi. For `bq`-related requests, use ordinary bash only
 when the user explicitly asks to invoke, test, debug, or inspect the raw `bq` CLI
 or administer OMQueue.

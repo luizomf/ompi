@@ -58,9 +58,41 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
 }
 
 describe("scheduler extension", () => {
+  it("disables the callback endpoint and tool with --no-scheduler", async () => {
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const flags: Array<{ name: string; options: Record<string, unknown> }> = [];
+    let activeTools = ["read", "scheduler_submit"];
+    const pi = {
+      registerFlag: (name: string, options: Record<string, unknown>) => flags.push({ name, options }),
+      getFlag: (name: string) => name === "no-scheduler",
+      getActiveTools: () => activeTools,
+      setActiveTools: (names: string[]) => { activeTools = names; },
+      registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerMessageRenderer: () => {},
+      on: (event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler),
+    } as unknown as ExtensionAPI;
+
+    registerSchedulerExtension(pi);
+    await handlers.get("session_start")?.({}, {} as ExtensionContext);
+
+    expect(flags).toEqual([{
+      name: "no-scheduler",
+      options: {
+        description: "Disable the scheduler tool and callback endpoint for this Pi process",
+        type: "boolean",
+        default: false,
+      },
+    }]);
+    expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit"]);
+    expect(activeTools).toEqual(["read"]);
+  });
+
   it("discovers Queue-backed finite work by completion lifecycle instead of command duration", () => {
     const tools: RegisteredTool[] = [];
     const pi = {
+      registerFlag: () => {},
+      getFlag: () => false,
       registerTool: (tool: RegisteredTool) => tools.push(tool),
       registerMessageRenderer: () => {},
       on: () => {},
@@ -117,6 +149,8 @@ describe("scheduler extension", () => {
     const tools: RegisteredTool[] = [];
     const renderers = new Map<string, MessageRenderer>();
     const pi = {
+      registerFlag: () => {},
+      getFlag: () => false,
       registerTool: (tool: RegisteredTool) => tools.push(tool),
       registerMessageRenderer: (customType: string, renderer: MessageRenderer) => renderers.set(customType, renderer),
       on: () => {},
@@ -189,6 +223,8 @@ describe("scheduler extension", () => {
     const messages: Array<{ message: Record<string, unknown>; options: Record<string, unknown> }> = [];
     let invocation: BqInvocation | undefined;
     const pi = {
+      registerFlag: () => {},
+      getFlag: () => false,
       registerTool: (tool: RegisteredTool) => tools.push(tool),
       registerMessageRenderer: () => {},
       on: (event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler),
