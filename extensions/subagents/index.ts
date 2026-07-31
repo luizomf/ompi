@@ -211,42 +211,54 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     onChange: refreshUi,
   });
 
+  const startInput = (params: StartParams, ctx: ExtensionContext): StartInput => ({
+    prompt: params.prompt,
+    name: params.name,
+    model: selectedModel(params.model, ctx),
+    thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
+    cwd: resolve(ctx.cwd, params.cwd ?? "."),
+    tools: validateTools(params.tools),
+  });
+
   const start = (params: StartParams, ctx: ExtensionContext): Promise<SubagentView> => {
-    const input: StartInput = {
-      prompt: params.prompt,
-      name: params.name,
-      model: selectedModel(params.model, ctx),
-      thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
-      cwd: resolve(ctx.cwd, params.cwd ?? "."),
-      tools: validateTools(params.tools),
-    };
-    return controller.start(input);
+    return controller.start(startInput(params, ctx));
   };
 
+  const continuationInput = (params: ContinueParams, ctx: ExtensionContext): ContinueInput => ({
+    id: params.id,
+    prompt: params.prompt,
+    model: selectedModel(params.model, ctx),
+    thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
+    tools: validateTools(params.tools),
+  });
+
   const continueSubagent = (params: ContinueParams, ctx: ExtensionContext): Promise<SubagentView> => {
-    const input: ContinueInput = {
-      id: params.id,
-      prompt: params.prompt,
-      model: selectedModel(params.model, ctx),
-      thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
-      tools: validateTools(params.tools),
-    };
-    return controller.continue(input);
+    return controller.continue(continuationInput(params, ctx));
   };
 
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: "Start a clean persistent Pi conversation asynchronously. Optional model or reasoning overrides apply to this dispatch and are only for an explicit user request. Returns after RPC prompt acceptance; completion arrives later as one pong. Never wait or poll for that pong.",
-    promptSnippet: "Start an independent asynchronous Pi conversation with a complete prompt",
+    description: "Start a clean persistent Pi conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after RPC prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request.",
+    promptSnippet: "Start an independent Pi conversation with a complete prompt",
     promptGuidelines: [
       "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
       "Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
-      "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; do not wait for one pong before starting another.",
-      "After subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
+      "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; outside print mode, do not wait for one pong before starting another.",
+      "In print mode, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
+      "Outside print mode, after subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
     ],
     parameters: StartSchema,
-    async execute(_id, params, _signal, _onUpdate, ctx) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      if (ctx.mode === "print") {
+        const pong = await controller.run(startInput(params, ctx), signal);
+        const message = buildPongMessage(pong);
+        return {
+          content: [{ type: "text", text: message.content }],
+          details: message.details,
+        };
+      }
+
       const view = await start(params, ctx);
       return {
         content: [{
@@ -261,14 +273,24 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: "Start another asynchronous turn in a settled known subagent conversation. Optional model or reasoning overrides apply to this dispatch and are only for an explicit user request. Returns after prompt acceptance; never wait or poll for completion.",
+    description: "Start another turn in a settled known subagent conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request.",
     promptGuidelines: [
       "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
       "Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
-      "After subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful work independent of that result; otherwise end the response so user input and the later pong can be delivered.",
+      "In print mode, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
+      "Outside print mode, after subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
     ],
     parameters: ContinueSchema,
-    async execute(_id, params, _signal, _onUpdate, ctx) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      if (ctx.mode === "print") {
+        const pong = await controller.runContinuation(continuationInput(params, ctx), signal);
+        const message = buildPongMessage(pong);
+        return {
+          content: [{ type: "text", text: message.content }],
+          details: message.details,
+        };
+      }
+
       const view = await continueSubagent(params, ctx);
       return {
         content: [{

@@ -99,6 +99,74 @@ describe("SubagentController", () => {
     expect(pongs).toEqual([]);
   });
 
+  it("waits for direct completion and returns the terminal result without emitting a pong", async () => {
+    const { controller, children, pongs } = setup();
+    let completed = false;
+    const running = controller.run({
+      prompt: "work",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "medium",
+      name: "worker",
+    }).then((pong) => {
+      completed = true;
+      return pong;
+    });
+
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    expect(completed).toBe(false);
+    children[0].finalText = "done";
+    await settle(children[0]);
+
+    await expect(running).resolves.toMatchObject({
+      id: 1,
+      name: "worker",
+      outcome: "completed",
+      sessionRef: "/sessions/1.jsonl",
+      finalText: "done",
+    });
+    expect(pongs).toEqual([]);
+  });
+
+  it("runs direct sibling delegations concurrently and resolves each at its own terminal event", async () => {
+    const { controller, children } = setup();
+    let firstCompleted = false;
+    let secondCompleted = false;
+    const first = controller.run({ prompt: "one", cwd: "/repo", model: "p/m", thinking: "medium" })
+      .then((pong) => { firstCompleted = true; return pong; });
+    const second = controller.run({ prompt: "two", cwd: "/repo", model: "p/m", thinking: "medium" })
+      .then((pong) => { secondCompleted = true; return pong; });
+
+    await vi.waitFor(() => expect(children).toHaveLength(2));
+    expect(firstCompleted).toBe(false);
+    expect(secondCompleted).toBe(false);
+
+    await settle(children[0]);
+    await expect(first).resolves.toMatchObject({ id: 1, outcome: "completed" });
+    expect(firstCompleted).toBe(true);
+    expect(secondCompleted).toBe(false);
+
+    await settle(children[1]);
+    await expect(second).resolves.toMatchObject({ id: 2, outcome: "completed" });
+  });
+
+  it("interrupts a direct run when its caller is cancelled", async () => {
+    const { controller, children, pongs } = setup();
+    const cancellation = new AbortController();
+    const running = controller.run(
+      { prompt: "work", cwd: "/repo", model: "p/m", thinking: "medium" },
+      cancellation.signal,
+    );
+
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    cancellation.abort();
+    await vi.waitFor(() => expect(children[0].requests).toContainEqual({ type: "abort" }));
+    await settle(children[0]);
+
+    await expect(running).resolves.toMatchObject({ outcome: "interrupted" });
+    expect(pongs).toEqual([]);
+  });
+
   it("runs twelve children and rejects a thirteenth without queuing", async () => {
     const { controller, children } = setup();
     await Promise.all(Array.from({ length: 12 }, (_, index) => controller.start({ prompt: `${index}`, cwd: "/repo", model: "p/m", thinking: "low" })));
@@ -151,6 +219,30 @@ describe("SubagentController", () => {
     await controller.continue({ id: 1, prompt: "two", model: "p/current", thinking: "high" });
     expect(children[1].spec).toMatchObject({ session: "/sessions/1.jsonl", cwd: "/repo", model: "p/current", thinking: "high", tools: ["read"] });
     await expect(controller.continue({ id: 1, prompt: "three", model: "p/current", thinking: "high" })).rejects.toThrow("active");
+  });
+
+  it("waits for a direct continuation without emitting another pong", async () => {
+    const { controller, children, pongs } = setup();
+    await controller.start({ prompt: "one", cwd: "/repo", model: "p/m", thinking: "low" });
+    await settle(children[0]);
+    expect(pongs).toHaveLength(1);
+
+    const continuing = controller.runContinuation({
+      id: 1,
+      prompt: "two",
+      model: "p/m",
+      thinking: "high",
+    });
+    await vi.waitFor(() => expect(children).toHaveLength(2));
+    children[1].finalText = "continued";
+    await settle(children[1]);
+
+    await expect(continuing).resolves.toMatchObject({
+      id: 1,
+      outcome: "completed",
+      finalText: "continued",
+    });
+    expect(pongs).toHaveLength(1);
   });
 
   it("allows steering only while active", async () => {

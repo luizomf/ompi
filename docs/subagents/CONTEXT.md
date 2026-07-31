@@ -50,6 +50,8 @@ for that dispatch only. The orchestrator agent must omit these overrides unless
 the user explicitly requests that routing. An override never becomes a default
 for later continuations.
 
-## Turn-release contract
+## Mode contract
 
-After a start confirmation, the orchestrator must never keep its current turn alive merely to await the pong. It must not use sleeps, shell wait loops, or repeated status snapshots. When multiple independent delegations are useful, it starts their subagent calls without awaiting earlier pongs so Pi can run sibling tool calls concurrently. It may then continue useful work that does not depend on the subagents' results; otherwise it ends its response immediately. Ending the response returns control to the user and lets the queued pongs enter the orchestrator conversation in later turns.
+In print mode, start and continuation tool calls remain pending until their subagent turns reach a terminal outcome, then return the bounded terminal result directly without a pong. Independent sibling delegations still run concurrently as one tool batch; dependent work continues in the next model turn after that batch completes. Caller cancellation interrupts the active direct subagent turn.
+
+Outside print mode, after a start confirmation the orchestrator must never keep its current turn alive merely to await the pong. It must not use sleeps, shell wait loops, or repeated status snapshots. When multiple independent delegations are useful, it starts their subagent calls without awaiting earlier pongs so Pi can run sibling tool calls concurrently. It may then continue useful work that does not depend on the subagents' results; otherwise it ends its response immediately. Ending the response returns control to the user and lets the queued pongs enter the orchestrator conversation in later turns.

@@ -39,9 +39,10 @@ agent context.
 
 The extension in `extensions/browser-fetch/` provides the read-only
 `browser_fetch` tool used by `just research`. It launches a fresh headless
-Chromium profile for each request, returns immediately after a session-scoped
-background operation starts, and later delivers one collapsible rendered-text
-result. At most four Browser Fetch operations run concurrently. Output remains
+Chromium profile for each request. In print mode it waits and returns the
+rendered result directly. In other modes it returns immediately after a
+session-scoped background operation starts and later delivers one collapsible
+rendered-text result. At most four Browser Fetch operations run concurrently. Output remains
 bounded, Chromium is closed on completion or cancellation, and login, CAPTCHA,
 anti-bot, and unreadable-page responses are reported rather than bypassed.
 When multiple rendered-page or other background research calls are independently
@@ -84,11 +85,12 @@ mappings, isolating calls from machine-local Codex
 configuration. Run `codex_search --list-models` (or `codex debug models`) outside
 Pi to inspect the account's current model catalog.
 
-The tool returns immediately after a session-scoped background operation starts,
+In print mode the tool waits and returns its bounded result directly. In other
+modes it returns immediately after a session-scoped background operation starts,
 keeps a minimal live footer count, and later delivers exactly one collapsible
-completion or failure result. After start confirmation, the orchestrator must
-not wait or poll; it may continue independent work or end its response so the
-result can enter a later turn. Only a failure result adds an instruction that
+completion or failure result. After start confirmation outside print mode, the
+orchestrator must not wait or poll; it may continue independent work or end its
+response so the result can enter a later turn. Only a failure result adds an instruction that
 the orchestrator must mention the failure in its next user-facing response; it
 must not stop or abandon the task solely because of the failure and should
 continue with another appropriate tool when useful or available.
@@ -303,20 +305,22 @@ through the Queue and wake Pi. For `bq`-related requests, use ordinary bash only
 when the user explicitly asks to invoke, test, debug, or inspect the raw `bq` CLI
 or administer OMQueue.
 
-## Asynchronous subagents
+## Subagents
 
 `just subagents` explicitly enables the extension in
-`extensions/subagents/`. It starts clean, persistent Pi conversations and returns
-as soon as the child RPC process accepts a prompt. Each accepted turn later
-queues exactly one completion, failure, or interruption pong in the orchestrator
-conversation.
+`extensions/subagents/`. It starts clean, persistent Pi conversations. In print
+mode, start and continuation tool calls wait for terminal completion and return
+the bounded result directly; independent sibling calls still run concurrently.
+In other modes, each call returns as soon as the child RPC process accepts a
+prompt, then later queues exactly one completion, failure, or interruption pong
+in the orchestrator conversation.
 
-After acceptance, the orchestrator must not sleep, run a wait loop, or repeatedly
-call `subagent_list` for completion. When multiple independent delegations are
-useful, it starts them in the same turn so Pi can run them concurrently rather
-than awaiting an earlier pong. It may then continue useful work independent of
-the subagent results; otherwise it must end its response so user input and the
-later pongs can enter the conversation.
+Outside print mode, after acceptance the orchestrator must not sleep, run a wait
+loop, or repeatedly call `subagent_list` for completion. When multiple independent
+delegations are useful, it starts them in the same turn so Pi can run them
+concurrently rather than awaiting an earlier pong. It may then continue useful
+work independent of the subagent results; otherwise it must end its response so
+user input and the later pongs can enter the conversation.
 
 For daily use, link this audited extension into Pi's global extension directory:
 

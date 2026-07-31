@@ -33,7 +33,7 @@ export interface BackgroundToolManagerOptions {
 export interface BackgroundToolManager {
   wrapReadOnly<TParams extends TSchema, TDetails>(
     tool: ToolDefinition<TParams, TDetails>,
-  ): ToolDefinition<TParams, BackgroundTaskView>;
+  ): ToolDefinition<TParams, BackgroundTaskView | TDetails>;
 }
 
 function resultText(result: AgentToolResult<unknown>): string {
@@ -104,20 +104,34 @@ export function createBackgroundToolManager(
   return {
     wrapReadOnly<TParams extends TSchema, TDetails>(
       tool: ToolDefinition<TParams, TDetails>,
-    ): ToolDefinition<TParams, BackgroundTaskView> {
+    ): ToolDefinition<TParams, BackgroundTaskView | TDetails> {
       if (tool.renderResult) {
         throw new Error(`${tool.name} has a custom result renderer and is not eligible for background wrapping.`);
       }
       const { execute, renderResult: _renderResult, ...definition } = tool;
       return {
         ...definition,
-        async execute(toolCallId, params, signal, _onUpdate, ctx: ExtensionContext) {
+        async execute(toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
           if (signal?.aborted) throw new Error(`${tool.name} was cancelled before background work started.`);
           if (closed) throw new Error(`The ${options.namespace} background task manager has shut down.`);
           if (active.size >= maxActive) {
             throw new Error(`At most ${maxActive} ${options.namespace} background tasks may be active.`);
           }
           const id = nextId++;
+          if (ctx.mode === "print") {
+            const controller = new AbortController();
+            const abort = () => controller.abort();
+            signal?.addEventListener("abort", abort, { once: true });
+            active.set(id, controller);
+            refreshUi();
+            try {
+              return await execute.call(tool, toolCallId, params, controller.signal, onUpdate, ctx);
+            } finally {
+              signal?.removeEventListener("abort", abort);
+              active.delete(id);
+              refreshUi();
+            }
+          }
           const view: BackgroundTaskView = {
             id,
             toolName: tool.name,

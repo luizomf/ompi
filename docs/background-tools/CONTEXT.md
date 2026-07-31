@@ -17,7 +17,7 @@ The immediate tool result stating that the wrapper accepted a background operati
 _Avoid_: Completion, scheduler acceptance
 
 **Background result**:
-The wrapper's single follow-up message after an accepted operation completes or fails. Full text remains in model context while the TUI collapses it by default.
+Outside print mode, the wrapper's single follow-up message after an accepted operation completes or fails. Full text remains in model context while the TUI collapses it by default. In print mode, the same underlying result returns directly from the original tool call instead.
 _Avoid_: Scheduler wake, pong, polling response
 
 ## Boundary contract
@@ -25,7 +25,7 @@ _Avoid_: Scheduler wake, pong, polling response
 - The wrapper is opt-in through `wrapReadOnly`; it is not an agent-facing tool that can execute arbitrary registered tools.
 - Only definitions available to the owning extension can be wrapped. Pi's tool metadata API does not expose third-party execution functions.
 - Wrapped work is session-scoped and in-memory. It does not use `bq`, OMQueue, cron, persistence, or durable callbacks.
-- The wrapper supplies a dedicated abort signal after acceptance, so later cancellation of the originating agent turn does not accidentally cancel independent work.
+- Outside print mode, the wrapper supplies a dedicated abort signal after acceptance, so later cancellation of the originating agent turn does not accidentally cancel independent work. In print mode, caller cancellation remains attached to the synchronous operation.
 - Eligible tool implementations capture required plain context such as `cwd` before their first asynchronous boundary and do not retain session-bound `ctx` objects for later use.
 - Session shutdown aborts active operations, clears visible status, and suppresses late results from the stale extension instance.
 - The wrapped tool remains responsible for bounded output, process cleanup, timeout behavior, and safe read-only operation.
@@ -37,6 +37,8 @@ _Avoid_: Scheduler wake, pong, polling response
 
 The canonical wrapper source is `extensions/background-tool.ts`. Eligible extension directories expose relative `background-tool.ts` symlink aliases so imports remain loadable when those directories are themselves reached through Pi's global extension symlinks. Browser Fetch and Codex Search must import those aliases rather than maintain copies.
 
-## Turn-release contract
+## Mode contract
 
-After start confirmation, the orchestrator must not wait, sleep, or poll for the background result. When multiple background operations are independently useful, it starts their calls without awaiting earlier results so Pi can run sibling tool calls concurrently. It may then continue useful work independent of those results; otherwise it ends its response so the later results can enter the conversation as follow-up turns.
+In print mode, wrapped calls retain their normal bounded concurrency but remain pending until their underlying operations complete or fail. Independent sibling tool calls still run concurrently, and dependent work consumes their direct results in the next model turn. This keeps one-shot Pi processes alive until the requested work is terminal.
+
+Outside print mode, after start confirmation the orchestrator must not wait, sleep, or poll for the background result. When multiple background operations are independently useful, it starts their calls without awaiting earlier results so Pi can run sibling tool calls concurrently. It may then continue useful work independent of those results; otherwise it ends its response so the later results can enter the conversation as follow-up turns.
