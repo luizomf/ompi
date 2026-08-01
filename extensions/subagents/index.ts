@@ -243,7 +243,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     promptSnippet: "Start an independent Pi conversation with a complete prompt",
     promptGuidelines: [
       "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
-      "Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
+      "Only after deciding to call subagent_start, verify the route immediately before dispatch using PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
       "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; outside print mode, do not wait for one pong before starting another.",
       "In print mode, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "Outside print mode, after subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
@@ -276,7 +276,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     description: "Start another turn in a settled known subagent conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request.",
     promptGuidelines: [
       "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
-      "Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
+      "Only after deciding to call subagent_continue, verify the route immediately before dispatch using PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user specifies routing, verify it is openai-codex/gpt-5.6-sol with medium reasoning and override only values that differ.",
       "In print mode, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "Outside print mode, after subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
     ],
