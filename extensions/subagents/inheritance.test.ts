@@ -109,8 +109,8 @@ describe("subagent routing inheritance", () => {
       expect(tool.description).toContain("explicit user request");
       expect(tool.promptGuidelines.join(" ")).toContain("only when the user explicitly requests");
       expect(tool.promptGuidelines.join(" ")).toContain("omit every unrequested override");
-      expect(tool.promptGuidelines.join(" ")).toContain("openai-codex/gpt-5.6-sol with medium reasoning");
-      expect(tool.promptGuidelines.join(" ")).toContain("override only values that differ");
+      expect(tool.promptGuidelines.join(" ")).toContain("orchestrator's active route");
+      expect(tool.promptGuidelines.join(" ")).not.toContain("openai-codex/gpt-5.6-sol");
       expect(tool.promptGuidelines.join(" ")).toContain("PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL");
       expect(tool.promptGuidelines.join(" ")).toContain("Do not inspect routing on ordinary turns");
     }
