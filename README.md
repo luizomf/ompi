@@ -345,10 +345,12 @@ The extension exposes these tools and matching commands:
 Use plain command arguments for common operations, or JSON with `/sub` and
 `/subcont` for routing, working-directory, tool, and name options. Each omitted
 routing value inherits the orchestrator's active value when that turn is
-dispatched. Optional `model` (`provider/model`) and `reasoning` overrides apply
-to one dispatch only and must be supplied only when the user explicitly requests
-that routing. The live subagent widget and `/sublist` output show the effective
-routing values. For example:
+dispatched. An explicit `model` override must use the qualified
+`provider/model` form; bare or malformed values are rejected before child
+launch. Optional `model` and `reasoning` overrides apply to one dispatch only
+and must be supplied only when the user explicitly requests that routing. The
+live subagent widget and `/sublist` output show the effective routing values. For
+example:
 
 ```text
 /sub Inspect the authentication flow and report risks.

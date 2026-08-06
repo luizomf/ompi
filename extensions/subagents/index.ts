@@ -36,7 +36,7 @@ const StartSchema = Type.Object({
   name: Type.Optional(Type.String({ description: "Native Pi session display name" })),
   model: Type.Optional(Type.String({
     minLength: 1,
-    description: "Pi provider/model override for this dispatch; omit to inherit the orchestrator's active model",
+    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the orchestrator\'s active model',
   })),
   reasoning: Type.Optional(ReasoningSchema),
   cwd: Type.Optional(Type.String({ description: "Initial working directory; fixed for this conversation" })),
@@ -48,7 +48,7 @@ const ContinueSchema = Type.Object({
   prompt: Type.String({ description: "Prompt for the next turn in the existing conversation" }),
   model: Type.Optional(Type.String({
     minLength: 1,
-    description: "Pi provider/model override for this dispatch; omit to inherit the orchestrator's active model",
+    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the orchestrator\'s active model',
   })),
   reasoning: Type.Optional(ReasoningSchema),
   tools: Type.Optional(ToolsSchema),
@@ -79,8 +79,10 @@ function activeModel(ctx: ExtensionContext): string {
 
 function selectedModel(value: unknown, ctx: ExtensionContext): string {
   if (value === undefined) return activeModel(ctx);
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("Model override must be a non-empty Pi provider/model selector.");
+  if (typeof value !== "string" || !/^[^/\s]+\/\S+$/.test(value)) {
+    throw new Error(
+      'Explicit subagent model overrides must use "<provider>/<model>". Example: "openai-codex/gpt-5.6-luna".',
+    );
   }
   return value;
 }
@@ -239,10 +241,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: "Start a clean persistent Pi conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after RPC prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request.",
+    description: 'Start a clean persistent Pi conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after RPC prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptSnippet: "Start an independent Pi conversation with a complete prompt",
     promptGuidelines: [
-      "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
+      "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the orchestrator's active value.",
       "Only after deciding to call subagent_start, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the orchestrator's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
       "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; outside print mode, do not wait for one pong before starting another.",
       "In print mode, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
@@ -273,9 +275,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: "Start another turn in a settled known subagent conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request.",
+    description: 'Start another turn in a settled known subagent conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptGuidelines: [
-      "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; omit every unrequested override so it inherits the orchestrator's active value.",
+      "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the orchestrator's active value.",
       "Only after deciding to call subagent_continue, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the orchestrator's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
       "In print mode, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "Outside print mode, after subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",

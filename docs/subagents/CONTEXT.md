@@ -44,11 +44,13 @@ _Avoid_: Transcript message, progress polling, full output
 
 Every clean start and continuation independently inherits each omitted routing
 value from the orchestrator's active model and current Pi thinking level when
-that turn is dispatched. Agent-facing tools and command JSON may provide a
-non-empty Pi `provider/model` selector, a supported `reasoning` level, or both
-for that dispatch only. The orchestrator agent must omit these overrides unless
-the user explicitly requests that routing. An override never becomes a default
-for later continuations.
+that turn is dispatched. Agent-facing tools and command JSON may provide an
+explicit model override only as a qualified `provider/model` selector, such as
+`openai-codex/gpt-5.6-luna`. Bare or malformed model overrides are rejected
+before child launch. A supported `reasoning` level may also be provided for that
+dispatch only. The orchestrator agent must omit these overrides unless the user
+explicitly requests that routing. An override never becomes a default for later
+continuations.
 
 ## Mode contract
 

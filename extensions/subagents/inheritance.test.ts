@@ -103,12 +103,16 @@ describe("subagent routing inheritance", () => {
       expect(tool.parameters.properties).not.toHaveProperty("provider");
       expect(tool.parameters.properties).not.toHaveProperty("thinking");
       expect(tool.parameters.properties.model.minLength).toBe(1);
+      expect(tool.parameters.properties.model.description).toContain("<provider>/<model>");
+      expect(tool.parameters.properties.model.description).toContain("openai-codex/gpt-5.6-luna");
       expect(tool.parameters.properties.reasoning.enum).toEqual([
         "off", "minimal", "low", "medium", "high", "xhigh", "max",
       ]);
       expect(tool.description).toContain("explicit user request");
+      expect(tool.description).toContain("<provider>/<model>");
       expect(tool.promptGuidelines.join(" ")).toContain("only when the user explicitly requests");
-      expect(tool.promptGuidelines.join(" ")).toContain("omit every unrequested override");
+      expect(tool.promptGuidelines.join(" ")).toContain("qualified <provider>/<model> form");
+      expect(tool.promptGuidelines.join(" ")).toContain("Omit every unrequested override");
       expect(tool.promptGuidelines.join(" ")).toContain("orchestrator's active route");
       expect(tool.promptGuidelines.join(" ")).not.toContain("openai-codex/gpt-5.6-sol");
       expect(tool.promptGuidelines.join(" ")).toContain("PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL");
@@ -175,6 +179,19 @@ describe("subagent routing inheritance", () => {
     expect(valueAfter(rpc.invocations[0].args, "--thinking")).toBe("high");
   });
 
+  it("rejects a bare registered-tool model override before launch", async () => {
+    const { tools, ctx } = setup();
+    const start = tools.get("subagent_start");
+
+    await expect(start.execute("start", {
+      prompt: "one",
+      model: "gpt-5.6-luna",
+    }, undefined, undefined, ctx)).rejects.toThrow(
+      'Explicit subagent model overrides must use "<provider>/<model>". Example: "openai-codex/gpt-5.6-luna".',
+    );
+    expect(rpc.invocations).toEqual([]);
+  });
+
   it("uses explicit routing for a registered-tool continuation", async () => {
     const { tools, ctx } = setup();
     const start = tools.get("subagent_start");
@@ -192,6 +209,35 @@ describe("subagent routing inheritance", () => {
     expect(valueAfter(rpc.invocations[1].args, "--model")).toBe("requested/terra");
     expect(valueAfter(rpc.invocations[1].args, "--thinking")).toBe("max");
   });
+
+  it("rejects a bare registered-tool continuation model override before launch", async () => {
+    const { tools, ctx } = setup();
+    const start = tools.get("subagent_start");
+    const continuation = tools.get("subagent_continue");
+
+    await start.execute("start", { prompt: "one" }, undefined, undefined, ctx);
+    await settle(0);
+    await expect(continuation.execute("continue", {
+      id: 1,
+      prompt: "two",
+      model: "gpt-5.6-luna",
+    }, undefined, undefined, ctx)).rejects.toThrow("<provider>/<model>");
+    expect(rpc.invocations).toHaveLength(1);
+  });
+
+  it.each(["", "/luna", "provider/", "provider /luna", "provider/luna model"])(
+    "rejects malformed model override %j before launch",
+    async (model) => {
+      const { tools, ctx } = setup();
+      const start = tools.get("subagent_start");
+
+      await expect(start.execute("start", {
+        prompt: "one",
+        model,
+      }, undefined, undefined, ctx)).rejects.toThrow("<provider>/<model>");
+      expect(rpc.invocations).toEqual([]);
+    },
+  );
 
   it("inherits each then-active routing value when overrides are omitted", async () => {
     const { tools, ctx, setThinking } = setup();
@@ -237,11 +283,16 @@ describe("subagent routing inheritance", () => {
   it("rejects invalid JSON slash-command routing before launch", async () => {
     const { commands, ctx, notifications } = setup();
 
-    await commands.get("sub").handler('{"prompt":"one","model":""}', ctx);
-    await commands.get("sub").handler('{"prompt":"two","reasoning":"extreme"}', ctx);
+    await commands.get("sub").handler('{"prompt":"one","model":"gpt-5.6-luna"}', ctx);
+    await commands.get("sub").handler('{"prompt":"two","model":""}', ctx);
+    await commands.get("sub").handler('{"prompt":"three","reasoning":"extreme"}', ctx);
 
     expect(rpc.invocations).toEqual([]);
-    expect(notifications).toHaveLength(2);
+    expect(notifications).toEqual([
+      expect.stringContaining("<provider>/<model>"),
+      expect.stringContaining("<provider>/<model>"),
+      expect.stringContaining("Reasoning override must be one of"),
+    ]);
   });
 
   it("inherits routing for JSON slash-command options when overrides are omitted", async () => {
