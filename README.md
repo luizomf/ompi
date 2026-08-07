@@ -9,6 +9,13 @@ A learning lab for building a small, explicit, and security-conscious
 - [just](https://github.com/casey/just)
 - Git and GitHub CLI
 
+## Recommended skills
+
+The companion [omskills](https://github.com/luizomf/omskills) collection
+provides the agent skills used by this repository's workflows and skill-enabled
+launch profiles. Its README documents the available skills and installation
+steps.
+
 ## Launch profiles
 
 List the available recipes:
