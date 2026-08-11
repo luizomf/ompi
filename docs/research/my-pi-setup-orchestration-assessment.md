@@ -1,5 +1,11 @@
 # `my-pi-setup` Orchestration UI Assessment
 
+Status: historical point-in-time assessment. The repository later adopted the
+separate `extensions/managed-process/` capability discussed here; use
+`docs/managed-processes/CONTEXT.md` and `README.md` for its current contract and
+usage. Statements below about the “current” repository describe the assessment
+time unless explicitly updated.
+
 Installed Pi documentation is cited relative to the package root as `<pi-package>/docs/...`.
 
 ## Executive conclusion
@@ -8,7 +14,7 @@ The reference has two different full-screen TUI overlays, not one generic “bac
 
 `/ps` opens a terminal dashboard and then a **read-only output inspector**. “Read-only” means that the process has no stdin and the detail view has no text input; users can still toggle stdout/stderr, scroll, and kill the process. (`my-pi-setup/extensions/background-terminals/src/ui/ps.ts:1-7`, `my-pi-setup/extensions/background-terminals/src/ui/ps.ts:362-488`, `my-pi-setup/extensions/background-terminals/src/manager.ts:554-565`)
 
-ompi should not replace its nearly complete native RPC subagent mechanism. The smallest potentially useful adoption is a TUI-only `/subagents` inspection surface over the existing controller, initially without takeover input; the reference’s background-terminal subsystem should remain a separate opt-in feature and should be built only after a concrete repeated need appears. The current implementation already has asynchronous prompt acceptance, persistent native sessions, steering, interruption, exactly-one pong delivery, and compact live status. (`extensions/subagents/index.ts:99-162`, `extensions/subagents/index.ts:193-264`, `extensions/subagents/controller.ts:246-348`)
+At assessment time, ompi should not replace its nearly complete native RPC subagent mechanism. The smallest potentially useful adoption was a TUI-only `/subagents` inspection surface over the existing controller, initially without takeover input; the reference’s background-terminal subsystem was to remain a separate opt-in feature until a concrete repeated need appeared. That process need was later implemented through the narrower managed-process extension identified in the status note above. The assessed subagent implementation already had asynchronous prompt acceptance, persistent native sessions, steering, interruption, exactly-one pong delivery, and compact live status. (`extensions/subagents/index.ts:99-162`, `extensions/subagents/index.ts:193-264`, `extensions/subagents/controller.ts:246-348`)
 
 **No implementation should be chosen for the reported small defect until that defect is described and reproduced.**
 
@@ -34,14 +40,14 @@ The overlay is implemented with the documented `ctx.ui.custom(..., { overlay: tr
 
 ## Architectural comparison
 
-| Feature | Reference | Current ompi | Recommendation |
+| Feature | Reference | ompi assessment and current note | Recommendation |
 |---|---|---|---|
 | Child transport | Normalized manager over an in-process Pi SDK session, Claude Agent SDK, or Codex app-server; global cap 4. (`my-pi-setup/extensions/subagents/src/backend.ts:24-69`, `my-pi-setup/extensions/subagents/src/runtime.ts:14-28`, `my-pi-setup/extensions/subagents/src/manager.ts:45-46`) | One native Pi RPC subprocess per active turn; strict JSONL request/response and event handling; cap 12. (`extensions/subagents/rpc-child.ts:68-145`, `extensions/subagents/controller.ts:84-85`, `extensions/subagents/controller.ts:368-375`) | Keep RPC: it is simpler and matches ompi’s explicit native-Pi scope. |
 | Conversation lifetime | A live backend session can accept further sends and remains manager-owned until pruning/shutdown. (`my-pi-setup/extensions/subagents/src/manager.ts:625-654`, `my-pi-setup/extensions/subagents/src/manager.ts:658-683`) | Process exists only for an active turn; the native session file persists and continuation starts a new RPC process with `--session`. (`docs/subagents/CONTEXT.md:11-18`, `extensions/subagents/controller.ts:149-190`, `extensions/subagents/rpc-child.ts:35-46`) | Keep current lifecycle; dormant subprocesses are unnecessary. |
 | Completion | Unconsumed results are deferred, then injected as follow-ups with `triggerTurn`; wait/cancel can consume them. (`my-pi-setup/extensions/subagents/index.ts:180-244`, `my-pi-setup/extensions/subagents/src/result-delivery.ts:1-20`) | `agent_settled` triggers final-text retrieval, process close, and one pong sent as a follow-up with `triggerTurn`. (`extensions/subagents/controller.ts:285-348`, `extensions/subagents/index.ts:150-162`) | Keep current deterministic pong contract; do not add blocking wait. |
 | Live UI | Footer status plus `/subagents` dashboard and interactive takeover. (`my-pi-setup/extensions/subagents/index.ts:162-178`, `my-pi-setup/extensions/subagents/src/ui/takeover.ts:56-100`) | Compact active-only widget and footer count; `/sublist` is notification text. (`extensions/subagents/index.ts:99-145`, `extensions/subagents/index.ts:330-350`) | Consider a read-only picker/detail overlay only if compact status is insufficient. |
 | Transcript data | Manager folds assistant deltas, finalized messages, tools, queues, usage, and metadata into bounded snapshots. (`my-pi-setup/extensions/subagents/src/manager.ts:286-380`) | Controller retains current tool, a 240-character visible-text tail, metadata, and final pong text bounded to 8,000 characters. (`extensions/subagents/controller.ts:286-310`, `extensions/subagents/index.ts:87-125`) | If inspection is requested, first add a bounded event transcript; do not read arbitrary session files in the renderer. |
-| Background commands | Separate no-stdin process manager with four model tools, widget, `/ps`, tree kill, and output spills. (`my-pi-setup/extensions/background-terminals/index.ts:1-28`, `my-pi-setup/extensions/background-terminals/index.ts:207-353`) | No background-terminal extension exists in the current repository; current orchestration docs distinguish visible tmux workers from headless subagents. (`docs/orchestration-exploration.md:20-37`, `extensions/subagents/index.ts:1-350`) | Keep separate from subagents; add only for demonstrated long-running server/watcher use. |
+| Background commands | Separate no-stdin process manager with four model tools, widget, `/ps`, tree kill, and output spills. (`my-pi-setup/extensions/background-terminals/index.ts:1-28`, `my-pi-setup/extensions/background-terminals/index.ts:207-353`) | At assessment time, no background-terminal extension existed. The repository later adopted the narrower, separate `extensions/managed-process/` lifecycle documented in `docs/managed-processes/CONTEXT.md`. | Keep this capability separate from subagents and preserve its opt-in, bounded, session-scoped lifecycle. |
 
 The current RPC design follows Pi’s protocol semantics: successful `prompt` response means acceptance rather than completion, `agent_settled` is the no-more-automatic-work boundary, and `get_last_assistant_text` returns the final assistant text. (`<pi-package>/docs/rpc.md:42-76`, `<pi-package>/docs/rpc.md:752-770`, `<pi-package>/docs/rpc.md:836-887`)
 
@@ -63,11 +69,22 @@ The current RPC design follows Pi’s protocol semantics: successful `prompt` re
 2. If richer inspection is needed, add a TUI-only `/subagents` picker over `controller.list()`, preserving the current widget. A first version should be read-only and show metadata, current tool, bounded visible preview, error, and session reference; this uses information already exposed by `SubagentView`. (`extensions/subagents/controller.ts:38-53`, `extensions/subagents/index.ts:69-83`)
 3. Only if that view is insufficient, extend the controller with a bounded normalized event transcript and port the reference’s sanitize/wrap/scroll logic. Do not add takeover input merely to match the reference: ompi already exposes explicit `subagent_steer`, `subagent_continue`, and `subagent_interrupt` operations. (`extensions/subagents/index.ts:214-254`, `my-pi-setup/extensions/subagents/src/ui/transcript.ts:13-44`)
 
-### Background-terminal support
+### Background-terminal support (subsequent outcome)
 
-Treat this as an independent capability, not a subagent fix. The minimum honest version still needs no-stdin spawning, separate bounded stdout/stderr, process-tree termination, async completion delivery, shutdown cleanup, and a read-only viewer; omitting those safeguards would misrepresent process control or leak resources. (`my-pi-setup/extensions/background-terminals/src/manager.ts:243-267`, `my-pi-setup/extensions/background-terminals/src/manager.ts:554-613`, `my-pi-setup/extensions/background-terminals/index.ts:119-179`)
+The assessment correctly treated this as an independent capability rather than
+a subagent fix. The repository later demonstrated the need and implemented the
+narrower opt-in `extensions/managed-process/` lifecycle instead of porting the
+reference subsystem. It uses no stdin, direct shell-free spawning, separate
+bounded stdout/stderr tails, explicit snapshots and stop requests, Unix process
+group cleanup, and session-shutdown cleanup. It intentionally provides no
+interactive takeover, output-spill subsystem, or automatic completion wake.
+Current behavior and limits belong to `docs/managed-processes/CONTEXT.md` and
+`README.md`.
 
-Do not adopt it preemptively. If repeated dev-server/watcher work demonstrates a need, implement it as an opt-in `extensions/background-terminals/` package and begin with `bg_start`, `bg_status`, `bg_kill`, the running-count widget, and `/ps`; defer multi-backend reuse, Effect-specific architecture, and elaborate spill retention unless concrete output volumes require them. The official extension guidance requires truncating model-visible tool output, with 50 KB/2,000 lines as the built-in ceiling and a pointer to full output when truncated. (`<pi-package>/docs/extensions.md:2109-2160`)
+The original design boundary still applies: process management must remain
+separate from subagent conversations, and model-visible output and cleanup must
+stay bounded. (`extensions/managed-process/controller.ts`,
+`extensions/managed-process/index.ts`)
 
 ## Decision boundary
 

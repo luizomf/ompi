@@ -4,10 +4,12 @@ Status: historical exploration with its useful findings retained.
 
 This document preserves findings about interactive Pi handoffs, visible workers,
 subagents, and agent-to-agent communication so they do not need to be
-rediscovered. The reviewed third-party snapshot was removed after extraction;
-its extensions were inspected statically and were not executed.
+rediscovered. It is not a current extension inventory; use `CONTEXT-MAP.md` for
+current lifecycle routing and the linked context documents for current
+contracts. The reviewed third-party snapshot was removed after extraction; its
+extensions were inspected statically and were not executed.
 
-## Current local primitives
+## Interactive handoff primitives
 
 ### Wormhole
 

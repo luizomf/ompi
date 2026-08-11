@@ -88,7 +88,7 @@ describe("browser_fetch background delivery", () => {
       { cwd: "/repo" } as ExtensionContext,
     );
 
-    expect(accepted.content[0].text).toContain("Background task #1");
+    expect(accepted.content[0].text).toContain("Background operation #1");
     expect(messages).toEqual([]);
     expect(tool.description).toContain("asynchronously");
     const guidance = tool.promptGuidelines.join(" ");

@@ -2,6 +2,11 @@
 
 Specs, tickets, and issues for this repository live in GitHub Issues. Use the `gh` CLI from this repository so it infers the repository from the Git remote.
 
+A direct maintainer request can authorize small, low-risk maintenance without
+creating a duplicate issue. Use an issue when durable acceptance
+criteria, triage, coordination, or substantial implementation work needs to be
+visible beyond the current conversation.
+
 ## Operations
 
 - Create an issue with `gh issue create`; use a heredoc or body file for multiline content.

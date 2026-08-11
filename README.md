@@ -16,6 +16,14 @@ provides the agent skills used by this repository's workflows and skill-enabled
 launch profiles. Its README documents the available skills and installation
 steps.
 
+## Working in this repository
+
+[`AGENTS.md`](AGENTS.md) is the orientation map for contributors and agents: it
+makes the accepted outcome, repository state, lifecycle seam, and verification
+evidence visible before a change. [`CONTEXT-MAP.md`](CONTEXT-MAP.md) routes work
+to the canonical terminology and boundaries for each extension lifecycle. This
+README remains the source for public setup and observable usage.
+
 ## Launch profiles
 
 List the available recipes:
@@ -97,15 +105,17 @@ modes it returns immediately after a session-scoped background operation starts,
 keeps a minimal live footer count, and later delivers exactly one collapsible
 completion or failure result. After start confirmation outside print mode, the
 orchestrator must not wait or poll; it may continue independent work or end its
-response so the result can enter a later turn. Only a failure result adds an instruction that
-the orchestrator must mention the failure in its next user-facing response; it
-must not stop or abandon the task solely because of the failure and should
+response so the result can enter a later turn. When `write` or `yolo` is enabled,
+reading or modifying potentially overlapping workspace paths is not independent
+work and must wait for that result. Only a failure result adds an instruction
+that the orchestrator must mention the failure in its next user-facing response;
+it must not stop or abandon the task solely because of the failure and should
 continue with another appropriate tool when useful or available.
 
-The background wrapper is limited to four concurrent Codex tasks. Independently
-useful Codex or other background calls can be started in the same turn;
-the orchestrator does not await one result before starting another. Closing or
-reloading the owning Pi session aborts active searches and suppresses stale
+The background wrapper is limited to four concurrent Codex operations.
+Independently useful Codex or other background calls can be started in the same
+turn; the orchestrator does not await one result before starting another.
+Closing or reloading the owning Pi session aborts active searches and suppresses stale
 results; this path is intentionally not durable and does not use `bq` or
 OMQueue. The helper ignores `~/.codex/config.toml` while retaining Codex authentication,
 then explicitly enables search, ephemeral execution, and a read-only sandbox.
@@ -154,7 +164,7 @@ just pi
 
 `just managed-processes` explicitly enables the extension in
 `extensions/managed-process/`. It is a separate lifecycle from the finite
-read-only background-tool wrapper. Four tools start a long-running local process,
+background-tool wrapper. Four tools start a long-running local process,
 list retained process state, retrieve recent output, and stop a process:
 
 | Tool | Purpose |

@@ -205,7 +205,7 @@ export default function (pi: ExtensionAPI) {
 		maxActive: 4,
 	});
 
-	pi.registerTool(background.wrapReadOnly({
+	pi.registerTool(background.wrapTool({
 		name: "browser_fetch",
 		label: "Browser Fetch",
 		description: `Fetch a public HTTP or HTTPS page with a fresh headless Chromium profile and return its rendered readable text and links. In print mode, the tool waits and returns the result directly. In other modes, it runs asynchronously: the call returns immediately after starting bounded background work and completion arrives later as one background result. Use it when curl cannot read a page or JavaScript rendering is required. It does not bypass logins, CAPTCHAs, or anti-bot checks, and it rejects non-public network destinations across navigation and page requests. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}.`,

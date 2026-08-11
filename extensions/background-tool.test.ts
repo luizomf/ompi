@@ -58,7 +58,7 @@ describe("background tool wrapper", () => {
       renderResult: (() => undefined) as never,
     } satisfies ToolDefinition<typeof Params, undefined>;
 
-    expect(() => manager.wrapReadOnly(original)).toThrow("custom result renderer");
+    expect(() => manager.wrapTool(original)).toThrow("custom result renderer");
   });
 
   it("returns immediately and delivers the original result once after completion", async () => {
@@ -76,7 +76,7 @@ describe("background tool wrapper", () => {
       },
     };
     const manager = createBackgroundToolManager(pi, { namespace: "test" });
-    const wrapped = manager.wrapReadOnly(original);
+    const wrapped = manager.wrapTool(original);
 
     const accepted = await wrapped.execute(
       "call-1",
@@ -129,7 +129,7 @@ describe("background tool wrapper", () => {
       },
     };
     const manager = createBackgroundToolManager(pi, { namespace: "test" });
-    const wrapped = manager.wrapReadOnly(original);
+    const wrapped = manager.wrapTool(original);
     let settled = false;
 
     const executing = wrapped.execute(
@@ -174,7 +174,7 @@ describe("background tool wrapper", () => {
         });
       },
     };
-    const wrapped = createBackgroundToolManager(pi, { namespace: "test" }).wrapReadOnly(original);
+    const wrapped = createBackgroundToolManager(pi, { namespace: "test" }).wrapTool(original);
     const executing = wrapped.execute(
       "call-1",
       { query: "bash" },
@@ -236,7 +236,7 @@ describe("background tool wrapper", () => {
       namespace: "test",
       statusLabel: "slow_search",
     });
-    const wrapped = manager.wrapReadOnly(original);
+    const wrapped = manager.wrapTool(original);
     const ctx = {
       cwd: "/repo",
       ui: {
@@ -268,7 +268,7 @@ describe("background tool wrapper", () => {
       },
     };
     const manager = createBackgroundToolManager(pi, { namespace: "test" });
-    const wrapped = manager.wrapReadOnly(original);
+    const wrapped = manager.wrapTool(original);
     const cancelled = new AbortController();
     cancelled.abort();
 
@@ -304,7 +304,7 @@ describe("background tool wrapper", () => {
       },
     };
     const manager = createBackgroundToolManager(pi, { namespace: "test" });
-    const wrapped = manager.wrapReadOnly(original);
+    const wrapped = manager.wrapTool(original);
 
     await wrapped.execute("call-1", { query: "bash" }, undefined, undefined, { cwd: "/repo" } as ExtensionContext);
     expect(taskSignal?.aborted).toBe(false);

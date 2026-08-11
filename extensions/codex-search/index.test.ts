@@ -56,7 +56,7 @@ describe("codex_search background delivery", () => {
       { cwd: "/repo" } as ExtensionContext,
     );
 
-    expect(accepted.content[0].text).toContain("Background task #1");
+    expect(accepted.content[0].text).toContain("Background operation #1");
     expect(messages).toEqual([]);
     expect(tool.description).toContain("asynchronously");
     expect(tool.parameters.properties.effort.anyOf.map((item: { const: string }) => item.const)).toEqual([
@@ -138,6 +138,7 @@ describe("codex_search background delivery", () => {
     const guidance = tool.promptGuidelines.join(" ");
     expect(guidance).toMatch(/Codex\/ImageGen generates.*Pi.*deliver/i);
     expect(guidance).toMatch(/workspace-write.*Pi session cwd.*primary workspace/i);
+    expect(guidance).toMatch(/write or yolo.*do not read or modify.*overlapping workspace paths/i);
     expect(guidance).toMatch(/never.*yolo.*specific.*authoriz/i);
 
     await vi.waitFor(() => expect(messages).toHaveLength(1));

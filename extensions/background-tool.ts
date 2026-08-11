@@ -8,7 +8,7 @@ import {
 import { Box, Text } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 
-export interface BackgroundTaskView {
+export interface BackgroundOperationView {
   id: number;
   toolName: string;
   active: boolean;
@@ -31,9 +31,9 @@ export interface BackgroundToolManagerOptions {
 }
 
 export interface BackgroundToolManager {
-  wrapReadOnly<TParams extends TSchema, TDetails>(
+  wrapTool<TParams extends TSchema, TDetails>(
     tool: ToolDefinition<TParams, TDetails>,
-  ): ToolDefinition<TParams, BackgroundTaskView | TDetails>;
+  ): ToolDefinition<TParams, BackgroundOperationView | TDetails>;
 }
 
 function resultText(result: AgentToolResult<unknown>): string {
@@ -102,9 +102,9 @@ export function createBackgroundToolManager(
   });
 
   return {
-    wrapReadOnly<TParams extends TSchema, TDetails>(
+    wrapTool<TParams extends TSchema, TDetails>(
       tool: ToolDefinition<TParams, TDetails>,
-    ): ToolDefinition<TParams, BackgroundTaskView | TDetails> {
+    ): ToolDefinition<TParams, BackgroundOperationView | TDetails> {
       if (tool.renderResult) {
         throw new Error(`${tool.name} has a custom result renderer and is not eligible for background wrapping.`);
       }
@@ -113,9 +113,9 @@ export function createBackgroundToolManager(
         ...definition,
         async execute(toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
           if (signal?.aborted) throw new Error(`${tool.name} was cancelled before background work started.`);
-          if (closed) throw new Error(`The ${options.namespace} background task manager has shut down.`);
+          if (closed) throw new Error(`The ${options.namespace} background tool manager has shut down.`);
           if (active.size >= maxActive) {
-            throw new Error(`At most ${maxActive} ${options.namespace} background tasks may be active.`);
+            throw new Error(`At most ${maxActive} ${options.namespace} background operations may be active.`);
           }
           const id = nextId++;
           if (ctx.mode === "print") {
@@ -132,7 +132,7 @@ export function createBackgroundToolManager(
               refreshUi();
             }
           }
-          const view: BackgroundTaskView = {
+          const view: BackgroundOperationView = {
             id,
             toolName: tool.name,
             active: true,
@@ -179,7 +179,7 @@ export function createBackgroundToolManager(
           return {
             content: [{
               type: "text",
-              text: `Background task #${id} (${tool.name}) started. Do not wait, sleep, or poll for completion; its result will arrive later. If another independent background call is useful, start it without waiting for this result.`,
+              text: `Background operation #${id} (${tool.name}) started. Do not wait, sleep, or poll for completion; its result will arrive later. If another independent, non-overlapping background call is useful, start it without waiting for this result.`,
             }],
             details: view,
           };
