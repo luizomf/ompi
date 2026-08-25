@@ -70,8 +70,11 @@ _Avoid_: Queue completion event, watcher result, durable notification
   best-effort completion wake matter; a trivial current-turn command is normally
   simpler through ordinary bash.
 - OMQueue remains opaque to the scheduler extension.
-- A scheduler submission invokes `bq` directly with a literal argument vector.
-  It forwards valid XDG configuration, state, and runtime roots so `bq` reaches
+- A scheduler submission invokes `bq` directly with a literal argument vector
+  and assigns the presentation label `pi_scheduler_<submission-id>`. The label
+  identifies and correlates the submission without imposing a Queue concurrency
+  key or changing execution order. It forwards valid XDG configuration, state,
+  and runtime roots so `bq` reaches
   the same per-host Queue installation as the active Pi process without
   inheriting unrelated client environment or credentials.
   Its queued invocation uses the active Pi process's absolute Node runtime and

@@ -121,14 +121,16 @@ describe("scheduler submission", () => {
       expect(invocation.command).toBe("bq");
       expect(invocation.cwd).toBe(cwd);
       expect(invocation).not.toHaveProperty("shell");
-      const runnerPath = invocation.args[10];
+      const runnerPath = invocation.args[12];
       const socketPath = valueAfter(invocation, "--socket");
       const capability = valueAfter(invocation, "--capability");
+      expect(valueAfter(invocation, "--label")).toBe(`pi_scheduler_${result.submissionId}`);
       expect(runnerPath).toMatch(/\/extensions\/scheduler\/callback-runner\.mjs$/);
       expect(socketPath).toMatch(/\/ompi-scheduler-[^/]+\/wake\.sock$/);
       expect(capability).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(invocation.args).toEqual([
         "--cwd", cwd,
+        "--label", `pi_scheduler_${result.submissionId}`,
         "--in", "10m",
         "--every", "30m",
         "--count", "4",

@@ -231,8 +231,11 @@ processes that need explicit snapshots and stop operations and do not emit a
 completion wake.
 
 The extension invokes the existing global `bq` executable directly without a
-shell and the tool call returns as soon as `bq` exits. A zero exit confirms
-acceptance, not payload completion. Any other result leaves acceptance unknown
+shell and labels every Queue Job or Schedule as
+`pi_scheduler_<submission-id>`. It does not set a concurrency key, so the label
+has no effect on concurrency or execution order. The tool call returns as soon
+as `bq` exits. A zero exit confirms acceptance, not payload completion. Any
+other result leaves acceptance unknown
 because finite submission may already have created durable work; do not blindly
 retry an unknown result. Independently requested submissions can be issued in
 the same turn so Pi handles their bounded acceptance requests concurrently; the

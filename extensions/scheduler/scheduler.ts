@@ -405,6 +405,7 @@ export class SchedulerSession {
     }
     const args = [
       "--cwd", cwd,
+      "--label", `pi_scheduler_${submissionId}`,
       ...timingArguments(input.timing),
       "--",
       this.nodeRuntimePath,
