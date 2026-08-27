@@ -160,6 +160,22 @@ just p
 just pi
 ```
 
+## Theme
+
+[`themes/omtheme.json`](themes/omtheme.json) contains the public Pi theme used
+with the matching OMXTerm and dotfiles palette. To make this checkout the
+canonical global copy while retaining Pi's normal theme discovery, link it from
+the repository root:
+
+```sh
+mkdir -p "${HOME}/.pi/agent/themes"
+ln -s "$(pwd)/themes/omtheme.json" "${HOME}/.pi/agent/themes/omtheme.json"
+```
+
+Move or remove an existing file at the destination deliberately before creating
+the link. Select `omtheme` through `/settings`; Pi hot-reloads later edits to the
+linked file.
+
 ## Managed processes
 
 `just managed-processes` explicitly enables the extension in
