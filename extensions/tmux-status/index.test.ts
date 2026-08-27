@@ -40,15 +40,15 @@ describe('tmux status extension', () => {
     expect(invocations).toEqual([
       {
         command: 'tmux',
-        args: ['set-option', '-w', '-t', '%7', '@pi_status', '󰏤 leak scan'],
+        args: ['set-option', '-w', '-t', '%7', '@pi_status', ' leak scan'],
       },
       {
         command: 'tmux',
-        args: ['set-option', '-w', '-t', '%7', '@pi_status', '󰐊 leak scan'],
+        args: ['set-option', '-w', '-t', '%7', '@pi_status', '󰓅 leak scan'],
       },
       {
         command: 'tmux',
-        args: ['set-option', '-w', '-t', '%7', '@pi_status', '󰏤 leak scan'],
+        args: ['set-option', '-w', '-t', '%7', '@pi_status', ' leak scan'],
       },
       {
         command: 'tmux',
@@ -79,7 +79,7 @@ describe('tmux status extension', () => {
     sessionName = 'architecture';
     await handlers.get('session_info_changed')?.({ name: sessionName }, ctx);
 
-    expect(statuses).toEqual(['󰏤 dotfiles', '󰏤 architecture']);
+    expect(statuses).toEqual([' dotfiles', ' architecture']);
   });
 
   it('keeps tmux integration failures out of the Pi lifecycle', async () => {
@@ -126,7 +126,7 @@ describe('tmux status extension', () => {
       cwd: '/work/dotfiles',
     } as ExtensionContext);
 
-    expect(status).toBe('󰏤 review leaked credentials');
+    expect(status).toBe(' review leaked credentials');
   });
 
   it('does nothing when Pi is not running inside tmux', () => {

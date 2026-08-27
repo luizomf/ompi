@@ -22,7 +22,7 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
   }
 
   async function publish(ctx: ExtensionContext): Promise<void> {
-    const icon = running ? '󰐊' : '󰏤';
+    const icon = running ? '󰓅' : '';
     const sessionName = pi.getSessionName()?.replace(/\s+/gu, ' ').trim();
     const name = sessionName || basename(ctx.cwd);
     await runTmux([
