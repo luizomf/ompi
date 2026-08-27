@@ -160,6 +160,27 @@ just p
 just pi
 ```
 
+## Tmux status
+
+The extension in `extensions/tmux-status/` publishes compact, best-effort Pi
+metadata to the current tmux window. It sets `@pi_status` to `󰐊 RUN <name>` while
+the agent is running and `󰏤 IDLE <name>` when it is idle. The name is the native Pi
+session name when available, otherwise the current directory name. It removes
+the option on shutdown.
+
+The extension registers no tools, adds nothing to the agent context, invokes
+tmux directly without a shell, and is inert unless both `TMUX` and `TMUX_PANE`
+are present. Tmux failures do not affect the Pi lifecycle. Install it globally
+from the repository root with:
+
+```sh
+ln -s "$(pwd)/extensions/tmux-status" "${HOME}/.pi/agent/extensions/tmux-status"
+```
+
+Consumers can render the window option directly with `#{@pi_status}`. Existing
+real directories or links at the destination must be moved or removed
+deliberately before creating the link.
+
 ## Theme
 
 [`themes/omtheme.json`](themes/omtheme.json) contains the public Pi theme used

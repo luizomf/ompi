@@ -71,6 +71,8 @@ intent-bearing comments synchronized with an intentional behavior change.
   best-effort session wakes.
 - `extensions/subagents/` — clean, persistent Pi conversations with
   session-scoped process control.
+- `extensions/tmux-status/` — best-effort Pi session and running-state metadata
+  for the current tmux window; outside tmux it is inert.
 - `CONTEXT-MAP.md` — routing table for the current domain contexts.
 - `docs/*/CONTEXT.md` — canonical context terminology, contracts, and ownership
   boundaries.
