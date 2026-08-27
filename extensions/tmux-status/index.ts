@@ -23,6 +23,7 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
 
   async function publish(ctx: ExtensionContext): Promise<void> {
     const icon = running ? '󰓅' : '';
+    const color = running ? 'green' : 'red';
     const sessionName = pi.getSessionName()?.replace(/\s+/gu, ' ').trim();
     const name = sessionName || basename(ctx.cwd);
     await runTmux([
@@ -31,7 +32,7 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
       '-t',
       tmuxPane,
       TMUX_STATUS_OPTION,
-      `${icon} ${name}`,
+      `#[fg=${color}]${icon}#[fg=default] ${name}`,
     ]);
   }
 
