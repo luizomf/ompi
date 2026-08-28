@@ -70,6 +70,8 @@ _Avoid_: Scheduler wake, pong, polling response
   omitted rather than silently discarded.
 - A live success-themed footer count exposes active operations without transcript
   polling. Each owner supplies the tool-facing status label used by that count.
+  The same count is published through the shared extension event bus so
+  session-level status integrations remain active until the background result.
 
 ## Implementation ownership
 

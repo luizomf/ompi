@@ -64,6 +64,7 @@ function setup() {
   const tools = new Map<string, any>();
   const commands = new Map<string, any>();
   const messages: unknown[] = [];
+  const activityEvents: Array<{ channel: string; data: unknown }> = [];
   let thinking = "low";
   const pi = {
     registerTool: (tool: { name: string }) => tools.set(tool.name, tool),
@@ -72,6 +73,9 @@ function setup() {
     on: () => undefined,
     getThinkingLevel: () => thinking,
     sendMessage: (message: unknown) => messages.push(message),
+    events: {
+      emit: (channel: string, data: unknown) => activityEvents.push({ channel, data }),
+    },
   } as unknown as ExtensionAPI;
   const notifications: string[] = [];
   const ctx = {
@@ -81,7 +85,15 @@ function setup() {
   } as unknown as ExtensionContext;
 
   subagentsExtension(pi);
-  return { tools, commands, ctx, messages, notifications, setThinking: (level: string) => { thinking = level; } };
+  return {
+    tools,
+    commands,
+    ctx,
+    messages,
+    notifications,
+    activityEvents,
+    setThinking: (level: string) => { thinking = level; },
+  };
 }
 
 async function settle(index: number): Promise<void> {
@@ -93,6 +105,29 @@ describe("subagent routing inheritance", () => {
   beforeEach(() => {
     rpc.invocations.length = 0;
     rpc.children.length = 0;
+  });
+
+  it("publishes active turns for session-level status integrations", async () => {
+    const { tools, ctx, activityEvents } = setup();
+
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "inspect the status seam" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(activityEvents.at(-1)).toEqual({
+      channel: "ompi:async-activity",
+      data: { source: "subagents", active: 1 },
+    });
+
+    await settle(0);
+    expect(activityEvents.at(-1)).toEqual({
+      channel: "ompi:async-activity",
+      data: { source: "subagents", active: 0 },
+    });
   });
 
   it("exposes opt-in routing schemas and default-routing guidance", () => {

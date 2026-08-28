@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
+import { publishAsyncActivity } from "./async-activity.ts";
 
 export interface BackgroundOperationView {
   id: number;
@@ -86,6 +87,7 @@ export function createBackgroundToolManager(
   const refreshUi = () => {
     const status = active.size > 0 ? `${statusLabel}: ${active.size}` : undefined;
     ui?.setStatus(customType, status ? ui.theme.fg("success", status) : undefined);
+    publishAsyncActivity(pi, customType, active.size);
   };
 
   pi.on("session_start", (_event, ctx) => {

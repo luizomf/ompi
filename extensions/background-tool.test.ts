@@ -24,6 +24,7 @@ function setup() {
   const messages: Array<{ message: any; options: any }> = [];
   const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
   const renderers = new Map<string, unknown>();
+  const activityEvents: Array<{ channel: string; data: unknown }> = [];
   const pi = {
     registerMessageRenderer: (customType: string, renderer: unknown) => renderers.set(customType, renderer),
     sendMessage: (message: unknown, options: unknown) => messages.push({ message, options }),
@@ -32,8 +33,11 @@ function setup() {
       registered.push(handler);
       handlers.set(event, registered);
     },
+    events: {
+      emit: (channel: string, data: unknown) => activityEvents.push({ channel, data }),
+    },
   } as unknown as ExtensionAPI;
-  return { pi, messages, handlers, renderers };
+  return { pi, messages, handlers, renderers, activityEvents };
 }
 
 const Params = Type.Object({ query: Type.String() });
@@ -219,8 +223,8 @@ describe("background tool wrapper", () => {
     expect(expanded).toContain("FULL RESULT");
   });
 
-  it("shows a minimal live count while background work is active", async () => {
-    const { pi, handlers } = setup();
+  it("shows and publishes a minimal live count while background work is active", async () => {
+    const { pi, handlers, activityEvents } = setup();
     const completion = deferred<AgentToolResult<undefined>>();
     const statuses: Array<[string, string | undefined]> = [];
     const original: ToolDefinition<typeof Params, undefined> = {
@@ -248,9 +252,17 @@ describe("background tool wrapper", () => {
     for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
     await wrapped.execute("call-1", { query: "bash" }, undefined, undefined, ctx);
     expect(statuses.at(-1)).toEqual(["background-test", "[success]slow_search: 1"]);
+    expect(activityEvents.at(-1)).toEqual({
+      channel: "ompi:async-activity",
+      data: { source: "background-test", active: 1 },
+    });
 
     completion.resolve({ content: [{ type: "text", text: "done" }], details: undefined });
     await vi.waitFor(() => expect(statuses.at(-1)).toEqual(["background-test", undefined]));
+    expect(activityEvents.at(-1)).toEqual({
+      channel: "ompi:async-activity",
+      data: { source: "background-test", active: 0 },
+    });
   });
 
   it("refuses a pre-cancelled call but isolates accepted work from later turn cancellation", async () => {

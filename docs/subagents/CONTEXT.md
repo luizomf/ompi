@@ -37,7 +37,7 @@ The subagent extension's single deterministic notification that an accepted suba
 _Avoid_: Model callback, polling, status check
 
 **Live status**:
-A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the orchestrator conversation. A minimal footer count remains visible while any subagent turn is active.
+A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the orchestrator conversation. A minimal footer count remains visible while any subagent turn is active. The same active count is published through the shared extension event bus so session-level status integrations do not mistake a settled orchestrator turn for an idle session.
 _Avoid_: Transcript message, progress polling, full output
 
 ## Routing selection

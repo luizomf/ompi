@@ -17,6 +17,7 @@ import {
   type ThinkingLevel,
 } from "./controller.ts";
 import { buildChildInvocation, RpcSubprocess } from "./rpc-child.ts";
+import { publishAsyncActivity } from "./async-activity.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
@@ -170,6 +171,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
   let ui: ExtensionContext["ui"] | undefined;
   let timer: NodeJS.Timeout | undefined;
+  let publishedActiveCount: number | undefined;
   let controller: SubagentController;
 
   const refreshUi = () => {
@@ -191,6 +193,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     if (activeCount === 0 && timer) {
       clearInterval(timer);
       timer = undefined;
+    }
+    if (publishedActiveCount !== activeCount) {
+      publishedActiveCount = activeCount;
+      publishAsyncActivity(pi, "subagents", activeCount);
     }
   };
 

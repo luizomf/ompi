@@ -163,10 +163,14 @@ just pi
 ## Tmux status
 
 The extension in `extensions/tmux-status/` publishes compact, best-effort Pi
-metadata to the current tmux window. It sets `@pi_status` to `󰐊 RUN <name>` while
-the agent is running and `󰏤 IDLE <name>` when it is idle. The name is the native Pi
-session name when available, otherwise the current directory name. It removes
-the option on shutdown.
+metadata to the current tmux window. It sets `@pi_status` to an active glyph
+while the agent is running or session-scoped work is still expected to return,
+and to an idle glyph only after both have settled. Active subagent turns and
+background tool operations such as browser fetches and Codex research
+participate in that status. Durable scheduler submissions and managed processes
+do not: their lifecycle is not a pending in-session automatic result. The name
+is the native Pi session name when available, otherwise the current directory
+name. The option is removed on shutdown.
 
 The extension registers no tools, adds nothing to the agent context, invokes
 tmux directly without a shell, and is inert unless both `TMUX` and `TMUX_PANE`

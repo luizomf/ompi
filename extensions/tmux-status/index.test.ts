@@ -57,6 +57,41 @@ describe('tmux status extension', () => {
     ]);
   });
 
+  it('stays active while settled agent work can still return to the session', async () => {
+    vi.stubEnv('TMUX', '/tmp/tmux-501/default,1,0');
+    vi.stubEnv('TMUX_PANE', '%11');
+
+    const handlers = new Map<string, Handler>();
+    const activityHandlers = new Map<string, (data: unknown) => void>();
+    const statuses: string[] = [];
+    const pi = {
+      getSessionName: () => 'delegated research',
+      on: (event: string, handler: Handler) => handlers.set(event, handler),
+      events: {
+        on: (event: string, handler: (data: unknown) => void) => {
+          activityHandlers.set(event, handler);
+          return () => activityHandlers.delete(event);
+        },
+      },
+      exec: async (_command: string, args: string[]) => {
+        statuses.push(args.at(-1) ?? '');
+        return { stdout: '', stderr: '', code: 0, killed: false };
+      },
+    } as unknown as ExtensionAPI;
+    const ctx = { cwd: '/work/dotfiles' } as ExtensionContext;
+
+    tmuxStatusExtension(pi);
+    await handlers.get('session_start')?.({}, ctx);
+    await handlers.get('agent_start')?.({}, ctx);
+    activityHandlers.get('ompi:async-activity')?.({ source: 'subagents', active: 4 });
+    await handlers.get('agent_settled')?.({}, ctx);
+
+    expect(statuses.at(-1)).toBe('󰓅 delegated research');
+
+    activityHandlers.get('ompi:async-activity')?.({ source: 'subagents', active: 0 });
+    await vi.waitFor(() => expect(statuses.at(-1)).toBe(' delegated research'));
+  });
+
   it('uses the project directory until the Pi session receives a name', async () => {
     vi.stubEnv('TMUX', '/tmp/tmux-501/default,1,0');
     vi.stubEnv('TMUX_PANE', '%8');

@@ -3,6 +3,10 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
+import {
+  ASYNC_ACTIVITY_EVENT,
+  parseAsyncActivity,
+} from './async-activity.ts';
 
 const TMUX_STATUS_OPTION = '@pi_status';
 
@@ -11,7 +15,10 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
   if (!process.env.TMUX || !tmuxPaneFromEnv) return;
   const tmuxPane: string = tmuxPaneFromEnv;
 
-  let running = false;
+  let agentRunning = false;
+  let currentContext: ExtensionContext | undefined;
+  let publication = Promise.resolve();
+  const asyncActivity = new Map<string, number>();
 
   async function runTmux(args: string[]): Promise<void> {
     try {
@@ -22,7 +29,8 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
   }
 
   async function publish(ctx: ExtensionContext): Promise<void> {
-    const icon = running ? '󰓅' : '';
+    const active = agentRunning || [...asyncActivity.values()].some((count) => count > 0);
+    const icon = active ? '󰓅' : '';
     const sessionName = pi.getSessionName()?.replace(/\s+/gu, ' ').trim();
     const name = sessionName || basename(ctx.cwd);
     await runTmux([
@@ -35,26 +43,45 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
     ]);
   }
 
+  function queuePublish(ctx: ExtensionContext): Promise<void> {
+    publication = publication.then(() => publish(ctx));
+    return publication;
+  }
+
+  const unsubscribeActivity = pi.events?.on(ASYNC_ACTIVITY_EVENT, (value) => {
+    const activity = parseAsyncActivity(value);
+    if (!activity || (asyncActivity.get(activity.source) ?? 0) === activity.active) return;
+    if (activity.active === 0) asyncActivity.delete(activity.source);
+    else asyncActivity.set(activity.source, activity.active);
+    if (currentContext) void queuePublish(currentContext);
+  });
+
   pi.on('session_start', async (_event, ctx) => {
-    running = false;
-    await publish(ctx);
+    agentRunning = false;
+    currentContext = ctx;
+    asyncActivity.clear();
+    await queuePublish(ctx);
   });
 
   pi.on('session_info_changed', async (_event, ctx) => {
-    await publish(ctx);
+    await queuePublish(ctx);
   });
 
   pi.on('agent_start', async (_event, ctx) => {
-    running = true;
-    await publish(ctx);
+    agentRunning = true;
+    await queuePublish(ctx);
   });
 
   pi.on('agent_settled', async (_event, ctx) => {
-    running = false;
-    await publish(ctx);
+    agentRunning = false;
+    await queuePublish(ctx);
   });
 
   pi.on('session_shutdown', async () => {
+    currentContext = undefined;
+    asyncActivity.clear();
+    unsubscribeActivity?.();
+    await publication;
     await runTmux([
       'set-option',
       '-w',
