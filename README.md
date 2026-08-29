@@ -172,10 +172,16 @@ do not: their lifecycle is not a pending in-session automatic result. The name
 is the native Pi session name when available, otherwise the current directory
 name. The option is removed on shutdown.
 
+When the published state changes from active to idle, the extension can invoke
+`osalert` from `PATH` without a shell. The sound is disabled by default. Use
+`/tmux-alert` to toggle it for the current Pi session, or start Pi with
+`--tmux-alert` to enable it initially. This is best-effort: a missing or failing
+command does not affect Pi.
+
 The extension registers no tools, adds nothing to the agent context, invokes
-tmux directly without a shell, and is inert unless both `TMUX` and `TMUX_PANE`
-are present. Tmux failures do not affect the Pi lifecycle. Install it globally
-from the repository root with:
+commands directly without a shell, and is inert unless both `TMUX` and
+`TMUX_PANE` are present. Tmux and alert failures do not affect the Pi lifecycle.
+Install it globally from the repository root with:
 
 ```sh
 ln -s "$(pwd)/extensions/tmux-status" "${HOME}/.pi/agent/extensions/tmux-status"

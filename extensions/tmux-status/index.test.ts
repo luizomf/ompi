@@ -10,6 +10,11 @@ type Handler = (
   ctx: ExtensionContext,
 ) => unknown;
 
+type CommandHandler = (
+  args: string,
+  ctx: ExtensionContext,
+) => Promise<void>;
+
 describe('tmux status extension', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -23,6 +28,9 @@ describe('tmux status extension', () => {
     const invocations: Array<{ command: string; args: string[] }> = [];
     const pi = {
       getSessionName: () => 'leak scan',
+      registerFlag: () => {},
+      getFlag: () => false,
+      registerCommand: () => {},
       on: (event: string, handler: Handler) => handlers.set(event, handler),
       exec: async (command: string, args: string[]) => {
         invocations.push({ command, args });
@@ -57,6 +65,83 @@ describe('tmux status extension', () => {
     ]);
   });
 
+  it('can enable idle audio with the tmux-alert flag', async () => {
+    vi.stubEnv('TMUX', '/tmp/tmux-501/default,1,0');
+    vi.stubEnv('TMUX_PANE', '%12');
+
+    const handlers = new Map<string, Handler>();
+    const commands: string[] = [];
+    const pi = {
+      getSessionName: () => 'alert session',
+      registerFlag: () => {},
+      getFlag: (name: string) => name === 'tmux-alert',
+      registerCommand: () => {},
+      on: (event: string, handler: Handler) => handlers.set(event, handler),
+      exec: async (command: string) => {
+        commands.push(command);
+        return { stdout: '', stderr: '', code: 0, killed: false };
+      },
+    } as unknown as ExtensionAPI;
+    const ctx = { cwd: '/work/dotfiles' } as ExtensionContext;
+
+    tmuxStatusExtension(pi);
+    await handlers.get('session_start')?.({}, ctx);
+    await handlers.get('agent_start')?.({}, ctx);
+    await handlers.get('agent_settled')?.({}, ctx);
+
+    expect(commands).toContain('osalert');
+  });
+
+  it('toggles idle audio with the tmux-alert command', async () => {
+    vi.stubEnv('TMUX', '/tmp/tmux-501/default,1,0');
+    vi.stubEnv('TMUX_PANE', '%13');
+
+    const handlers = new Map<string, Handler>();
+    const commandHandlers = new Map<string, CommandHandler>();
+    const notifications: string[] = [];
+    let alerts = 0;
+    const pi = {
+      getSessionName: () => 'toggle alert',
+      registerFlag: () => {},
+      getFlag: () => false,
+      registerCommand: (
+        name: string,
+        command: { handler: CommandHandler },
+      ) => commandHandlers.set(name, command.handler),
+      on: (event: string, handler: Handler) => handlers.set(event, handler),
+      exec: async (command: string) => {
+        if (command === 'osalert') alerts += 1;
+        return { stdout: '', stderr: '', code: 0, killed: false };
+      },
+    } as unknown as ExtensionAPI;
+    const ctx = {
+      cwd: '/work/dotfiles',
+      ui: {
+        notify: (message: string) => notifications.push(message),
+      },
+    } as unknown as ExtensionContext;
+
+    tmuxStatusExtension(pi);
+    await handlers.get('session_start')?.({}, ctx);
+
+    const toggleAlert = commandHandlers.get('tmux-alert');
+    expect(toggleAlert).toBeDefined();
+
+    await toggleAlert?.('', ctx);
+    await handlers.get('agent_start')?.({}, ctx);
+    await handlers.get('agent_settled')?.({}, ctx);
+    expect(alerts).toBe(1);
+
+    await toggleAlert?.('', ctx);
+    await handlers.get('agent_start')?.({}, ctx);
+    await handlers.get('agent_settled')?.({}, ctx);
+    expect(alerts).toBe(1);
+    expect(notifications).toEqual([
+      'Tmux idle sound enabled',
+      'Tmux idle sound disabled',
+    ]);
+  });
+
   it('stays active while settled agent work can still return to the session', async () => {
     vi.stubEnv('TMUX', '/tmp/tmux-501/default,1,0');
     vi.stubEnv('TMUX_PANE', '%11');
@@ -64,8 +149,12 @@ describe('tmux status extension', () => {
     const handlers = new Map<string, Handler>();
     const activityHandlers = new Map<string, (data: unknown) => void>();
     const statuses: string[] = [];
+    let alerts = 0;
     const pi = {
       getSessionName: () => 'delegated research',
+      registerFlag: () => {},
+      getFlag: () => true,
+      registerCommand: () => {},
       on: (event: string, handler: Handler) => handlers.set(event, handler),
       events: {
         on: (event: string, handler: (data: unknown) => void) => {
@@ -73,8 +162,9 @@ describe('tmux status extension', () => {
           return () => activityHandlers.delete(event);
         },
       },
-      exec: async (_command: string, args: string[]) => {
-        statuses.push(args.at(-1) ?? '');
+      exec: async (command: string, args: string[]) => {
+        if (command === 'tmux') statuses.push(args.at(-1) ?? '');
+        if (command === 'osalert') alerts += 1;
         return { stdout: '', stderr: '', code: 0, killed: false };
       },
     } as unknown as ExtensionAPI;
@@ -87,9 +177,11 @@ describe('tmux status extension', () => {
     await handlers.get('agent_settled')?.({}, ctx);
 
     expect(statuses.at(-1)).toBe('󰓅 delegated research');
+    expect(alerts).toBe(0);
 
     activityHandlers.get('ompi:async-activity')?.({ source: 'subagents', active: 0 });
     await vi.waitFor(() => expect(statuses.at(-1)).toBe(' delegated research'));
+    expect(alerts).toBe(1);
   });
 
   it('uses the project directory until the Pi session receives a name', async () => {
@@ -101,6 +193,9 @@ describe('tmux status extension', () => {
     const statuses: string[] = [];
     const pi = {
       getSessionName: () => sessionName,
+      registerFlag: () => {},
+      getFlag: () => false,
+      registerCommand: () => {},
       on: (event: string, handler: Handler) => handlers.set(event, handler),
       exec: async (_command: string, args: string[]) => {
         statuses.push(args.at(-1) ?? '');
@@ -124,6 +219,9 @@ describe('tmux status extension', () => {
     const handlers = new Map<string, Handler>();
     const pi = {
       getSessionName: () => 'status',
+      registerFlag: () => {},
+      getFlag: () => false,
+      registerCommand: () => {},
       on: (event: string, handler: Handler) => handlers.set(event, handler),
       exec: async () => {
         throw new Error('tmux unavailable');
@@ -149,6 +247,9 @@ describe('tmux status extension', () => {
     let status = '';
     const pi = {
       getSessionName: () => '  review\t leaked\n credentials  ',
+      registerFlag: () => {},
+      getFlag: () => false,
+      registerCommand: () => {},
       on: (event: string, handler: Handler) => handlers.set(event, handler),
       exec: async (_command: string, args: string[]) => {
         status = args.at(-1) ?? '';
@@ -170,6 +271,7 @@ describe('tmux status extension', () => {
 
     const events: string[] = [];
     const pi = {
+      registerFlag: () => {},
       on: (event: string) => events.push(event),
       exec: async () => {
         throw new Error('must not execute');

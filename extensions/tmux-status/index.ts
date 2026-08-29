@@ -11,20 +11,47 @@ import {
 const TMUX_STATUS_OPTION = '@pi_status';
 
 export default function tmuxStatusExtension(pi: ExtensionAPI): void {
+  pi.registerFlag('tmux-alert', {
+    description: 'Enable the sound when Pi becomes idle in tmux',
+    type: 'boolean',
+    default: false,
+  });
+
   const tmuxPaneFromEnv = process.env.TMUX_PANE;
   if (!process.env.TMUX || !tmuxPaneFromEnv) return;
   const tmuxPane: string = tmuxPaneFromEnv;
 
+  let alertEnabled = pi.getFlag('tmux-alert') === true;
   let agentRunning = false;
   let currentContext: ExtensionContext | undefined;
+  let lastPublishedActive: boolean | undefined;
   let publication = Promise.resolve();
   const asyncActivity = new Map<string, number>();
+
+  pi.registerCommand('tmux-alert', {
+    description: 'Toggle the sound when Pi becomes idle in tmux',
+    handler: async (_args, ctx) => {
+      alertEnabled = !alertEnabled;
+      ctx.ui.notify(
+        `Tmux idle sound ${alertEnabled ? 'enabled' : 'disabled'}`,
+        'info',
+      );
+    },
+  });
 
   async function runTmux(args: string[]): Promise<void> {
     try {
       await pi.exec('tmux', args);
     } catch {
       // Status publication is best-effort and must not affect the Pi lifecycle.
+    }
+  }
+
+  async function runAlert(): Promise<void> {
+    try {
+      await pi.exec('osalert', []);
+    } catch {
+      // Audio notification is best-effort and must not affect Pi.
     }
   }
 
@@ -41,6 +68,10 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
       TMUX_STATUS_OPTION,
       `${icon} ${name}`,
     ]);
+
+    const becameIdle = lastPublishedActive === true && !active;
+    lastPublishedActive = active;
+    if (becameIdle && alertEnabled) void runAlert();
   }
 
   function queuePublish(ctx: ExtensionContext): Promise<void> {
@@ -59,6 +90,7 @@ export default function tmuxStatusExtension(pi: ExtensionAPI): void {
   pi.on('session_start', async (_event, ctx) => {
     agentRunning = false;
     currentContext = ctx;
+    lastPublishedActive = undefined;
     asyncActivity.clear();
     await queuePublish(ctx);
   });
