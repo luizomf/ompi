@@ -190,13 +190,29 @@ export class SubagentController {
     const completion = new Promise<TerminalResult>((resolve) => {
       resolveCompletion = resolve;
     });
-    await this.continueWithDelivery(input, resolveCompletion);
+    let cancelled = false;
     const abort = () => {
-      if (this.records.get(input.id)?.active) void this.interrupt(input.id).catch(() => undefined);
+      cancelled = true;
+      const record = this.records.get(input.id);
+      if (!record?.active) return;
+      record.interruptRequested = true;
+      if (record.accepted && !record.finalizing && record.state !== "interrupting") {
+        void this.interrupt(input.id).catch(() => undefined);
+      }
     };
     signal?.addEventListener("abort", abort, { once: true });
     try {
-      if (signal?.aborted && this.records.get(input.id)?.active) await this.interrupt(input.id);
+      await this.continueWithDelivery(input, resolveCompletion, () => cancelled);
+      const record = this.records.get(input.id);
+      if (
+        cancelled
+        && record?.active
+        && record.accepted
+        && !record.finalizing
+        && record.state !== "interrupting"
+      ) {
+        await this.interrupt(input.id);
+      }
       return await completion;
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -206,6 +222,7 @@ export class SubagentController {
   private async continueWithDelivery(
     input: ContinueInput,
     directResolve?: (result: TerminalResult) => void,
+    isCancelled?: () => boolean,
   ): Promise<SubagentView> {
     this.assertCanLaunch();
     const record = this.requireRecord(input.id);
@@ -235,7 +252,7 @@ export class SubagentController {
     record.accepted = false;
     record.finalizing = false;
     record.delivered = false;
-    record.interruptRequested = false;
+    record.interruptRequested = isCancelled?.() ?? false;
     record.pendingSettled = false;
     record.pendingExitError = undefined;
     record.terminalError = undefined;

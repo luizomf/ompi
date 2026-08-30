@@ -116,7 +116,7 @@ function setup(options: {
     createChild: async (spec) => {
       const child = new FakeChild(
         spec,
-        `/sessions/${children.length + 1}.jsonl`,
+        spec.session ?? `/sessions/${children.length + 1}.jsonl`,
         options.delayedPrompt,
         options.reportedCapabilities,
         options.delayedClose,
@@ -530,6 +530,43 @@ describe("SubagentController", () => {
       id: 1,
       outcome: "completed",
       finalText: "continued",
+    });
+    expect(pongs).toHaveLength(1);
+  });
+
+  it("classifies direct continuation cancellation during handshaking as interrupted", async () => {
+    const { controller, children, pongs } = setup({ delayedPrompt: true });
+    const starting = controller.start({
+      prompt: "one",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "low",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    children[0].acceptPrompt();
+    await starting;
+    await settle(children[0]);
+    expect(pongs).toHaveLength(1);
+
+    const cancellation = new AbortController();
+    const continuing = controller.runContinuation({
+      id: 1,
+      prompt: "two",
+      model: "p/m",
+      thinking: "high",
+      capabilities: DEFAULT_CAPABILITIES,
+    }, cancellation.signal);
+    await vi.waitFor(() => expect(children).toHaveLength(2));
+
+    cancellation.abort();
+    children[1].emit({ type: "agent_settled" });
+    children[1].acceptPrompt();
+
+    await expect(continuing).resolves.toMatchObject({
+      id: 1,
+      outcome: "interrupted",
+      sessionRef: "/sessions/1.jsonl",
     });
     expect(pongs).toHaveLength(1);
   });
