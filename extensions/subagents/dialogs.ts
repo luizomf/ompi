@@ -1,4 +1,7 @@
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import {
+  ExtensionEditorComponent,
+  type ExtensionUIContext,
+} from "@earendil-works/pi-coding-agent";
 
 export const STANDARD_DIALOG_METHODS = ["select", "confirm", "input", "editor"] as const;
 export const DIALOG_RELAY_TIMEOUT_MS = 30_000;
@@ -41,6 +44,10 @@ export type StandardDialogResult =
   | { cancelled: true }
   | { confirmed: boolean }
   | { value: string };
+
+export interface DialogRelayOptions {
+  interactiveEditor?: boolean;
+}
 
 const MAX_ID_LENGTH = 128;
 const MAX_TITLE_LENGTH = 2_000;
@@ -162,10 +169,55 @@ async function withinRelayDeadline<T>(
   }
 }
 
+async function relayInteractiveEditor(
+  ui: ExtensionUIContext,
+  request: EditorDialogRequest,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<StandardDialogResult> {
+  if (signal.aborted) return cancelledDialogResult();
+  let cleanup = () => undefined;
+  try {
+    const value = await ui.custom<string | undefined>((tui, _theme, keybindings, done) => {
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      const finish = (result: string | undefined) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+        done(result);
+      };
+      const abort = () => finish(undefined);
+      cleanup = () => {
+        if (timer) clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      timer = setTimeout(() => finish(undefined), timeoutMs);
+      if (signal.aborted) queueMicrotask(abort);
+      return new ExtensionEditorComponent(
+        tui,
+        keybindings,
+        request.title,
+        request.prefill,
+        (result) => finish(result),
+        () => finish(undefined),
+      );
+    });
+    return value === undefined ? cancelledDialogResult() : { value };
+  } catch {
+    return cancelledDialogResult();
+  } finally {
+    cleanup();
+  }
+}
+
 export async function relayStandardDialog(
   ui: ExtensionUIContext,
   request: StandardDialogRequest,
   signal: AbortSignal,
+  options: DialogRelayOptions = {},
 ): Promise<StandardDialogResult> {
   if (signal.aborted) return cancelledDialogResult();
   const relayTimeout = Math.min(request.timeout ?? DIALOG_RELAY_TIMEOUT_MS, DIALOG_RELAY_TIMEOUT_MS);
@@ -203,6 +255,9 @@ export async function relayStandardDialog(
           : { value };
       }
       case "editor": {
+        if (options.interactiveEditor) {
+          return relayInteractiveEditor(ui, request, signal, relayTimeout);
+        }
         const value = await withinRelayDeadline(
           ui.editor(request.title, request.prefill),
           signal,

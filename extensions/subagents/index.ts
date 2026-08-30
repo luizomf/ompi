@@ -265,7 +265,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     const views = controller.list();
     const activeCount = views.filter((view) => view.active).length;
     const presentation = buildActiveUi(views, Date.now());
-    if (ui && uiMode === "tui") {
+    if (
+      ui
+      && (uiMode === "tui" || (lineage.depth === 1 && uiMode === "rpc"))
+    ) {
       const theme = ui.theme;
       ui.setWidget(
         "subagents",
@@ -308,7 +311,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     ) {
       return cancelledDialogResult();
     }
-    return relayStandardDialog(currentUi, request, signal);
+    return relayStandardDialog(currentUi, request, signal, {
+      interactiveEditor: lineage.depth === 1 && uiMode === "tui",
+    });
   };
 
   const sendPong = (pong: TerminalResult) => {
@@ -589,7 +594,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     if (timer) clearInterval(timer);
     timer = undefined;
     await controller.shutdown();
-    if (uiMode === "tui") {
+    if (uiMode === "tui" || (lineage.depth === 1 && uiMode === "rpc")) {
       ui?.setWidget("subagents", undefined);
       ui?.setStatus("subagents", undefined);
     }

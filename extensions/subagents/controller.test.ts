@@ -138,6 +138,30 @@ async function settle(child: FakeChild): Promise<void> {
 }
 
 describe("SubagentController", () => {
+  it("rolls back a new active record when pre-launch status publication fails", async () => {
+    let launches = 0;
+    const controller = new SubagentController({
+      createChild: async (spec) => {
+        launches++;
+        return new FakeChild(spec, "/sessions/unexpected.jsonl");
+      },
+      onPong: () => undefined,
+      onChange: () => {
+        throw new Error("status publication failed");
+      },
+    });
+
+    await expect(controller.start({
+      prompt: "not launched",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "low",
+      capabilities: DEFAULT_CAPABILITIES,
+    })).rejects.toThrow("status publication failed");
+    expect(launches).toBe(0);
+    expect(controller.list()).toEqual([]);
+  });
+
   it("returns after prompt acceptance and before completion", async () => {
     const { controller, children, pongs } = setup({ delayedPrompt: true });
     const starting = controller.start({ prompt: "inspect", cwd: "/repo", model: "p/m", thinking: "high", capabilities: DEFAULT_CAPABILITIES });

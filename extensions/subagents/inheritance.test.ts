@@ -244,6 +244,26 @@ describe("subagent routing inheritance", () => {
     });
   });
 
+  it("preserves compact direct-child activity for a root RPC client", async () => {
+    const { tools, ctx, startSession, statuses, widgets } = setup();
+    await startSession("rpc");
+
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "root RPC child", name: "worker" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(statuses.at(-1)).toEqual({ key: "subagents", text: "subagents: 1" });
+    expect(widgets.at(-1)).toMatchObject({
+      key: "subagents",
+      lines: [expect.stringContaining("#1 worker · running")],
+    });
+    expect(statuses.some((status) => status.key === "ompi:subagents:ownership-v1")).toBe(false);
+  });
+
   it("returns nested active state only when ownership status is requested", async () => {
     const { tools, ctx } = setup();
     await tools.get("subagent_start").execute(

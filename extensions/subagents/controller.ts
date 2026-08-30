@@ -295,9 +295,9 @@ export class SubagentController {
     record.assistantMessageEnded = false;
     record.ownership = [];
     record.directResolve = directResolve;
-    this.changed();
 
     try {
+      this.changed();
       await this.launch(record, input.prompt);
       return this.view(record);
     } catch (error) {
@@ -528,8 +528,13 @@ export class SubagentController {
       directResolve,
     };
     this.records.set(record.id, record);
-    this.changed();
-    return record;
+    try {
+      this.changed();
+      return record;
+    } catch (error) {
+      this.records.delete(record.id);
+      throw error;
+    }
   }
 
   private assertCanLaunch(): void {

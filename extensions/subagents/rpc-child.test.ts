@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { initTheme, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { BUILTIN_TOOL_PROVIDER } from "./capabilities.ts";
 import {
   parseStandardDialogRequest,
@@ -89,6 +89,29 @@ describe("ownership status protocol", () => {
       ownership: [{ ...ownership[0], path: [2, 3, 4] }],
     }))).toThrow("invalid");
   });
+
+  it("omits a whitespace-only optional name instead of rejecting active status", () => {
+    const encoded = encodeOwnershipStatus([{
+      path: [1],
+      parentPath: [],
+      id: 1,
+      depth: 3,
+      state: "handshaking",
+      name: "   ",
+      model: "provider/model",
+      thinking: "low",
+    }]);
+
+    expect(parseOwnershipStatus(encoded)).toEqual([{
+      path: [1],
+      parentPath: [],
+      id: 1,
+      depth: 3,
+      state: "handshaking",
+      model: "provider/model",
+      thinking: "low",
+    }]);
+  });
 });
 
 describe("standard dialog relay", () => {
@@ -165,6 +188,34 @@ describe("standard dialog relay", () => {
     ]);
 
     expect(observed).toEqual({ cancelled: true });
+  });
+
+  it("dismisses the root interactive editor when its bounded relay expires", async () => {
+    initTheme(undefined, false);
+    let customSettled = false;
+    const ui = {
+      custom: async (factory: (...args: any[]) => unknown) => new Promise<string | undefined>((resolve, reject) => {
+        const done = (value: string | undefined) => {
+          customSettled = true;
+          resolve(value);
+        };
+        Promise.resolve(factory(
+          { requestRender: () => undefined },
+          {},
+          {},
+          done,
+        )).catch(reject);
+      }),
+    } as unknown as ExtensionUIContext;
+
+    await expect(relayStandardDialog(ui, {
+      id: "editor-deadline",
+      method: "editor",
+      title: "Edit",
+      prefill: "draft",
+      timeout: 5,
+    }, new AbortController().signal, { interactiveEditor: true })).resolves.toEqual({ cancelled: true });
+    expect(customSettled).toBe(true);
   });
 
   it("keeps TUI-only custom components outside the standard relay protocol", () => {

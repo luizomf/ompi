@@ -107,11 +107,14 @@ function parseRuntime(value: unknown): OwnershipRuntime {
 }
 
 export function encodeOwnershipStatus(ownership: OwnershipRuntime[]): string {
-  const safe = ownership.map((runtime) => ({
-    ...runtime,
-    name: runtime.name ? oneLine(runtime.name, MAX_NAME_LENGTH) : undefined,
-    model: oneLine(runtime.model, MAX_MODEL_LENGTH),
-  }));
+  const safe = ownership.map((runtime) => {
+    const name = runtime.name ? oneLine(runtime.name, MAX_NAME_LENGTH) : undefined;
+    return {
+      ...runtime,
+      name: name || undefined,
+      model: oneLine(runtime.model, MAX_MODEL_LENGTH),
+    };
+  });
   const encoded = JSON.stringify({ version: 1, ownership: safe });
   if (Buffer.byteLength(encoded, "utf8") > MAX_FRAME_BYTES) invalid();
   return JSON.stringify({ version: 1, ownership: safe.map(parseRuntime) });
