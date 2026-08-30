@@ -416,8 +416,11 @@ dispatched. An explicit `model` override must use the qualified
 `provider/model` form; bare or malformed values are rejected before child
 launch. Optional `model` and `reasoning` overrides apply to one dispatch only
 and must be supplied only when the user explicitly requests that routing. The
-live subagent widget and `/sublist` output show the effective routing values. For
-example:
+live subagent widget and `/sublist` output show the effective routing values.
+At each start or continuation, omitted `tools` inherit the parent's full
+then-active set, including extension tools; an explicit array can only narrow
+that snapshot, and `tools: []` selects no tools. A subagent name is descriptive
+and does not silently change capabilities. For example:
 
 ```text
 /sub Inspect the authentication flow and report risks.
@@ -429,11 +432,19 @@ example:
 /sublist
 ```
 
-Subagents inherit the current environment, including credentials and SSH agent
-access. They are not sandboxed. Child extensions are disabled, only the user's
-Pi skills directory is loaded, and at most twelve child processes run at once.
-The registry is intentionally in memory; native Pi JSONL sessions remain after
-the orchestrator exits.
+Subagents inherit the current environment and working directory, including
+credentials and SSH agent access. They are not sandboxed. Broad child extension
+discovery is disabled; Pi loads only the extension providers required for the
+inherited tools and verifies the exact tool/provider set before accepting the
+prompt. Normal skill and repository-instruction discovery still applies from
+the child working directory.
+
+A fresh child stores only its explicit prompt in a new native Pi JSONL
+conversation; it never imports the parent transcript, summaries, or hidden
+continuation state. Continuation resumes only that child's conversation while
+capturing the parent's current capabilities again. At most twelve child
+processes run at once. The registry is intentionally in memory; native Pi JSONL
+sessions remain after the orchestrator exits.
 
 Install dependencies and verify the extension with:
 

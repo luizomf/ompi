@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 import {
-  getAgentDir,
   keyHint,
   type ExtensionAPI,
   type ExtensionContext,
@@ -17,19 +16,19 @@ import {
   type ThinkingLevel,
 } from "./controller.ts";
 import { buildChildInvocation, RpcSubprocess } from "./rpc-child.ts";
+import { captureCapabilities } from "./capabilities.ts";
 import { publishAsyncActivity } from "./async-activity.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
-const NATIVE_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 const PONG_TEXT_LIMIT = 8_000;
 
 const ReasoningSchema = StringEnum(THINKING_LEVELS, {
   description: "Reasoning override for this dispatch; omit to inherit the orchestrator's current level",
 });
-const ToolsSchema = Type.Array(Type.String(), {
-  minItems: 1,
-  description: "Allowlist of native Pi tools: read, bash, edit, write, grep, find, ls",
+const ToolsSchema = Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
+  maxItems: 256,
+  description: "Optional restriction that keeps only these tools from the parent's active capability snapshot; omission inherits every active tool",
 });
 
 const StartSchema = Type.Object({
@@ -65,13 +64,6 @@ const ListSchema = Type.Object({});
 
 type StartParams = Static<typeof StartSchema>;
 type ContinueParams = Static<typeof ContinueSchema>;
-
-function validateTools(tools?: string[]): string[] | undefined {
-  if (!tools) return undefined;
-  const invalid = tools.filter((tool) => !NATIVE_TOOLS.has(tool));
-  if (invalid.length) throw new Error(`Only native Pi tools are allowed. Invalid: ${invalid.join(", ")}.`);
-  return [...new Set(tools)];
-}
 
 function activeModel(ctx: ExtensionContext): string {
   if (!ctx.model) throw new Error("The orchestrator has no active model to inherit.");
@@ -214,7 +206,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   };
 
   controller = new SubagentController({
-    createChild: async (spec) => new RpcSubprocess(buildChildInvocation(spec, resolve(getAgentDir(), "skills"))),
+    createChild: async (spec) => new RpcSubprocess(buildChildInvocation(spec)),
     onPong: sendPong,
     onChange: refreshUi,
   });
@@ -225,7 +217,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     model: selectedModel(params.model, ctx),
     thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
     cwd: resolve(ctx.cwd, params.cwd ?? "."),
-    tools: validateTools(params.tools),
+    capabilities: captureCapabilities(pi, params.tools),
   });
 
   const start = (params: StartParams, ctx: ExtensionContext): Promise<SubagentView> => {
@@ -237,7 +229,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     prompt: params.prompt,
     model: selectedModel(params.model, ctx),
     thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
-    tools: validateTools(params.tools),
+    capabilities: captureCapabilities(pi, params.tools),
   });
 
   const continueSubagent = (params: ContinueParams, ctx: ExtensionContext): Promise<SubagentView> => {
@@ -247,7 +239,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: 'Start a clean persistent Pi conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after RPC prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start a clean persistent Pi conversation with the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Normal skills and repository instructions are discovered for the child cwd. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after RPC prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptSnippet: "Start an independent Pi conversation with a complete prompt",
     promptGuidelines: [
       "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the orchestrator's active value.",
@@ -281,7 +273,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: 'Start another turn in a settled known subagent conversation. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start another turn in a settled known subagent conversation with a fresh snapshot of the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptGuidelines: [
       "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the orchestrator's active value.",
       "Only after deciding to call subagent_continue, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the orchestrator's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
