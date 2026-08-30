@@ -168,6 +168,7 @@ authorization.
 Tests are regression protection and executable evidence of observable behavior,
 not authority to redefine intent or a target for implementation-shaped code.
 
+- Prefer test-driven development (TDD) whenever practical.
 - Give every behavior change meaningful coverage and every bug fix a regression
   test that would fail without the fix.
 - Assert stable public behavior and lifecycle contracts. Avoid volatile prose,
