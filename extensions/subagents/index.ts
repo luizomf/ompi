@@ -10,25 +10,40 @@ import { Type, type Static } from "typebox";
 import {
   SubagentController,
   type ContinueInput,
-  type Pong,
   type StartInput,
+  type TerminalResult,
   type SubagentView,
   type ThinkingLevel,
 } from "./controller.ts";
 import { buildChildInvocation, RpcSubprocess } from "./rpc-child.ts";
 import { captureCapabilities } from "./capabilities.ts";
 import { publishAsyncActivity } from "./async-activity.ts";
+import { readManagedLineage } from "./lineage.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
-const PONG_TEXT_LIMIT = 8_000;
+const DELIVERY_MODES = ["async", "direct"] as const;
+const TERMINAL_TEXT_LIMIT = 8_000;
 
 const ReasoningSchema = StringEnum(THINKING_LEVELS, {
-  description: "Reasoning override for this dispatch; omit to inherit the orchestrator's current level",
+  description: "Reasoning override for this dispatch; omit to inherit the parent's current level",
+});
+const DeliverySchema = StringEnum(DELIVERY_MODES, {
+  description: "Delivery for this dispatch; async returns after acceptance and sends one later pong, while direct waits and returns the terminal result without a pong",
 });
 const ToolsSchema = Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
   maxItems: 256,
   description: "Optional restriction that keeps only these tools from the parent's active capability snapshot; omission inherits every active tool",
+});
+const MaxDepthSchema = Type.Integer({
+  minimum: 2,
+  maximum: 3,
+  description: "Optional maximum managed delegation depth for this child; may tighten but never raise the inherited ceiling",
+});
+const MaxChildrenSchema = Type.Integer({
+  minimum: 0,
+  maximum: 2,
+  description: "Optional direct active-child ceiling for this child; may tighten but never raise the inherited nested ceiling",
 });
 
 const StartSchema = Type.Object({
@@ -36,11 +51,14 @@ const StartSchema = Type.Object({
   name: Type.Optional(Type.String({ description: "Native Pi session display name" })),
   model: Type.Optional(Type.String({
     minLength: 1,
-    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the orchestrator\'s active model',
+    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the parent\'s active model',
   })),
   reasoning: Type.Optional(ReasoningSchema),
   cwd: Type.Optional(Type.String({ description: "Initial working directory; fixed for this conversation" })),
   tools: Type.Optional(ToolsSchema),
+  maxDepth: Type.Optional(MaxDepthSchema),
+  maxChildren: Type.Optional(MaxChildrenSchema),
+  delivery: Type.Optional(DeliverySchema),
 });
 
 const ContinueSchema = Type.Object({
@@ -48,10 +66,13 @@ const ContinueSchema = Type.Object({
   prompt: Type.String({ description: "Prompt for the next turn in the existing conversation" }),
   model: Type.Optional(Type.String({
     minLength: 1,
-    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the orchestrator\'s active model',
+    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the parent\'s active model',
   })),
   reasoning: Type.Optional(ReasoningSchema),
   tools: Type.Optional(ToolsSchema),
+  maxDepth: Type.Optional(MaxDepthSchema),
+  maxChildren: Type.Optional(MaxChildrenSchema),
+  delivery: Type.Optional(DeliverySchema),
 });
 
 const SteerSchema = Type.Object({
@@ -66,7 +87,7 @@ type StartParams = Static<typeof StartSchema>;
 type ContinueParams = Static<typeof ContinueSchema>;
 
 function activeModel(ctx: ExtensionContext): string {
-  if (!ctx.model) throw new Error("The orchestrator has no active model to inherit.");
+  if (!ctx.model) throw new Error("The parent has no active model to inherit.");
   return `${ctx.model.provider}/${ctx.model.id}`;
 }
 
@@ -112,10 +133,10 @@ function parseIdMessage(args: string, usage: string): { id: number; message: str
   return { id: Number(match[1]), message: match[2].trim() };
 }
 
-function boundedPongText(pong: Pong): { text?: string; truncated: boolean } {
+function boundedTerminalText(pong: TerminalResult): { text?: string; truncated: boolean } {
   if (!pong.finalText) return { truncated: false };
-  if (pong.finalText.length <= PONG_TEXT_LIMIT) return { text: pong.finalText, truncated: false };
-  return { text: pong.finalText.slice(0, PONG_TEXT_LIMIT), truncated: true };
+  if (pong.finalText.length <= TERMINAL_TEXT_LIMIT) return { text: pong.finalText, truncated: false };
+  return { text: pong.finalText.slice(0, TERMINAL_TEXT_LIMIT), truncated: true };
 }
 
 export function buildActiveUi(views: SubagentView[], now: number): { lines?: string[]; status?: string } {
@@ -132,9 +153,11 @@ export function buildActiveUi(views: SubagentView[], now: number): { lines?: str
   return { lines, status: `subagents: ${active.length}` };
 }
 
-export function buildPongMessage(pong: Pong): { content: string; details: Pong & { finalText?: string; truncated: boolean } } {
-  const final = boundedPongText(pong);
-  const heading = `[PONG subagent #${pong.id}${pong.name ? ` ${pong.name}` : ""}] ${pong.outcome}`;
+function buildTerminalMessage(
+  pong: TerminalResult,
+  heading: string,
+): { content: string; details: TerminalResult & { finalText?: string; truncated: boolean } } {
+  const final = boundedTerminalText(pong);
   const parts = [heading, `Session: ${pong.sessionRef}`];
   if (pong.error) parts.push(`Error: ${pong.error}`);
   if (final.text) parts.push(`Final assistant message${final.truncated ? " (truncated to 8,000 characters)" : ""}:\n${final.text}`);
@@ -144,9 +167,25 @@ export function buildPongMessage(pong: Pong): { content: string; details: Pong &
   };
 }
 
+export function buildPongMessage(pong: TerminalResult): ReturnType<typeof buildTerminalMessage> {
+  return buildTerminalMessage(
+    pong,
+    `[PONG subagent #${pong.id}${pong.name ? ` ${pong.name}` : ""}] ${pong.outcome}`,
+  );
+}
+
+export function buildDirectResult(pong: TerminalResult): ReturnType<typeof buildTerminalMessage> {
+  return buildTerminalMessage(
+    pong,
+    `[SUBAGENT #${pong.id}${pong.name ? ` ${pong.name}` : ""}] ${pong.outcome}`,
+  );
+}
+
 export default function subagentsExtension(pi: ExtensionAPI) {
+  const lineage = readManagedLineage();
+
   pi.registerMessageRenderer("subagent-pong", (message, { expanded }, theme) => {
-    const details = message.details as (Pong & { truncated?: boolean }) | undefined;
+    const details = message.details as (TerminalResult & { truncated?: boolean }) | undefined;
     const heading = details
       ? `[PONG subagent #${details.id}${details.name ? ` ${details.name}` : ""}] ${details.outcome}`
       : "[PONG subagent]";
@@ -192,7 +231,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     }
   };
 
-  const sendPong = (pong: Pong) => {
+  const sendPong = (pong: TerminalResult) => {
     const message = buildPongMessage(pong);
     pi.sendMessage(
       {
@@ -206,6 +245,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   };
 
   controller = new SubagentController({
+    lineage,
     createChild: async (spec) => new RpcSubprocess(buildChildInvocation(spec)),
     onPong: sendPong,
     onChange: refreshUi,
@@ -218,6 +258,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
     cwd: resolve(ctx.cwd, params.cwd ?? "."),
     capabilities: captureCapabilities(pi, params.tools),
+    maxDepth: params.maxDepth,
+    maxChildren: params.maxChildren,
   });
 
   const start = (params: StartParams, ctx: ExtensionContext): Promise<SubagentView> => {
@@ -230,6 +272,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     model: selectedModel(params.model, ctx),
     thinking: selectedThinking(params.reasoning, pi.getThinkingLevel() as ThinkingLevel),
     capabilities: captureCapabilities(pi, params.tools),
+    maxDepth: params.maxDepth,
+    maxChildren: params.maxChildren,
   });
 
   const continueSubagent = (params: ContinueParams, ctx: ExtensionContext): Promise<SubagentView> => {
@@ -239,20 +283,21 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: 'Start a clean persistent Pi conversation with the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Normal skills and repository instructions are discovered for the child cwd. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after RPC prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start a clean persistent Pi conversation with the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Normal skills and repository instructions are discovered for the child cwd. Async delivery is the default outside print mode: it returns after acceptance and sends one later pong. Select direct delivery explicitly to keep the tool call pending and return one bounded terminal result without a pong. Print mode is always direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptSnippet: "Start an independent Pi conversation with a complete prompt",
     promptGuidelines: [
-      "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the orchestrator's active value.",
-      "Only after deciding to call subagent_start, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the orchestrator's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
+      "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the parent's active value.",
+      "Only after deciding to call subagent_start, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the parent's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
       "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; outside print mode, do not wait for one pong before starting another.",
+      "Use subagent_start delivery=direct only for dependent work that must consume the bounded terminal result in the current turn; role, name, and delegation depth never select direct delivery implicitly.",
       "In print mode, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
-      "Outside print mode, after subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      "Outside print mode, after an asynchronous subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
     ],
     parameters: StartSchema,
     async execute(_id, params, signal, _onUpdate, ctx) {
-      if (ctx.mode === "print") {
+      if (ctx.mode === "print" || params.delivery === "direct") {
         const pong = await controller.run(startInput(params, ctx), signal);
-        const message = buildPongMessage(pong);
+        const message = buildDirectResult(pong);
         return {
           content: [{ type: "text", text: message.content }],
           details: message.details,
@@ -273,18 +318,19 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: 'Start another turn in a settled known subagent conversation with a fresh snapshot of the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. In print mode, the tool waits for terminal completion and returns the bounded final result directly. In other modes, it returns after prompt acceptance and completion arrives later as one pong. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start another turn in a settled known subagent conversation with a fresh snapshot of the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Async delivery is the default outside print mode: it returns after acceptance and sends one later pong. Select direct delivery explicitly to keep the tool call pending and return one bounded terminal result without a pong. Print mode is always direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptGuidelines: [
-      "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the orchestrator's active value.",
-      "Only after deciding to call subagent_continue, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the orchestrator's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
+      "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the parent's active value.",
+      "Only after deciding to call subagent_continue, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the parent's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
+      "Use subagent_continue delivery=direct only for dependent work that must consume the bounded terminal result in the current turn; role, name, and delegation depth never select direct delivery implicitly.",
       "In print mode, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
-      "Outside print mode, after subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      "Outside print mode, after an asynchronous subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
     ],
     parameters: ContinueSchema,
     async execute(_id, params, signal, _onUpdate, ctx) {
-      if (ctx.mode === "print") {
+      if (ctx.mode === "print" || params.delivery === "direct") {
         const pong = await controller.runContinuation(continuationInput(params, ctx), signal);
-        const message = buildPongMessage(pong);
+        const message = buildDirectResult(pong);
         return {
           content: [{ type: "text", text: message.content }],
           details: message.details,
@@ -327,14 +373,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_list",
     label: "List Subagents",
-    description: "Take one snapshot of conversations known to this orchestrator session. This is not a completion wait or polling mechanism.",
+    description: "Take one snapshot of direct subagent conversations known to this parent session. This is not a completion wait or polling mechanism.",
     promptGuidelines: [
       "Use subagent_list only for a status snapshot needed for a user request or an orchestration decision; never call it repeatedly to poll for completion.",
     ],
     parameters: ListSchema,
     async execute() {
       const views = controller.list();
-      const text = views.length ? views.map(formatView).join("\n") : "No subagents are known in this orchestrator session.";
+      const text = views.length ? views.map(formatView).join("\n") : "No subagents are known in this parent session.";
       return { content: [{ type: "text", text }], details: { subagents: views } };
     },
   });
@@ -346,8 +392,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         const object = parseObject<StartParams>(args);
         const params = object ?? { prompt: args.trim() };
         if (!params.prompt) throw new Error("Usage: /sub <prompt> or /sub {\"prompt\": \"...\"}");
-        const view = await start(params, ctx);
-        ctx.ui.notify(`Subagent #${view.id} started.`, "info");
+        if (params.delivery === "direct") {
+          const result = await controller.run(startInput(params, ctx));
+          ctx.ui.notify(buildDirectResult(result).content, "info");
+        } else {
+          const view = await start(params, ctx);
+          ctx.ui.notify(`Subagent #${view.id} started.`, "info");
+        }
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -359,12 +410,17 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       try {
         const object = parseObject<ContinueParams>(args);
-        const params = object ?? (() => {
+        const params: ContinueParams = object ?? (() => {
           const parsed = parseIdMessage(args, "Usage: /subcont <id> <prompt>");
           return { id: parsed.id, prompt: parsed.message };
         })();
-        const view = await continueSubagent(params, ctx);
-        ctx.ui.notify(`Subagent #${view.id} continued.`, "info");
+        if (params.delivery === "direct") {
+          const result = await controller.runContinuation(continuationInput(params, ctx));
+          ctx.ui.notify(buildDirectResult(result).content, "info");
+        } else {
+          const view = await continueSubagent(params, ctx);
+          ctx.ui.notify(`Subagent #${view.id} continued.`, "info");
+        }
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -399,7 +455,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("sublist", {
-    description: "List subagents known to this orchestrator session",
+    description: "List direct subagents known to this parent session",
     handler: async (_args, ctx) => {
       const views = controller.list();
       ctx.ui.notify(views.length ? views.map(formatView).join("\n") : "No known subagents.", "info");
