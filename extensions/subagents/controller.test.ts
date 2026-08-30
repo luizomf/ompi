@@ -26,10 +26,17 @@ class FakeChild implements RpcChild {
   private exitListeners: Array<(error?: Error) => void> = [];
   private promptGate?: Promise<void>;
   private releasePrompt?: () => void;
+  private readonly reportedCapabilities?: CapabilitySnapshot;
 
-  constructor(spec: LaunchSpec, sessionFile: string, delayedPrompt = false) {
+  constructor(
+    spec: LaunchSpec,
+    sessionFile: string,
+    delayedPrompt = false,
+    reportedCapabilities?: CapabilitySnapshot,
+  ) {
     this.spec = spec;
     this.sessionFile = sessionFile;
+    this.reportedCapabilities = reportedCapabilities;
     if (delayedPrompt) {
       this.promptGate = new Promise((resolve) => {
         this.releasePrompt = resolve;
@@ -50,7 +57,7 @@ class FakeChild implements RpcChild {
   }
 
   async getCapabilities(): Promise<CapabilitySnapshot> {
-    return cloneCapabilities(this.spec.capabilities);
+    return cloneCapabilities(this.reportedCapabilities ?? this.spec.capabilities);
   }
 
   onEvent(listener: (event: RpcEvent) => void): () => void {
@@ -80,13 +87,22 @@ class FakeChild implements RpcChild {
   }
 }
 
-function setup(options: { delayedPrompt?: boolean; handshakeMs?: number } = {}) {
+function setup(options: {
+  delayedPrompt?: boolean;
+  handshakeMs?: number;
+  reportedCapabilities?: CapabilitySnapshot;
+} = {}) {
   const children: FakeChild[] = [];
   const pongs: unknown[] = [];
   const controller = new SubagentController({
     handshakeMs: options.handshakeMs ?? 100,
     createChild: async (spec) => {
-      const child = new FakeChild(spec, `/sessions/${children.length + 1}.jsonl`, options.delayedPrompt);
+      const child = new FakeChild(
+        spec,
+        `/sessions/${children.length + 1}.jsonl`,
+        options.delayedPrompt,
+        options.reportedCapabilities,
+      );
       children.push(child);
       return child;
     },
@@ -195,6 +211,32 @@ describe("SubagentController", () => {
     expect(children[0].closed).toBe(true);
     expect(controller.list()).toEqual([]);
     expect(pongs).toEqual([]);
+  });
+
+  it("preserves the original capability preflight failure as the dispatch error cause", async () => {
+    const { controller } = setup({
+      reportedCapabilities: { tools: [], extensionPaths: [] },
+    });
+    let captured: unknown;
+
+    try {
+      await controller.start({
+        prompt: "inspect",
+        cwd: "/repo",
+        model: "p/m",
+        thinking: "low",
+        capabilities: DEFAULT_CAPABILITIES,
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toContain("Subagent dispatch was not accepted");
+    expect((captured as Error).cause).toBeInstanceOf(Error);
+    expect(((captured as Error).cause as Error).message).toContain(
+      "Child capability preflight mismatch",
+    );
   });
 
   it.each(["completed", "interrupted"] as const)("emits exactly one %s pong after process close", async (outcome) => {

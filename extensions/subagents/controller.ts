@@ -326,7 +326,7 @@ export class SubagentController {
       } catch {
         // Preserve the original handshake error.
       }
-      throw new Error(`Subagent dispatch was not accepted: ${errorMessage(error)}`);
+      throw new Error(`Subagent dispatch was not accepted: ${errorMessage(error)}`, { cause: error });
     }
   }
 

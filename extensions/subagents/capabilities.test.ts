@@ -81,6 +81,26 @@ describe("subagent capability snapshots", () => {
     );
   });
 
+  it("bounds an unloadable provider in diagnostics", () => {
+    const provider = `<inline:${"x".repeat(1_000)}>`;
+    const pi = setupCapabilities(
+      ["sdk_tool"],
+      [{ name: "sdk_tool", source: "sdk", path: provider }],
+    );
+
+    let captured: unknown;
+    try {
+      captureCapabilities(pi);
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toContain("…\" is not a loadable extension path");
+    expect((captured as Error).message).not.toContain(provider);
+    expect((captured as Error).message.length).toBeLessThan(400);
+  });
+
   it("diagnoses missing, unexpected, and wrong-provider child capabilities", () => {
     const promised = {
       tools: [

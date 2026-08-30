@@ -45,12 +45,12 @@ function diagnosticValue(value: string): string {
 function loadableProvider(tool: ReturnType<ExtensionAPI["getAllTools"]>[number]): string {
   if (tool.sourceInfo.source === "builtin") return BUILTIN_TOOL_PROVIDER;
   const provider = tool.sourceInfo.path;
+  assertBounded(provider, `Provider for active tool "${tool.name}"`, MAX_PROVIDER_LENGTH);
   if (tool.sourceInfo.source === "sdk" || provider.startsWith("<")) {
     throw new Error(
-      `Active tool "${tool.name}" cannot be inherited because provider "${provider}" is not a loadable extension path.`,
+      `Active tool "${tool.name}" cannot be inherited because provider "${diagnosticValue(provider)}" is not a loadable extension path.`,
     );
   }
-  assertBounded(provider, `Provider for active tool "${tool.name}"`, MAX_PROVIDER_LENGTH);
   return provider;
 }
 
