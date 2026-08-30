@@ -377,17 +377,19 @@ or administer OMQueue.
 `just subagents` explicitly enables the extension in
 `extensions/subagents/`. It starts clean, persistent Pi conversations. In print
 mode, start and continuation tool calls wait for terminal completion and return
-the bounded result directly; independent sibling calls still run concurrently.
-In other modes, each call returns as soon as the child RPC process accepts a
-prompt, then later queues exactly one completion, failure, or interruption pong
-in the orchestrator conversation.
+the bounded result directly. Outside print mode, asynchronous delivery remains
+the default: a call returns after child RPC prompt acceptance and later queues
+exactly one completion, failure, or interruption pong. Set `delivery` to
+`"direct"` explicitly when dependent work must receive the bounded terminal
+result through the pending tool call; direct delivery emits no later pong.
+Independent direct siblings issued together still run concurrently.
 
-Outside print mode, after acceptance the orchestrator must not sleep, run a wait
-loop, or repeatedly call `subagent_list` for completion. When multiple independent
+After asynchronous acceptance, the parent must not sleep, run a wait loop, or
+repeatedly call `subagent_list` for completion. When multiple independent
 delegations are useful, it starts them in the same turn so Pi can run them
 concurrently rather than awaiting an earlier pong. It may then continue useful
 work independent of the subagent results; otherwise it must end its response so
-user input and the later pongs can enter the conversation.
+user input and later pongs can enter the conversation.
 
 For daily use, link this audited extension into Pi's global extension directory:
 
@@ -410,8 +412,9 @@ The extension exposes these tools and matching commands:
 | `subagent_list` | `/sublist` | List session-scoped known conversations |
 
 Use plain command arguments for common operations, or JSON with `/sub` and
-`/subcont` for routing, working-directory, tool, and name options. Each omitted
-routing value inherits the orchestrator's active value when that turn is
+`/subcont` for delivery, lineage ceilings, routing, working-directory, tool, and
+name options. Each omitted routing value inherits the parent's active value when
+that turn is
 dispatched. An explicit `model` override must use the qualified
 `provider/model` form; bare or malformed values are rejected before child
 launch. Optional `model` and `reasoning` overrides apply to one dispatch only
@@ -420,12 +423,17 @@ live subagent widget and `/sublist` output show the effective routing values.
 At each start or continuation, omitted `tools` inherit the parent's full
 then-active set, including extension tools; an explicit array can only narrow
 that snapshot, and `tools: []` selects no tools. A subagent name is descriptive
-and does not silently change capabilities. For example:
+and does not silently change capabilities or delivery. `maxDepth` and
+`maxChildren` may tighten the child's inherited managed-lineage ceilings; a
+continuation keeps the same depth and may tighten its prior ceilings again, but
+neither value can be raised. For example:
 
 ```text
 /sub Inspect the authentication flow and report risks.
 /sub {"prompt":"Run the focused tests","name":"tests","tools":["read","bash"]}
 /sub {"prompt":"Inspect memory handling","model":"openai-codex/gpt-5.6-luna","reasoning":"high"}
+/sub {"prompt":"Return a dependent result now","delivery":"direct","maxDepth":2,"maxChildren":0}
+/subcont {"id":1,"prompt":"Continue and return here","delivery":"direct"}
 /subcont 1 Check the newly changed files.
 /substeer 1 Focus only on the parser.
 /substop 1
@@ -441,10 +449,25 @@ the child working directory.
 
 A fresh child stores only its explicit prompt in a new native Pi JSONL
 conversation; it never imports the parent transcript, summaries, or hidden
-continuation state. Continuation resumes only that child's conversation while
-capturing the parent's current capabilities again. At most twelve child
-processes run at once. The registry is intentionally in memory; native Pi JSONL
-sessions remain after the orchestrator exits.
+continuation state. Continuation resumes only that child's conversation at the
+same one-based delegation depth while capturing the parent's current
+capabilities again. The root is depth 1, its coordinator is depth 2, a leaf is
+depth 3, and the default maximum is 3. The root owns at most 12 active direct
+children; each nested parent defaults to 2. Handshaking, running, finalizing,
+and direct-wait runtimes occupy the responsible parent's local slot until their
+process exits.
+
+A coordinator RPC process remains alive through dependent direct leaf calls and
+exits only after its enclosing Pi turn settles. Parent interruption, process
+closure, and session shutdown recursively close active descendants created
+through this extension and await their process exit. Independently shell-launched
+Pi or other processes are outside that managed lineage. Caller-requested
+interruption returns the distinct `interrupted` terminal outcome rather than a
+spontaneous `failed` outcome. Every bounded terminal result retains the native
+session reference for complete inspection, including truncated, failed,
+interrupted, and missing-assistant-message cases. The registry is intentionally
+in memory; native Pi JSONL sessions remain after processes and the orchestrator
+exit.
 
 Install dependencies and verify the extension with:
 

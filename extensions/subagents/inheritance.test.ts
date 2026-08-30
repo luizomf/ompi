@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.hoisted(() => ({
-  invocations: [] as Array<{ args: string[] }>,
+  invocations: [] as Array<{ args: string[]; env?: NodeJS.ProcessEnv }>,
   capabilityReports: [] as Array<{
     tools: Array<{ name: string; provider: string }>;
     extensionPaths: string[];
@@ -10,7 +10,7 @@ const rpc = vi.hoisted(() => ({
   children: [] as Array<{
     closed: boolean;
     requests: Array<Record<string, unknown>>;
-    emit(event: { type: string }): void;
+    emit(event: { type: string; message?: { role?: string; stopReason?: string } }): void;
   }>,
 }));
 
@@ -21,15 +21,15 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
     RpcSubprocess: class {
       closed = false;
       requests: Array<Record<string, unknown>> = [];
-      private listeners: Array<(event: { type: string }) => void> = [];
+      private listeners: Array<(event: { type: string; message?: { role?: string; stopReason?: string } }) => void> = [];
       private readonly sessionFile: string;
       private readonly capabilities: {
         tools: Array<{ name: string; provider: string }>;
         extensionPaths: string[];
       };
 
-      constructor(invocation: { args: string[] }) {
-        rpc.invocations.push({ args: invocation.args });
+      constructor(invocation: { args: string[]; env?: NodeJS.ProcessEnv }) {
+        rpc.invocations.push({ args: invocation.args, env: invocation.env });
         const sessionIndex = invocation.args.indexOf("--session");
         this.sessionFile = sessionIndex >= 0
           ? invocation.args[sessionIndex + 1]
@@ -54,7 +54,7 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
         return this.capabilities;
       }
 
-      onEvent(listener: (event: { type: string }) => void): () => void {
+      onEvent(listener: (event: { type: string; message?: { role?: string; stopReason?: string } }) => void): () => void {
         this.listeners.push(listener);
         return () => undefined;
       }
@@ -63,7 +63,7 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
         return () => undefined;
       }
 
-      emit(event: { type: string }): void {
+      emit(event: { type: string; message?: { role?: string; stopReason?: string } }): void {
         for (const listener of this.listeners) listener(event);
       }
 
@@ -139,15 +139,60 @@ function setup() {
 }
 
 async function settle(index: number): Promise<void> {
+  rpc.children[index].emit({
+    type: "message_end",
+    message: { role: "assistant", stopReason: "stop" },
+  });
   rpc.children[index].emit({ type: "agent_settled" });
   await vi.waitFor(() => expect(rpc.children[index].closed).toBe(true));
 }
 
 describe("subagent routing inheritance", () => {
   beforeEach(() => {
+    delete process.env.OMPI_SUBAGENT_LINEAGE;
     rpc.invocations.length = 0;
     rpc.capabilityReports.length = 0;
     rpc.children.length = 0;
+  });
+
+  it("keeps delegation visible at maximum depth and rejects before launch", async () => {
+    process.env.OMPI_SUBAGENT_LINEAGE = JSON.stringify({
+      version: 1,
+      depth: 3,
+      maxDepth: 3,
+      maxChildren: 2,
+    });
+    const { tools, ctx } = setup();
+
+    expect(tools.has("subagent_start")).toBe(true);
+    expect(process.env.OMPI_SUBAGENT_LINEAGE).toBeUndefined();
+    await expect(tools.get("subagent_start").execute(
+      "start",
+      { prompt: "too deep" },
+      undefined,
+      undefined,
+      ctx,
+    )).rejects.toThrow("maximum delegation depth 3");
+    expect(rpc.invocations).toEqual([]);
+  });
+
+  it("lets a nested parent opt out with a zero direct-child ceiling", async () => {
+    process.env.OMPI_SUBAGENT_LINEAGE = JSON.stringify({
+      version: 1,
+      depth: 2,
+      maxDepth: 3,
+      maxChildren: 0,
+    });
+    const { tools, ctx } = setup();
+
+    await expect(tools.get("subagent_start").execute(
+      "start",
+      { prompt: "not launched" },
+      undefined,
+      undefined,
+      ctx,
+    )).rejects.toThrow("At most 0 direct subagents");
+    expect(rpc.invocations).toEqual([]);
   });
 
   it("publishes active turns for session-level status integrations", async () => {
@@ -353,11 +398,138 @@ describe("subagent routing inheritance", () => {
       expect(tool.promptGuidelines.join(" ")).toContain("only when the user explicitly requests");
       expect(tool.promptGuidelines.join(" ")).toContain("qualified <provider>/<model> form");
       expect(tool.promptGuidelines.join(" ")).toContain("Omit every unrequested override");
-      expect(tool.promptGuidelines.join(" ")).toContain("orchestrator's active route");
+      expect(tool.promptGuidelines.join(" ")).toContain("parent's active route");
       expect(tool.promptGuidelines.join(" ")).not.toContain("openai-codex/gpt-5.6-sol");
       expect(tool.promptGuidelines.join(" ")).toContain("PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL");
       expect(tool.promptGuidelines.join(" ")).toContain("Do not inspect routing on ordinary turns");
     }
+  });
+
+  it("exposes monotonic child ceilings and passes tightened values mechanically", async () => {
+    const { tools, ctx } = setup();
+    const start = tools.get("subagent_start");
+    const continuation = tools.get("subagent_continue");
+
+    for (const tool of [start, continuation]) {
+      expect(tool.parameters.properties.maxDepth).toMatchObject({ minimum: 2, maximum: 3 });
+      expect(tool.parameters.properties.maxChildren).toMatchObject({ minimum: 0, maximum: 2 });
+    }
+
+    await start.execute("start", {
+      prompt: "one",
+      maxDepth: 2,
+      maxChildren: 0,
+    }, undefined, undefined, ctx);
+    expect(JSON.parse(rpc.invocations[0].env?.OMPI_SUBAGENT_LINEAGE ?? "")).toEqual({
+      version: 1,
+      depth: 2,
+      maxDepth: 2,
+      maxChildren: 0,
+    });
+    await settle(0);
+
+    await expect(continuation.execute("continue", {
+      id: 1,
+      prompt: "raise",
+      maxDepth: 3,
+    }, undefined, undefined, ctx)).rejects.toThrow("cannot raise");
+    expect(rpc.invocations).toHaveLength(1);
+  });
+
+  it("returns an explicitly direct start outside print mode exactly once without a later pong", async () => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "tui";
+    const start = tools.get("subagent_start");
+    expect(start.parameters.properties.delivery.enum).toEqual(["async", "direct"]);
+    let completed = false;
+
+    const running = start.execute(
+      "start",
+      { prompt: "one", delivery: "direct" },
+      undefined,
+      undefined,
+      ctx,
+    ).then((result: unknown) => {
+      completed = true;
+      return result;
+    });
+
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+    expect(completed).toBe(false);
+    await settle(0);
+    rpc.children[0].emit({ type: "agent_settled" });
+
+    await expect(running).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("done") }],
+      details: {
+        id: 1,
+        outcome: "completed",
+        sessionRef: "/sessions/1.jsonl",
+        finalText: "done",
+      },
+    });
+    expect(messages).toEqual([]);
+  });
+
+  it("returns an explicitly direct continuation outside print mode without another pong", async () => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "tui";
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "one" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await settle(0);
+    expect(messages).toHaveLength(1);
+
+    const continuing = tools.get("subagent_continue").execute(
+      "continue",
+      { id: 1, prompt: "two", delivery: "direct" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
+    await settle(1);
+
+    await expect(continuing).resolves.toMatchObject({
+      details: {
+        id: 1,
+        outcome: "completed",
+        sessionRef: "/sessions/1.jsonl",
+      },
+    });
+    expect(messages).toHaveLength(1);
+  });
+
+  it("keeps independently issued direct siblings concurrent", async () => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "tui";
+    const start = tools.get("subagent_start");
+    let completed = 0;
+    const first = start.execute("one", {
+      prompt: "one",
+      delivery: "direct",
+    }, undefined, undefined, ctx).then((result: unknown) => {
+      completed += 1;
+      return result;
+    });
+    const second = start.execute("two", {
+      prompt: "two",
+      delivery: "direct",
+    }, undefined, undefined, ctx).then((result: unknown) => {
+      completed += 1;
+      return result;
+    });
+
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
+    expect(completed).toBe(0);
+    await Promise.all([settle(0), settle(1)]);
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(completed).toBe(2);
+    expect(messages).toEqual([]);
   });
 
   it("returns the terminal subagent result directly in print mode without a pong follow-up", async () => {
@@ -497,6 +669,23 @@ describe("subagent routing inheritance", () => {
     }, undefined, undefined, ctx);
     expect(valueAfter(rpc.invocations[1].args, "--model")).toBe("provider/second");
     expect(valueAfter(rpc.invocations[1].args, "--thinking")).toBe("high");
+  });
+
+  it("honors explicit direct delivery in JSON slash commands without a pong", async () => {
+    const { commands, ctx, messages, notifications } = setup();
+    const starting = commands.get("sub").handler(
+      '{"prompt":"one","delivery":"direct"}',
+      ctx,
+    );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+    expect(notifications).toEqual([]);
+    await settle(0);
+    await starting;
+
+    expect(messages).toEqual([]);
+    expect(notifications).toEqual([
+      expect.stringContaining("[SUBAGENT #1] completed"),
+    ]);
   });
 
   it("applies JSON slash-command overrides independently per dispatch", async () => {

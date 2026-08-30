@@ -17,6 +17,7 @@ describe("buildChildInvocation", () => {
       cwd: "/tmp/worktree",
       model: "anthropic/claude",
       thinking: "high",
+      lineage: { depth: 2, maxDepth: 3, maxChildren: 2 },
       capabilities: {
         tools: [
           { name: "read", provider: BUILTIN_TOOL_PROVIDER },
@@ -29,6 +30,9 @@ describe("buildChildInvocation", () => {
 
     expect(invocation.cwd).toBe("/tmp/worktree");
     expect(invocation.env.PATH).toBe(process.env.PATH);
+    expect(invocation.env.OMPI_SUBAGENT_LINEAGE).toBe(
+      '{"version":1,"depth":2,"maxDepth":3,"maxChildren":2}',
+    );
     expect(invocation.args).toContain("--no-extensions");
     expect(valuesAfter(invocation.args, "--extension")).toEqual([
       "/extensions/browser-fetch/index.ts",
@@ -50,11 +54,13 @@ describe("buildChildInvocation", () => {
       model: "openai/gpt",
       thinking: "low",
       capabilities: { tools: [], extensionPaths: [] },
+      lineage: { depth: 2, maxDepth: 2, maxChildren: 0 },
       name: "existing",
       session: "/sessions/child.jsonl",
     });
 
     expect(valueAfter(invocation.args, "--session")).toBe("/sessions/child.jsonl");
+    expect(invocation.env.OMPI_SUBAGENT_LINEAGE).toContain('"depth":2');
     expect(invocation.args).not.toContain("--name");
     expect(invocation.args).toContain("--no-tools");
     expect(invocation.args).not.toContain("--tools");

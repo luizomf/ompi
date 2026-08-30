@@ -9,6 +9,7 @@ import {
   type CapabilitySnapshot,
 } from "./capabilities.ts";
 import type { LaunchSpec, RpcChild, RpcEvent } from "./controller.ts";
+import { MANAGED_LINEAGE_ENV, encodeManagedLineage } from "./lineage.ts";
 
 interface RpcResponse {
   id?: string;
@@ -35,6 +36,10 @@ export interface ChildInvocation {
 
 export function buildChildInvocation(spec: LaunchSpec): ChildInvocation {
   const args = ["--mode", "rpc", "--no-extensions"];
+  const env = {
+    ...process.env,
+    [MANAGED_LINEAGE_ENV]: encodeManagedLineage(spec.lineage),
+  };
   for (const extensionPath of spec.capabilities.extensionPaths) {
     args.push("--extension", extensionPath);
   }
@@ -52,7 +57,7 @@ export function buildChildInvocation(spec: LaunchSpec): ChildInvocation {
   const currentScript = process.argv[1];
   const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
   if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
-    return { command: process.execPath, args: [currentScript, ...args], cwd: spec.cwd, env: { ...process.env } };
+    return { command: process.execPath, args: [currentScript, ...args], cwd: spec.cwd, env };
   }
 
   const executable = basename(process.execPath).toLowerCase();
@@ -61,7 +66,7 @@ export function buildChildInvocation(spec: LaunchSpec): ChildInvocation {
     command: genericRuntime ? "pi" : process.execPath,
     args,
     cwd: spec.cwd,
-    env: { ...process.env },
+    env,
   };
 }
 

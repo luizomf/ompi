@@ -3,6 +3,12 @@ import {
   cloneCapabilities,
   type CapabilitySnapshot,
 } from "./capabilities.ts";
+import {
+  ROOT_LINEAGE,
+  createChildLineage,
+  tightenLineage,
+  type ManagedLineage,
+} from "./lineage.ts";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type TerminalOutcome = "completed" | "failed" | "interrupted";
@@ -13,6 +19,7 @@ export interface LaunchSpec {
   model: string;
   thinking: ThinkingLevel;
   capabilities: CapabilitySnapshot;
+  lineage: ManagedLineage;
   name?: string;
   session?: string;
 }
@@ -32,8 +39,10 @@ export interface RpcChild {
   close(): Promise<void>;
 }
 
-export interface StartInput extends LaunchSpec {
+export interface StartInput extends Omit<LaunchSpec, "lineage" | "session"> {
   prompt: string;
+  maxDepth?: number;
+  maxChildren?: number;
 }
 
 export interface ContinueInput {
@@ -42,6 +51,8 @@ export interface ContinueInput {
   model: string;
   thinking: ThinkingLevel;
   capabilities: CapabilitySnapshot;
+  maxDepth?: number;
+  maxChildren?: number;
 }
 
 export interface SubagentView {
@@ -60,7 +71,7 @@ export interface SubagentView {
   error?: string;
 }
 
-export interface Pong {
+export interface TerminalResult {
   id: number;
   name?: string;
   outcome: TerminalOutcome;
@@ -71,26 +82,28 @@ export interface Pong {
 
 interface RecordState extends SubagentView {
   capabilities: CapabilitySnapshot;
+  lineage: ManagedLineage;
   child?: RpcChild;
   accepted: boolean;
   finalizing: boolean;
-  ponged: boolean;
+  delivered: boolean;
   interruptRequested: boolean;
   pendingSettled: boolean;
   pendingExitError?: string;
   terminalError?: string;
-  directResolve?: (pong: Pong) => void;
+  assistantMessageEnded: boolean;
+  directResolve?: (result: TerminalResult) => void;
 }
 
 export interface ControllerOptions {
   createChild(spec: LaunchSpec): Promise<RpcChild>;
-  onPong(pong: Pong): void;
+  onPong(result: TerminalResult): void;
   onChange?(): void;
   handshakeMs?: number;
   now?: () => number;
+  lineage?: ManagedLineage;
 }
 
-const MAX_ACTIVE = 12;
 const DEFAULT_HANDSHAKE_MS = 10_000;
 
 function errorMessage(error: unknown): string {
@@ -110,8 +123,10 @@ export class SubagentController {
   private readonly options: Required<Pick<ControllerOptions, "handshakeMs" | "now">> & ControllerOptions;
   private nextId = 1;
   private shuttingDown = false;
+  private readonly lineage: ManagedLineage;
 
   constructor(options: ControllerOptions) {
+    this.lineage = options.lineage ?? ROOT_LINEAGE;
     this.options = {
       ...options,
       handshakeMs: options.handshakeMs ?? DEFAULT_HANDSHAKE_MS,
@@ -120,7 +135,7 @@ export class SubagentController {
   }
 
   list(): SubagentView[] {
-    return [...this.records.values()].map(({ capabilities, child: _child, accepted: _accepted, finalizing: _finalizing, ponged: _ponged, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, directResolve: _directResolve, ...view }) => ({
+    return [...this.records.values()].map(({ capabilities, lineage: _lineage, child: _child, accepted: _accepted, finalizing: _finalizing, delivered: _delivered, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, assistantMessageEnded: _assistantMessageEnded, directResolve: _directResolve, ...view }) => ({
       ...view,
       tools: capabilities.tools.map((tool) => tool.name),
     }));
@@ -138,10 +153,10 @@ export class SubagentController {
     }
   }
 
-  async run(input: StartInput, signal?: AbortSignal): Promise<Pong> {
+  async run(input: StartInput, signal?: AbortSignal): Promise<TerminalResult> {
     if (signal?.aborted) throw new Error("Subagent run was cancelled before launch.");
-    let resolveCompletion!: (pong: Pong) => void;
-    const completion = new Promise<Pong>((resolve) => {
+    let resolveCompletion!: (result: TerminalResult) => void;
+    const completion = new Promise<TerminalResult>((resolve) => {
       resolveCompletion = resolve;
     });
     const record = this.createStartRecord(input, resolveCompletion);
@@ -169,10 +184,10 @@ export class SubagentController {
     return this.continueWithDelivery(input);
   }
 
-  async runContinuation(input: ContinueInput, signal?: AbortSignal): Promise<Pong> {
+  async runContinuation(input: ContinueInput, signal?: AbortSignal): Promise<TerminalResult> {
     if (signal?.aborted) throw new Error("Subagent continuation was cancelled before launch.");
-    let resolveCompletion!: (pong: Pong) => void;
-    const completion = new Promise<Pong>((resolve) => {
+    let resolveCompletion!: (result: TerminalResult) => void;
+    const completion = new Promise<TerminalResult>((resolve) => {
       resolveCompletion = resolve;
     });
     await this.continueWithDelivery(input, resolveCompletion);
@@ -190,24 +205,27 @@ export class SubagentController {
 
   private async continueWithDelivery(
     input: ContinueInput,
-    directResolve?: (pong: Pong) => void,
+    directResolve?: (result: TerminalResult) => void,
   ): Promise<SubagentView> {
     this.assertCanLaunch();
     const record = this.requireRecord(input.id);
     if (record.active) throw new Error(`Subagent ${input.id} is already active; use steer instead.`);
     if (!record.sessionRef) throw new Error(`Subagent ${input.id} has no native session reference.`);
 
+    const lineage = tightenLineage(record.lineage, input);
     const previous = {
       state: record.state,
       error: record.error,
       model: record.model,
       thinking: record.thinking,
       capabilities: cloneCapabilities(record.capabilities),
+      lineage: record.lineage,
       directResolve: record.directResolve,
     };
     record.model = input.model;
     record.thinking = input.thinking;
     record.capabilities = cloneCapabilities(input.capabilities);
+    record.lineage = lineage;
     record.state = "handshaking";
     record.active = true;
     record.startedAt = this.options.now();
@@ -216,11 +234,12 @@ export class SubagentController {
     record.error = undefined;
     record.accepted = false;
     record.finalizing = false;
-    record.ponged = false;
+    record.delivered = false;
     record.interruptRequested = false;
     record.pendingSettled = false;
     record.pendingExitError = undefined;
     record.terminalError = undefined;
+    record.assistantMessageEnded = false;
     record.directResolve = directResolve;
     this.changed();
 
@@ -233,6 +252,7 @@ export class SubagentController {
       record.model = previous.model;
       record.thinking = previous.thinking;
       record.capabilities = previous.capabilities;
+      record.lineage = previous.lineage;
       record.directResolve = previous.directResolve;
       record.active = false;
       record.startedAt = undefined;
@@ -294,6 +314,7 @@ export class SubagentController {
       model: record.model,
       thinking: record.thinking,
       capabilities: cloneCapabilities(record.capabilities),
+      lineage: record.lineage,
       name: record.name,
       session: record.sessionRef,
     };
@@ -342,6 +363,7 @@ export class SubagentController {
       return;
     }
     if (event.type === "message_end" && event.message?.role === "assistant") {
+      record.assistantMessageEnded = true;
       record.terminalError = event.message.stopReason === "error" || event.message.stopReason === "aborted"
         ? event.message.errorMessage ?? `Assistant turn ended with ${event.message.stopReason}.`
         : undefined;
@@ -366,7 +388,7 @@ export class SubagentController {
   }
 
   private async finalize(record: RecordState, outcome: TerminalOutcome, error?: string, alreadyExited = false): Promise<void> {
-    if (record.finalizing || record.ponged || !record.accepted) return;
+    if (record.finalizing || record.delivered || !record.accepted) return;
     record.finalizing = true;
     record.state = "finalizing";
     record.error = error;
@@ -374,12 +396,14 @@ export class SubagentController {
 
     let finalText: string | undefined;
     if (!alreadyExited && record.child) {
-      try {
-        finalText = textData(await record.child.request({ type: "get_last_assistant_text" })).text ?? undefined;
-      } catch (requestError) {
-        if (outcome === "completed") {
-          outcome = "failed";
-          record.error = errorMessage(requestError);
+      if (record.assistantMessageEnded) {
+        try {
+          finalText = textData(await record.child.request({ type: "get_last_assistant_text" })).text ?? undefined;
+        } catch (requestError) {
+          if (outcome === "completed") {
+            outcome = "failed";
+            record.error = errorMessage(requestError);
+          }
         }
       }
       try {
@@ -401,9 +425,9 @@ export class SubagentController {
     record.error = record.error || undefined;
     this.changed();
 
-    if (this.shuttingDown || record.ponged || !record.sessionRef) return;
-    record.ponged = true;
-    const pong: Pong = {
+    if (this.shuttingDown || record.delivered || !record.sessionRef) return;
+    record.delivered = true;
+    const result: TerminalResult = {
       id: record.id,
       name: record.name,
       outcome,
@@ -413,12 +437,13 @@ export class SubagentController {
     };
     const directResolve = record.directResolve;
     record.directResolve = undefined;
-    if (directResolve) directResolve(pong);
-    else this.options.onPong(pong);
+    if (directResolve) directResolve(result);
+    else this.options.onPong(result);
   }
 
-  private createStartRecord(input: StartInput, directResolve?: (pong: Pong) => void): RecordState {
+  private createStartRecord(input: StartInput, directResolve?: (result: TerminalResult) => void): RecordState {
     this.assertCanLaunch();
+    const lineage = createChildLineage(this.lineage, input);
     const record: RecordState = {
       id: this.nextId++,
       name: input.name,
@@ -429,11 +454,13 @@ export class SubagentController {
       model: input.model,
       thinking: input.thinking,
       capabilities: cloneCapabilities(input.capabilities),
+      lineage,
       accepted: false,
       finalizing: false,
-      ponged: false,
+      delivered: false,
       interruptRequested: false,
       pendingSettled: false,
+      assistantMessageEnded: false,
       directResolve,
     };
     this.records.set(record.id, record);
@@ -443,8 +470,10 @@ export class SubagentController {
 
   private assertCanLaunch(): void {
     if (this.shuttingDown) throw new Error("The orchestrator session is shutting down.");
-    if ([...this.records.values()].filter((record) => record.active).length >= MAX_ACTIVE) {
-      throw new Error(`At most ${MAX_ACTIVE} subagents may be active; no work was queued.`);
+    if ([...this.records.values()].filter((record) => record.active).length >= this.lineage.maxChildren) {
+      throw new Error(
+        `At most ${this.lineage.maxChildren} direct subagents may be active; no child process was launched.`,
+      );
     }
   }
 

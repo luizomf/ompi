@@ -1,7 +1,7 @@
 import { initTheme, type ExtensionAPI, type MessageRenderer } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import type { Pong, SubagentView } from "./controller.ts";
-import subagentsExtension, { buildActiveUi, buildPongMessage } from "./index.ts";
+import type { SubagentView, TerminalResult } from "./controller.ts";
+import subagentsExtension, { buildActiveUi, buildDirectResult, buildPongMessage } from "./index.ts";
 
 function view(overrides: Partial<SubagentView>): SubagentView {
   return {
@@ -110,7 +110,7 @@ describe("subagent presentation", () => {
   });
 
   it("bounds final assistant text and marks truncation", () => {
-    const pong: Pong = {
+    const pong: TerminalResult = {
       id: 7,
       outcome: "completed",
       sessionRef: "/sessions/7.jsonl",
@@ -122,5 +122,25 @@ describe("subagent presentation", () => {
     expect(message.details.truncated).toBe(true);
     expect(message.content).toContain("truncated to 8,000 characters");
     expect(message.content).toContain("/sessions/7.jsonl");
+  });
+
+  it("keeps the native session reference in bounded direct failure and interruption results", () => {
+    for (const outcome of ["failed", "interrupted"] as const) {
+      const message = buildDirectResult({
+        id: 9,
+        outcome,
+        sessionRef: "/sessions/recover.jsonl",
+        finalText: "x".repeat(8_050),
+        error: outcome === "failed" ? "provider failed" : undefined,
+      });
+
+      expect(message.content).toContain(`[SUBAGENT #9] ${outcome}`);
+      expect(message.content).toContain("/sessions/recover.jsonl");
+      expect(message.details).toMatchObject({
+        outcome,
+        sessionRef: "/sessions/recover.jsonl",
+        truncated: true,
+      });
+    }
   });
 });
