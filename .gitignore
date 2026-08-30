@@ -30,3 +30,4 @@ __pycache__/
 
 # Local third-party reference material
 /my-pi-setup/
+docs/research/pi-subagents-design-assessment.md
