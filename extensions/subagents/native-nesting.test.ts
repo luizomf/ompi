@@ -63,7 +63,7 @@ function textStream(model, text) {
   return stream;
 }
 
-function toolStream(model, prompt) {
+function toolStream(model, id, name, arguments_) {
   const stream = createAssistantMessageEventStream();
   const partial = {
     role: "assistant",
@@ -77,9 +77,9 @@ function toolStream(model, prompt) {
   };
   const toolCall = {
     type: "toolCall",
-    id: "call_leaf",
-    name: "subagent_start",
-    arguments: { prompt, delivery: "direct" },
+    id,
+    name,
+    arguments: arguments_,
   };
   const message = { ...partial, content: [toolCall] };
   queueMicrotask(() => {
@@ -121,27 +121,43 @@ function hangingStream(model, signal) {
 
 function streamFixture(model, context, options) {
   const userText = lastUserText(context.messages);
-  const toolResult = context.messages.findLast((message) =>
+  const subagentResult = context.messages.findLast((message) =>
     message.role === "toolResult" && message.toolName === "subagent_start"
+  );
+  const dialogResult = context.messages.findLast((message) =>
+    message.role === "toolResult" && message.toolName === "fixture_dialog"
   );
   const phase = userText === "LEAF"
     ? "leaf"
     : userText === "HANG"
       ? "leaf-hang"
-      : toolResult
-        ? "coordinator-after"
-        : "coordinator-before";
+      : userText === "DIALOG_LEAF"
+        ? dialogResult
+          ? "dialog-leaf-after"
+          : "dialog-leaf-before"
+        : subagentResult
+          ? "coordinator-after"
+          : "coordinator-before";
   appendFileSync(process.env.OMPI_NESTED_CAPTURE, JSON.stringify({
     phase,
     pid: process.pid,
-    toolResult: toolResult?.content,
+    toolResult: subagentResult?.content ?? dialogResult?.content,
   }) + "\n");
   if (phase === "coordinator-before") {
-    return toolStream(
-      model,
-      userText === "SHUTDOWN" || userText === "CANCEL" ? "HANG" : "LEAF",
-    );
+    const prompt = userText === "SHUTDOWN" || userText === "CANCEL"
+      ? "HANG"
+      : userText === "DIALOG"
+        ? "DIALOG_LEAF"
+        : "LEAF";
+    return toolStream(model, "call_leaf", "subagent_start", {
+      prompt,
+      delivery: "direct",
+    });
   }
+  if (phase === "dialog-leaf-before") {
+    return toolStream(model, "call_dialog", "fixture_dialog", {});
+  }
+  if (phase === "dialog-leaf-after") return textStream(model, "leaf dialog completed");
   if (phase === "leaf") return textStream(model, "leaf done");
   if (phase === "leaf-hang") return hangingStream(model, options?.signal);
   return textStream(model, "coordinator received leaf");
@@ -155,6 +171,20 @@ export default function fixtureProvider(pi) {
     parameters: Type.Object({}),
     async execute() {
       return { content: [{ type: "text", text: "fixture tool" }] };
+    },
+  });
+  pi.registerTool({
+    name: "fixture_dialog",
+    label: "Fixture Dialog",
+    description: "Requests one deterministic standard confirmation",
+    parameters: Type.Object({}),
+    async execute(_id, _params, signal, _onUpdate, ctx) {
+      const confirmed = await ctx.ui.confirm(
+        "Nested approval",
+        "Approve the depth-3 fixture?",
+        { signal, timeout: 5_000 },
+      );
+      return { content: [{ type: "text", text: "confirmed: " + confirmed }] };
     },
   });
   pi.registerProvider("fixture", {
@@ -220,9 +250,11 @@ describe("native nested subagents", () => {
       tools: [
         { name: "subagent_start", provider: SUBAGENT_EXTENSION },
         { name: "fixture_tool", provider: providerPath },
+        { name: "fixture_dialog", provider: providerPath },
       ],
       extensionPaths: [SUBAGENT_EXTENSION, providerPath],
     };
+    const relayedDialogs: unknown[] = [];
     const controller = new SubagentController({
       handshakeMs: 10_000,
       createChild: async (spec) => {
@@ -231,6 +263,13 @@ describe("native nested subagents", () => {
           ...invocation,
           command: process.execPath,
           args: [PI_CLI, ...invocation.args],
+        }, {
+          onDialog: async (request) => {
+            relayedDialogs.push(request);
+            return request.method === "confirm"
+              ? { confirmed: true }
+              : { cancelled: true };
+          },
         });
       },
       onPong: () => {
@@ -281,6 +320,43 @@ describe("native nested subagents", () => {
       expect(persistedLeafSession).toContain("LEAF");
       expect(persistedLeafSession).toContain("leaf done");
 
+      const dialogResult = await controller.run({
+        prompt: "DIALOG",
+        cwd,
+        model: "fixture/model",
+        thinking: "off",
+        capabilities,
+        maxDepth: 3,
+        maxChildren: 2,
+      });
+      expect(dialogResult).toMatchObject({
+        outcome: "completed",
+        finalText: "coordinator received leaf",
+      });
+      expect(relayedDialogs).toEqual([{
+        id: expect.any(String),
+        method: "confirm",
+        title: "Nested approval",
+        message: "Approve the depth-3 fixture?",
+        timeout: 5_000,
+      }]);
+      const dialogCaptures = (await readFile(capturePath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(dialogCaptures.map((capture) => capture.phase)).toEqual([
+        "coordinator-before",
+        "leaf",
+        "coordinator-after",
+        "coordinator-before",
+        "dialog-leaf-before",
+        "dialog-leaf-after",
+        "coordinator-after",
+      ]);
+      expect(dialogCaptures[5].toolResult).toEqual([
+        { type: "text", text: "confirmed: true" },
+      ]);
+
       const cancellation = new AbortController();
       const cancelling = controller.run({
         prompt: "CANCEL",
@@ -310,6 +386,12 @@ describe("native nested subagents", () => {
       if (!cancelledCoordinator || !cancelledLeaf) {
         throw new Error("Cancellation lineage processes were not observed.");
       }
+      await vi.waitFor(() => {
+        expect(controller.activeSubtree()).toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: [3], depth: 2, state: "running" }),
+          expect.objectContaining({ path: [3, 1], parentPath: [3], depth: 3, state: "running" }),
+        ]));
+      });
       cancellation.abort();
       await expect(cancelling).resolves.toMatchObject({
         outcome: "interrupted",
@@ -317,6 +399,7 @@ describe("native nested subagents", () => {
       });
       expect(processIsAlive(cancelledCoordinator.pid)).toBe(false);
       expect(processIsAlive(cancelledLeaf.pid)).toBe(false);
+      expect(controller.activeSubtree()).toEqual([]);
 
       await controller.start({
         prompt: "SHUTDOWN",

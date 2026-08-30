@@ -1,7 +1,12 @@
 import { initTheme, type ExtensionAPI, type MessageRenderer } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { SubagentView, TerminalResult } from "./controller.ts";
-import subagentsExtension, { buildActiveUi, buildDirectResult, buildPongMessage } from "./index.ts";
+import subagentsExtension, {
+  buildActiveUi,
+  buildDirectResult,
+  buildOwnershipStatus,
+  buildPongMessage,
+} from "./index.ts";
 
 function view(overrides: Partial<SubagentView>): SubagentView {
   return {
@@ -38,6 +43,33 @@ describe("subagent tool guidance", () => {
   });
 });
 
+describe("ownership status operation", () => {
+  it("registers an on-demand active subtree tool and command without changing the default widget", async () => {
+    const tools = new Map<string, any>();
+    const commands = new Map<string, any>();
+    const pi = {
+      registerTool: (tool: { name: string }) => tools.set(tool.name, tool),
+      registerCommand: (name: string, command: unknown) => commands.set(name, command),
+      registerMessageRenderer: () => undefined,
+      on: () => undefined,
+      getThinkingLevel: () => "medium",
+      sendMessage: () => undefined,
+      events: { emit: () => undefined },
+    } as unknown as ExtensionAPI;
+
+    subagentsExtension(pi);
+
+    expect(tools.has("subagent_status")).toBe(true);
+    expect(commands.has("subtree")).toBe(true);
+    expect(tools.get("subagent_status").description).toContain("active ownership subtree");
+    const result = await tools.get("subagent_status").execute();
+    expect(result.content[0].text).toContain("self · depth 1 · current");
+    expect(result.details.nodes).toEqual([
+      { runtimeId: "self", depth: 1, state: "current" },
+    ]);
+  });
+});
+
 describe("subagent presentation", () => {
   it("shows only active work and the minimal concurrent footer count", () => {
     const presentation = buildActiveUi([
@@ -51,6 +83,40 @@ describe("subagent presentation", () => {
     expect(presentation.lines?.[0]).toContain("#1 reader · running · 3s · provider/model · reasoning medium · read · visible progress");
     expect(presentation.lines?.join(" ")).not.toContain("#3");
     expect(buildActiveUi([view({ active: false, state: "completed" })], 5_000)).toEqual({});
+  });
+
+  it("builds an on-demand active ownership tree with owner-scoped runtime IDs", () => {
+    const status = buildOwnershipStatus(2, [{
+      path: [3],
+      parentPath: [],
+      id: 3,
+      depth: 3,
+      state: "interrupting",
+      name: "leaf",
+      model: "provider/model",
+      thinking: "high",
+    }]);
+
+    expect(status.lines[0]).toContain("self · depth 2 · current");
+    expect(status.lines[1]).toContain("runtime 3 (leaf)");
+    expect(status.lines[1]).toContain("depth 3 · interrupting");
+    expect(status.lines[1]).toContain("parent self");
+    expect(status.lines[1]).toContain("owner-local ID #3");
+    expect(status.nodes).toEqual([
+      { runtimeId: "self", depth: 2, state: "current" },
+      {
+        runtimeId: "3",
+        parentRuntimeId: "self",
+        managementId: 3,
+        depth: 3,
+        state: "interrupting",
+        name: "leaf",
+        model: "provider/model",
+        thinking: "high",
+      },
+    ]);
+    expect(JSON.stringify(status)).not.toContain("preview");
+    expect(JSON.stringify(status)).not.toContain("finalText");
   });
 
   it("collapses final assistant text behind Pi's native expansion state", () => {

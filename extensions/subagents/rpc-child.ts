@@ -8,8 +8,22 @@ import {
   parseCapabilityProbe,
   type CapabilitySnapshot,
 } from "./capabilities.ts";
-import type { LaunchSpec, RpcChild, RpcEvent } from "./controller.ts";
+import type {
+  LaunchSpec,
+  OwnershipRuntime,
+  RpcChild,
+  RpcEvent,
+} from "./controller.ts";
+import {
+  cancelledDialogResult,
+  isStandardDialogMethod,
+  normalizeDialogResult,
+  parseStandardDialogRequest,
+  type StandardDialogRequest,
+  type StandardDialogResult,
+} from "./dialogs.ts";
 import { MANAGED_LINEAGE_ENV, encodeManagedLineage } from "./lineage.ts";
+import { OWNERSHIP_STATUS_KEY, parseOwnershipStatus } from "./ownership.ts";
 
 interface RpcResponse {
   id?: string;
@@ -25,7 +39,16 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+interface PendingDialog {
+  abort: AbortController;
+}
+
+export interface RpcSubprocessOptions {
+  onDialog?(request: StandardDialogRequest, signal: AbortSignal): Promise<StandardDialogResult>;
+}
+
 const CAPABILITY_PROBE_PATH = fileURLToPath(new URL("./capability-probe.ts", import.meta.url));
+const MAX_RPC_FRAME_BYTES = 512 * 1024;
 
 export interface ChildInvocation {
   command: string;
@@ -73,6 +96,7 @@ export function buildChildInvocation(spec: LaunchSpec): ChildInvocation {
 export class RpcSubprocess implements RpcChild {
   private readonly process: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly pendingDialogs = new Map<string, PendingDialog>();
   private readonly eventListeners: Array<(event: RpcEvent) => void> = [];
   private readonly exitListeners: Array<(error?: Error) => void> = [];
   private requestId = 0;
@@ -84,7 +108,10 @@ export class RpcSubprocess implements RpcChild {
   private resolveCapabilities!: (snapshot: CapabilitySnapshot) => void;
   private rejectCapabilities!: (error: Error) => void;
 
-  constructor(invocation: ChildInvocation) {
+  constructor(
+    invocation: ChildInvocation,
+    private readonly options: RpcSubprocessOptions = {},
+  ) {
     this.exitPromise = new Promise((resolve) => {
       this.resolveExit = resolve;
     });
@@ -157,6 +184,7 @@ export class RpcSubprocess implements RpcChild {
 
   async close(): Promise<void> {
     if (this.exited) return;
+    this.cancelPendingDialogs(true);
     this.process.stdin.end();
     const timeout = setTimeout(() => this.process.kill("SIGTERM"), 2_000);
     const killTimeout = setTimeout(() => this.process.kill("SIGKILL"), 4_000);
@@ -175,14 +203,32 @@ export class RpcSubprocess implements RpcChild {
         if (newline < 0) break;
         let line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        if (Buffer.byteLength(line, "utf8") > MAX_RPC_FRAME_BYTES) {
+          this.rejectOversizedFrame();
+          buffer = "";
+          return;
+        }
         if (line.endsWith("\r")) line = line.slice(0, -1);
         this.handleLine(line);
+      }
+      if (Buffer.byteLength(buffer, "utf8") > MAX_RPC_FRAME_BYTES) {
+        this.rejectOversizedFrame();
+        buffer = "";
       }
     });
     this.process.stdout.on("end", () => {
       buffer += decoder.end();
+      if (Buffer.byteLength(buffer, "utf8") > MAX_RPC_FRAME_BYTES) {
+        this.rejectOversizedFrame();
+        return;
+      }
       if (buffer) this.handleLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
     });
+  }
+
+  private rejectOversizedFrame(): void {
+    this.stderr = `${this.stderr} Child RPC stdout frame exceeded ${MAX_RPC_FRAME_BYTES} bytes.`.slice(-8_000);
+    this.process.kill("SIGTERM");
   }
 
   private handleLine(line: string): void {
@@ -209,6 +255,34 @@ export class RpcSubprocess implements RpcChild {
       }
       return;
     }
+    if (
+      message.type === "extension_ui_request"
+      && "method" in message
+      && isStandardDialogMethod(message.method)
+    ) {
+      this.handleDialog(message);
+      return;
+    }
+    if (
+      message.type === "extension_ui_request"
+      && "method" in message
+      && message.method === "setStatus"
+      && "statusKey" in message
+      && message.statusKey === OWNERSHIP_STATUS_KEY
+    ) {
+      let ownership: OwnershipRuntime[] = [];
+      try {
+        ownership = "statusText" in message && message.statusText !== undefined
+          ? parseOwnershipStatus(message.statusText)
+          : [];
+      } catch {
+        // Invalid child status fails closed instead of preserving stale descendants.
+      }
+      for (const listener of this.eventListeners) {
+        listener({ type: "subagent_ownership", ownership });
+      }
+      return;
+    }
     if (message.type === "response" && "id" in message && message.id) {
       const pending = this.pending.get(message.id);
       if (!pending) return;
@@ -227,8 +301,56 @@ export class RpcSubprocess implements RpcChild {
     const exitError = error ?? new Error("Child RPC process exited.");
     this.rejectCapabilities(exitError);
     this.rejectPending(exitError);
+    this.cancelPendingDialogs(false);
     this.resolveExit();
     for (const listener of this.exitListeners) listener(error);
+  }
+
+  private handleDialog(message: RpcResponse | RpcEvent): void {
+    const rawId = "id" in message ? message.id : undefined;
+    let request: StandardDialogRequest;
+    try {
+      request = parseStandardDialogRequest(message);
+    } catch {
+      if (typeof rawId === "string" && rawId.length > 0 && rawId.length <= 128) {
+        this.writeDialogResponse(rawId, cancelledDialogResult());
+      }
+      return;
+    }
+    if (this.pendingDialogs.has(request.id)) {
+      this.writeDialogResponse(request.id, cancelledDialogResult());
+      return;
+    }
+    if (!this.options.onDialog) {
+      this.writeDialogResponse(request.id, cancelledDialogResult());
+      return;
+    }
+    const abort = new AbortController();
+    this.pendingDialogs.set(request.id, { abort });
+    void this.options.onDialog(request, abort.signal)
+      .then((result) => normalizeDialogResult(request, result))
+      .catch(() => cancelledDialogResult())
+      .then((result) => {
+        if (!this.pendingDialogs.delete(request.id)) return;
+        this.writeDialogResponse(request.id, result);
+      });
+  }
+
+  private writeDialogResponse(id: string, result: StandardDialogResult): void {
+    if (this.exited || !this.process.stdin.writable) return;
+    this.process.stdin.write(`${JSON.stringify({
+      type: "extension_ui_response",
+      id,
+      ...result,
+    })}\n`, "utf8", () => undefined);
+  }
+
+  private cancelPendingDialogs(respond: boolean): void {
+    for (const [id, pending] of this.pendingDialogs) {
+      if (respond) this.writeDialogResponse(id, cancelledDialogResult());
+      pending.abort.abort();
+    }
+    this.pendingDialogs.clear();
   }
 
   private rejectPending(error: Error): void {

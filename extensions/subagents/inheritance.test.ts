@@ -10,7 +10,8 @@ const rpc = vi.hoisted(() => ({
   children: [] as Array<{
     closed: boolean;
     requests: Array<Record<string, unknown>>;
-    emit(event: { type: string; message?: { role?: string; stopReason?: string } }): void;
+    onDialog?: (request: any, signal: AbortSignal) => Promise<any>;
+    emit(event: any): void;
   }>,
 }));
 
@@ -21,14 +22,20 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
     RpcSubprocess: class {
       closed = false;
       requests: Array<Record<string, unknown>> = [];
-      private listeners: Array<(event: { type: string; message?: { role?: string; stopReason?: string } }) => void> = [];
+      private listeners: Array<(event: any) => void> = [];
       private readonly sessionFile: string;
       private readonly capabilities: {
         tools: Array<{ name: string; provider: string }>;
         extensionPaths: string[];
       };
 
-      constructor(invocation: { args: string[]; env?: NodeJS.ProcessEnv }) {
+      readonly onDialog?: (request: any, signal: AbortSignal) => Promise<any>;
+
+      constructor(
+        invocation: { args: string[]; env?: NodeJS.ProcessEnv },
+        options?: { onDialog?: (request: any, signal: AbortSignal) => Promise<any> },
+      ) {
+        this.onDialog = options?.onDialog;
         rpc.invocations.push({ args: invocation.args, env: invocation.env });
         const sessionIndex = invocation.args.indexOf("--session");
         this.sessionFile = sessionIndex >= 0
@@ -54,7 +61,7 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
         return this.capabilities;
       }
 
-      onEvent(listener: (event: { type: string; message?: { role?: string; stopReason?: string } }) => void): () => void {
+      onEvent(listener: (event: any) => void): () => void {
         this.listeners.push(listener);
         return () => undefined;
       }
@@ -63,7 +70,7 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
         return () => undefined;
       }
 
-      emit(event: { type: string; message?: { role?: string; stopReason?: string } }): void {
+      emit(event: any): void {
         for (const listener of this.listeners) listener(event);
       }
 
@@ -86,6 +93,7 @@ function setup() {
   const commands = new Map<string, any>();
   const messages: unknown[] = [];
   const activityEvents: Array<{ channel: string; data: unknown }> = [];
+  const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
   let thinking = "low";
   let activeTools = ["read", "bash", "edit", "write"];
   let configuredTools = ["read", "bash", "edit", "write", "grep", "find", "ls"].map((name) => ({
@@ -103,7 +111,9 @@ function setup() {
     registerTool: (tool: { name: string }) => tools.set(tool.name, tool),
     registerCommand: (name: string, command: unknown) => commands.set(name, command),
     registerMessageRenderer: () => undefined,
-    on: () => undefined,
+    on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+    },
     getThinkingLevel: () => thinking,
     getActiveTools: () => [...activeTools],
     getAllTools: () => configuredTools.map((tool) => ({ ...tool })),
@@ -113,10 +123,18 @@ function setup() {
     },
   } as unknown as ExtensionAPI;
   const notifications: string[] = [];
+  const statuses: Array<{ key: string; text?: string }> = [];
+  const widgets: Array<{ key: string; lines?: string[] }> = [];
   const ctx = {
     cwd: "/repo",
+    mode: "tui",
     model: { provider: "provider", id: "first" },
-    ui: { notify: (message: string) => notifications.push(message) },
+    ui: {
+      notify: (message: string) => notifications.push(message),
+      setWidget: (key: string, lines?: string[]) => widgets.push({ key, lines }),
+      setStatus: (key: string, text?: string) => statuses.push({ key, text }),
+      theme: { fg: (_color: string, text: string) => text },
+    },
   } as unknown as ExtensionContext;
 
   subagentsExtension(pi);
@@ -126,7 +144,15 @@ function setup() {
     ctx,
     messages,
     notifications,
+    statuses,
+    widgets,
     activityEvents,
+    startSession: async (mode: ExtensionContext["mode"] = "tui") => {
+      (ctx as any).mode = mode;
+      for (const handler of handlers.get("session_start") ?? []) {
+        await handler({ type: "session_start", reason: "startup" }, ctx);
+      }
+    },
     setThinking: (level: string) => { thinking = level; },
     setCapabilities: (
       active: string[],
@@ -216,6 +242,186 @@ describe("subagent routing inheritance", () => {
       channel: "ompi:async-activity",
       data: { source: "subagents", active: 0 },
     });
+  });
+
+  it("preserves compact direct-child activity for a root RPC client", async () => {
+    const { tools, ctx, startSession, statuses, widgets } = setup();
+    await startSession("rpc");
+
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "root RPC child", name: "worker" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(statuses.at(-1)).toEqual({ key: "subagents", text: "subagents: 1" });
+    expect(widgets.at(-1)).toMatchObject({
+      key: "subagents",
+      lines: [expect.stringContaining("#1 worker · running")],
+    });
+    expect(statuses.some((status) => status.key === "ompi:subagents:ownership-v1")).toBe(false);
+  });
+
+  it("returns nested active state only when ownership status is requested", async () => {
+    const { tools, ctx } = setup();
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "coordinate", name: "coordinator" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    rpc.children[0].emit({
+      type: "subagent_ownership",
+      ownership: [{
+        path: [7],
+        parentPath: [],
+        id: 7,
+        depth: 3,
+        state: "running",
+        name: "leaf",
+        model: "provider/leaf",
+        thinking: "medium",
+      }],
+    });
+
+    const result = await tools.get("subagent_status").execute();
+    expect(result.details.nodes).toEqual([
+      { runtimeId: "self", depth: 1, state: "current" },
+      expect.objectContaining({
+        runtimeId: "1",
+        parentRuntimeId: "self",
+        managementId: 1,
+        depth: 2,
+        state: "running",
+        name: "coordinator",
+      }),
+      expect.objectContaining({
+        runtimeId: "1/7",
+        parentRuntimeId: "1",
+        managementId: 7,
+        depth: 3,
+        state: "running",
+        name: "leaf",
+      }),
+    ]);
+    expect(result.content[0].text).not.toContain("coordinate");
+  });
+
+  it("relays a child dialog mechanically to the root TUI", async () => {
+    const { tools, ctx, startSession, messages } = setup();
+    const dialogs: unknown[] = [];
+    (ctx.ui as any).confirm = async (title: string, message: string, options: unknown) => {
+      dialogs.push({ title, message, options });
+      return true;
+    };
+    await startSession("tui");
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "ask the user" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const relay = rpc.children[0].onDialog;
+    expect(relay).toBeDefined();
+    if (!relay) throw new Error("Child dialog relay was not installed.");
+    const signal = new AbortController().signal;
+
+    await expect(relay({
+      id: "dialog-1",
+      method: "confirm",
+      title: "Approve?",
+      message: "Continue with the operation?",
+    }, signal)).resolves.toEqual({ confirmed: true });
+    expect(dialogs).toEqual([{
+      title: "Approve?",
+      message: "Continue with the operation?",
+      options: { signal, timeout: 30_000 },
+    }]);
+    expect(messages).toEqual([]);
+  });
+
+  it("fails a root headless dialog closed without invoking a parent model or UI", async () => {
+    const { tools, ctx, startSession } = setup();
+    (ctx.ui as any).confirm = async () => {
+      throw new Error("Headless root UI must not be called.");
+    };
+    await startSession("rpc");
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "ask without a root TUI" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const relay = rpc.children[0].onDialog;
+    if (!relay) throw new Error("Child dialog relay was not installed.");
+
+    await expect(relay({
+      id: "dialog-2",
+      method: "confirm",
+      title: "Approve?",
+      message: "No TUI exists.",
+    }, new AbortController().signal)).resolves.toEqual({ cancelled: true });
+  });
+
+  it("allows a nested RPC owner to forward a dialog to its parent transport", async () => {
+    process.env.OMPI_SUBAGENT_LINEAGE = JSON.stringify({
+      version: 1,
+      depth: 2,
+      maxDepth: 3,
+      maxChildren: 2,
+    });
+    const { tools, ctx, startSession, statuses, widgets } = setup();
+    const forwarded: string[] = [];
+    (ctx.ui as any).input = async (title: string) => {
+      forwarded.push(title);
+      return "root user value";
+    };
+    await startSession("rpc");
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "nested leaf" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const ownershipStatus = statuses.findLast(
+      (status) => status.key === "ompi:subagents:ownership-v1",
+    );
+    expect(JSON.parse(ownershipStatus?.text ?? "")).toEqual({
+      version: 1,
+      ownership: [{
+        path: [1],
+        parentPath: [],
+        id: 1,
+        depth: 3,
+        state: "running",
+        model: "provider/first",
+        thinking: "low",
+      }],
+    });
+    expect(ownershipStatus?.text).not.toContain("nested leaf");
+    expect(statuses.every((status) => status.key === "ompi:subagents:ownership-v1")).toBe(true);
+    expect(widgets).toEqual([]);
+    const relay = rpc.children[0].onDialog;
+    if (!relay) throw new Error("Nested child dialog relay was not installed.");
+
+    await expect(relay({
+      id: "dialog-3",
+      method: "input",
+      title: "Value from root user",
+    }, new AbortController().signal)).resolves.toEqual({ value: "root user value" });
+    expect(forwarded).toEqual(["Value from root user"]);
+
+    await settle(0);
+    const clearedStatus = statuses.findLast(
+      (status) => status.key === "ompi:subagents:ownership-v1",
+    );
+    expect(JSON.parse(clearedStatus?.text ?? "")).toEqual({ version: 1, ownership: [] });
   });
 
   it("inherits each then-active extension tool and provider on start and continuation", async () => {

@@ -384,6 +384,16 @@ exactly one completion, failure, or interruption pong. Set `delivery` to
 result through the pending tool call; direct delivery emits no later pong.
 Independent direct siblings issued together still run concurrently.
 
+The normal widget and footer remain compact and show only direct current
+activity. They never stream child transcripts into the parent conversation or
+render a recursive dashboard. When a user asks to inspect nesting,
+`subagent_status` or `/subtree` returns the active ownership subtree relative to
+the invoking parent: `self`, depth, state, parent runtime, and owner-local
+numeric ID. A nested parent therefore sees itself and descendants, not its
+parent, siblings, idle conversations, unrelated controllers, or other sessions.
+Descendant paths explain ownership but are not new action identifiers; existing
+steer and interrupt operations still accept only the direct owner's local ID.
+
 After asynchronous acceptance, the parent must not sleep, run a wait loop, or
 repeatedly call `subagent_list` for completion. When multiple independent
 delegations are useful, it starts them in the same turn so Pi can run them
@@ -409,7 +419,8 @@ The extension exposes these tools and matching commands:
 | `subagent_continue` | `/subcont` | Continue a settled conversation |
 | `subagent_steer` | `/substeer` | Steer an active turn |
 | `subagent_interrupt` | `/substop` | Interrupt an active turn |
-| `subagent_list` | `/sublist` | List session-scoped known conversations |
+| `subagent_status` | `/subtree` | Show the active ownership subtree on demand |
+| `subagent_list` | `/sublist` | List direct session-scoped known conversations |
 
 Use plain command arguments for common operations, or JSON with `/sub` and
 `/subcont` for delivery, lineage ceilings, routing, working-directory, tool, and
@@ -437,6 +448,7 @@ neither value can be raised. For example:
 /subcont 1 Check the newly changed files.
 /substeer 1 Focus only on the parser.
 /substop 1
+/subtree
 /sublist
 ```
 
@@ -468,6 +480,16 @@ session reference for complete inspection, including truncated, failed,
 interrupted, and missing-assistant-message cases. The registry is intentionally
 in memory; native Pi JSONL sessions remain after processes and the orchestrator
 exit.
+
+Standard `select`, `confirm`, `input`, and `editor` dialogs requested by a
+headless child relay mechanically through direct owners to a root TUI. Parent
+models never receive or answer the dialog content. Relay requests remain
+correlated and settle within thirty seconds; process cleanup cancels pending
+dialogs. If the root is print, JSON, RPC without a TUI, absent, or unresponsive,
+the child receives the standard cancellation value instead of hanging. Pi's
+TUI-only `ctx.ui.custom()` remains unavailable in RPC children and the extension
+does not emulate it. Fire-and-forget child UI components are not turned into a
+root dashboard.
 
 Install dependencies and verify the extension with:
 

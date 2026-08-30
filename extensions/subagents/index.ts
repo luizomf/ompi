@@ -14,11 +14,22 @@ import {
   type TerminalResult,
   type SubagentView,
   type ThinkingLevel,
+  type OwnershipRuntime,
 } from "./controller.ts";
 import { buildChildInvocation, RpcSubprocess } from "./rpc-child.ts";
 import { captureCapabilities } from "./capabilities.ts";
 import { publishAsyncActivity } from "./async-activity.ts";
+import {
+  cancelledDialogResult,
+  relayStandardDialog,
+  type StandardDialogRequest,
+  type StandardDialogResult,
+} from "./dialogs.ts";
 import { readManagedLineage } from "./lineage.ts";
+import {
+  OWNERSHIP_STATUS_KEY,
+  encodeOwnershipStatus,
+} from "./ownership.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
@@ -153,6 +164,49 @@ export function buildActiveUi(views: SubagentView[], now: number): { lines?: str
   return { lines, status: `subagents: ${active.length}` };
 }
 
+interface OwnershipStatusNode {
+  runtimeId: string;
+  parentRuntimeId?: string;
+  managementId?: number;
+  depth: number;
+  state: "current" | OwnershipRuntime["state"];
+  name?: string;
+  model?: string;
+  thinking?: ThinkingLevel;
+}
+
+export function buildOwnershipStatus(
+  depth: number,
+  ownership: OwnershipRuntime[],
+): { lines: string[]; nodes: OwnershipStatusNode[] } {
+  const nodes: OwnershipStatusNode[] = [
+    { runtimeId: "self", depth, state: "current" },
+    ...ownership.map((runtime) => ({
+      runtimeId: runtime.path.join("/"),
+      parentRuntimeId: runtime.parentPath.length > 0 ? runtime.parentPath.join("/") : "self",
+      managementId: runtime.id,
+      depth: runtime.depth,
+      state: runtime.state,
+      name: runtime.name,
+      model: runtime.model,
+      thinking: runtime.thinking,
+    })),
+  ];
+  const lines = ["self · depth " + depth + " · current owner"];
+  for (const runtime of ownership) {
+    const runtimeId = runtime.path.join("/");
+    const parentRuntimeId = runtime.parentPath.length > 0 ? runtime.parentPath.join("/") : "self";
+    const name = runtime.name ? ` (${oneLine(runtime.name, 40)})` : "";
+    const indent = "  ".repeat(Math.max(0, runtime.path.length - 1));
+    lines.push(
+      `${indent}└─ runtime ${runtimeId}${name} · depth ${runtime.depth} · ${runtime.state}`
+      + ` · parent ${parentRuntimeId} · owner-local ID #${runtime.id}`
+      + ` · ${oneLine(runtime.model, 80)} · reasoning ${runtime.thinking}`,
+    );
+  }
+  return { lines, nodes };
+}
+
 function buildTerminalMessage(
   pong: TerminalResult,
   heading: string,
@@ -201,15 +255,20 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   });
 
   let ui: ExtensionContext["ui"] | undefined;
+  let uiMode: ExtensionContext["mode"] | undefined;
   let timer: NodeJS.Timeout | undefined;
   let publishedActiveCount: number | undefined;
+  let publishedOwnershipStatus: string | undefined;
   let controller: SubagentController;
 
   const refreshUi = () => {
     const views = controller.list();
     const activeCount = views.filter((view) => view.active).length;
     const presentation = buildActiveUi(views, Date.now());
-    if (ui) {
+    if (
+      ui
+      && (uiMode === "tui" || (lineage.depth === 1 && uiMode === "rpc"))
+    ) {
       const theme = ui.theme;
       ui.setWidget(
         "subagents",
@@ -220,6 +279,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         presentation.status ? theme.fg("success", presentation.status) : undefined,
       );
     }
+    if (ui && lineage.depth > 1 && uiMode === "rpc") {
+      const ownershipStatus = encodeOwnershipStatus(controller.activeSubtree());
+      if (publishedOwnershipStatus !== ownershipStatus) {
+        publishedOwnershipStatus = ownershipStatus;
+        ui.setStatus(OWNERSHIP_STATUS_KEY, ownershipStatus);
+      }
+    }
     if (activeCount > 0 && !timer) timer = setInterval(refreshUi, 1_000);
     if (activeCount === 0 && timer) {
       clearInterval(timer);
@@ -229,6 +295,25 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       publishedActiveCount = activeCount;
       publishAsyncActivity(pi, "subagents", activeCount);
     }
+  };
+
+  const relayDialog = async (
+    request: StandardDialogRequest,
+    signal: AbortSignal,
+  ): Promise<StandardDialogResult> => {
+    const currentUi = ui;
+    if (
+      !currentUi
+      || !(
+        (lineage.depth === 1 && uiMode === "tui")
+        || (lineage.depth > 1 && uiMode === "rpc")
+      )
+    ) {
+      return cancelledDialogResult();
+    }
+    return relayStandardDialog(currentUi, request, signal, {
+      interactiveEditor: lineage.depth === 1 && uiMode === "tui",
+    });
   };
 
   const sendPong = (pong: TerminalResult) => {
@@ -246,7 +331,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
   controller = new SubagentController({
     lineage,
-    createChild: async (spec) => new RpcSubprocess(buildChildInvocation(spec)),
+    createChild: async (spec) => new RpcSubprocess(
+      buildChildInvocation(spec),
+      { onDialog: relayDialog },
+    ),
     onPong: sendPong,
     onChange: refreshUi,
   });
@@ -371,6 +459,29 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "subagent_status",
+    label: "Subagent Ownership Status",
+    description: "Take one on-demand snapshot of this parent's active ownership subtree. It includes self and active descendants with depth, state, parent relationships, and owner-scoped runtime IDs; it never includes transcripts or unrelated sessions and adds no management controls.",
+    promptGuidelines: [
+      "Use subagent_status only for a user-requested ownership snapshot or a concrete orchestration decision; never poll it for completion.",
+    ],
+    parameters: ListSchema,
+    async execute() {
+      const status = buildOwnershipStatus(lineage.depth, controller.activeSubtree());
+      return {
+        content: [{
+          type: "text",
+          text: [
+            "Active ownership subtree (IDs are scoped to the runtime's direct owner):",
+            ...status.lines,
+          ].join("\n"),
+        }],
+        details: status,
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "subagent_list",
     label: "List Subagents",
     description: "Take one snapshot of direct subagent conversations known to this parent session. This is not a completion wait or polling mechanism.",
@@ -454,6 +565,17 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("subtree", {
+    description: "Show this parent's active ownership subtree",
+    handler: async (_args, ctx) => {
+      const status = buildOwnershipStatus(lineage.depth, controller.activeSubtree());
+      ctx.ui.notify([
+        "Active ownership subtree (IDs are scoped to the runtime's direct owner):",
+        ...status.lines,
+      ].join("\n"), "info");
+    },
+  });
+
   pi.registerCommand("sublist", {
     description: "List direct subagents known to this parent session",
     handler: async (_args, ctx) => {
@@ -464,6 +586,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     ui = ctx.ui;
+    uiMode = ctx.mode;
     refreshUi();
   });
 
@@ -471,8 +594,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     if (timer) clearInterval(timer);
     timer = undefined;
     await controller.shutdown();
-    ui?.setWidget("subagents", undefined);
-    ui?.setStatus("subagents", undefined);
+    if (uiMode === "tui" || (lineage.depth === 1 && uiMode === "rpc")) {
+      ui?.setWidget("subagents", undefined);
+      ui?.setStatus("subagents", undefined);
+    }
+    if (lineage.depth > 1 && uiMode === "rpc") {
+      ui?.setStatus(OWNERSHIP_STATUS_KEY, undefined);
+    }
+    publishedOwnershipStatus = undefined;
     ui = undefined;
+    uiMode = undefined;
   });
 }
