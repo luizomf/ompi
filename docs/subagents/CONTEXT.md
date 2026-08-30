@@ -80,9 +80,17 @@ _Avoid_: Pong, completion
 The subagent extension's single deterministic asynchronous notification that an accepted subagent turn completed, failed, or was interrupted. It carries the bounded terminal result and its native session reference; delivery never depends on the subagent producing an assistant message. Direct delivery never emits a pong.
 _Avoid_: Direct result, model callback, polling, status check
 
+**Ownership subtree**:
+One parent agent plus every active descendant runtime reachable through that parent's direct children. An on-demand snapshot identifies the invoking parent as `self`; descendant runtime paths are relative to it, while each `#ID` remains scoped to the direct owner named on that line. A parent can inspect only its own subtree, never its parent, siblings, unrelated controllers, idle conversations, or other sessions. Existing direct-owner steering and interruption operations continue to accept their local numeric IDs; the status view adds no tree action API, and closing an ancestor retains recursive managed-lineage cleanup.
+_Avoid_: Global agent registry, session inventory, machine process tree, globally actionable runtime ID
+
 **Live status**:
-A compact Pi widget near the editor that shows current subagent activity without adding streaming updates to the orchestrator conversation. A minimal footer count remains visible while any subagent turn is active. The same active count is published through the shared extension event bus so session-level status integrations do not mistake a settled orchestrator turn for an idle session.
-_Avoid_: Transcript message, progress polling, full output
+A compact Pi widget near the editor that shows only direct current subagent activity without adding streaming updates to the parent conversation. The default stays non-recursive, and a minimal footer count remains visible while a direct subagent turn is active. The same direct active count is published through the shared extension event bus so session-level status integrations do not mistake a settled parent turn for an idle session. `subagent_status` and `/subtree` provide a user-requested, active-only ownership subtree; status propagation contains bounded runtime metadata, never prompts, transcript text, final text, unrelated sessions, or a permanent dashboard.
+_Avoid_: Transcript message, progress polling, full output, recursive default widget
+
+**Headless UI relay**:
+The mechanical owner-chain transport for standard RPC dialogs: `select`, `confirm`, `input`, and `editor`. Each direct owner forwards the request through RPC UI rather than exposing it to its model, and only a root TUI may ask the user. The correlated user response returns along the same chain. Every relay is capped at thirty seconds and process cleanup cancels pending requests; absent, unresponsive, non-TUI, print, JSON, or root RPC surfaces return the protocol's method-appropriate cancellation instead of hanging. Pi's TUI-only `custom()` remains unavailable in headless RPC children and is not represented or emulated by this extension.
+_Avoid_: Child TUI, model-authored user response, automatic approval, custom-component emulation
 
 ## Routing selection
 

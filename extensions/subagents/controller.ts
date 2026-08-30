@@ -12,7 +12,19 @@ import {
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type TerminalOutcome = "completed" | "failed" | "interrupted";
-export type SubagentState = "handshaking" | "running" | "steering" | "interrupting" | "finalizing" | TerminalOutcome;
+export type ActiveSubagentState = "handshaking" | "running" | "steering" | "interrupting" | "finalizing";
+export type SubagentState = ActiveSubagentState | TerminalOutcome;
+
+export interface OwnershipRuntime {
+  path: number[];
+  parentPath: number[];
+  id: number;
+  depth: number;
+  state: ActiveSubagentState;
+  name?: string;
+  model: string;
+  thinking: ThinkingLevel;
+}
 
 export interface LaunchSpec {
   cwd: string;
@@ -29,6 +41,7 @@ export interface RpcEvent {
   toolName?: string;
   assistantMessageEvent?: { type?: string; delta?: string };
   message?: { role?: string; stopReason?: string; errorMessage?: string };
+  ownership?: OwnershipRuntime[];
 }
 
 export interface RpcChild {
@@ -92,6 +105,7 @@ interface RecordState extends SubagentView {
   pendingExitError?: string;
   terminalError?: string;
   assistantMessageEnded: boolean;
+  ownership: OwnershipRuntime[];
   directResolve?: (result: TerminalResult) => void;
 }
 
@@ -135,10 +149,32 @@ export class SubagentController {
   }
 
   list(): SubagentView[] {
-    return [...this.records.values()].map(({ capabilities, lineage: _lineage, child: _child, accepted: _accepted, finalizing: _finalizing, delivered: _delivered, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, assistantMessageEnded: _assistantMessageEnded, directResolve: _directResolve, ...view }) => ({
+    return [...this.records.values()].map(({ capabilities, lineage: _lineage, child: _child, accepted: _accepted, finalizing: _finalizing, delivered: _delivered, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, assistantMessageEnded: _assistantMessageEnded, ownership: _ownership, directResolve: _directResolve, ...view }) => ({
       ...view,
       tools: capabilities.tools.map((tool) => tool.name),
     }));
+  }
+
+  activeSubtree(): OwnershipRuntime[] {
+    return [...this.records.values()].flatMap((record) => {
+      if (!record.active) return [];
+      const direct: OwnershipRuntime = {
+        path: [record.id],
+        parentPath: [],
+        id: record.id,
+        depth: record.lineage.depth,
+        state: record.state as ActiveSubagentState,
+        name: record.name,
+        model: record.model,
+        thinking: record.thinking,
+      };
+      const descendants = record.ownership.map((runtime) => ({
+        ...runtime,
+        path: [record.id, ...runtime.path],
+        parentPath: [record.id, ...runtime.parentPath],
+      }));
+      return [direct, ...descendants];
+    });
   }
 
   async start(input: StartInput): Promise<SubagentView> {
@@ -257,6 +293,7 @@ export class SubagentController {
     record.pendingExitError = undefined;
     record.terminalError = undefined;
     record.assistantMessageEnded = false;
+    record.ownership = [];
     record.directResolve = directResolve;
     this.changed();
 
@@ -370,6 +407,14 @@ export class SubagentController {
 
   private handleEvent(record: RecordState, event: RpcEvent): void {
     if (!record.active || record.finalizing) return;
+    if (event.type === "subagent_ownership") {
+      record.ownership = (event.ownership ?? []).filter((runtime) => (
+        runtime.depth === record.lineage.depth + runtime.path.length
+        && runtime.depth <= record.lineage.maxDepth
+      ));
+      this.changed();
+      return;
+    }
     if (event.type === "agent_settled") {
       if (!record.accepted) {
         record.pendingSettled = true;
@@ -437,6 +482,7 @@ export class SubagentController {
     record.active = false;
     record.startedAt = undefined;
     record.currentTool = undefined;
+    record.ownership = [];
     record.state = outcome;
     record.finalizing = false;
     record.error = record.error || undefined;
@@ -478,6 +524,7 @@ export class SubagentController {
       interruptRequested: false,
       pendingSettled: false,
       assistantMessageEnded: false,
+      ownership: [],
       directResolve,
     };
     this.records.set(record.id, record);

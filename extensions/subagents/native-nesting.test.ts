@@ -310,6 +310,12 @@ describe("native nested subagents", () => {
       if (!cancelledCoordinator || !cancelledLeaf) {
         throw new Error("Cancellation lineage processes were not observed.");
       }
+      await vi.waitFor(() => {
+        expect(controller.activeSubtree()).toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: [2], depth: 2, state: "running" }),
+          expect.objectContaining({ path: [2, 1], parentPath: [2], depth: 3, state: "running" }),
+        ]));
+      });
       cancellation.abort();
       await expect(cancelling).resolves.toMatchObject({
         outcome: "interrupted",
@@ -317,6 +323,7 @@ describe("native nested subagents", () => {
       });
       expect(processIsAlive(cancelledCoordinator.pid)).toBe(false);
       expect(processIsAlive(cancelledLeaf.pid)).toBe(false);
+      expect(controller.activeSubtree()).toEqual([]);
 
       await controller.start({
         prompt: "SHUTDOWN",

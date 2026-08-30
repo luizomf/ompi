@@ -589,6 +589,96 @@ describe("SubagentController", () => {
     expect(controller.list()[0]).toMatchObject({ preview: "visible", currentTool: "read" });
   });
 
+  it("reports only the active owned subtree and removes descendants on child settlement", async () => {
+    const { controller, children } = setup();
+    await controller.start({
+      prompt: "coordinate",
+      name: "coordinator",
+      cwd: "/repo",
+      model: "p/coordinator",
+      thinking: "low",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+    children[0].emit({
+      type: "subagent_ownership",
+      ownership: [{
+        path: [4],
+        parentPath: [],
+        id: 4,
+        depth: 3,
+        state: "running",
+        name: "leaf",
+        model: "p/leaf",
+        thinking: "medium",
+      }],
+    } as RpcEvent);
+
+    expect(controller.activeSubtree()).toEqual([
+      {
+        path: [1],
+        parentPath: [],
+        id: 1,
+        depth: 2,
+        state: "running",
+        name: "coordinator",
+        model: "p/coordinator",
+        thinking: "low",
+      },
+      {
+        path: [1, 4],
+        parentPath: [1],
+        id: 4,
+        depth: 3,
+        state: "running",
+        name: "leaf",
+        model: "p/leaf",
+        thinking: "medium",
+      },
+    ]);
+
+    await settle(children[0]);
+    expect(controller.activeSubtree()).toEqual([]);
+  });
+
+  it("prefixes each propagated subtree with its direct owner and cannot expose siblings", async () => {
+    const { controller, children } = setup();
+    const input = {
+      cwd: "/repo",
+      model: "p/owner",
+      thinking: "low" as const,
+      capabilities: DEFAULT_CAPABILITIES,
+    };
+    await Promise.all([
+      controller.start({ ...input, prompt: "one" }),
+      controller.start({ ...input, prompt: "two" }),
+    ]);
+    children[0].emit({
+      type: "subagent_ownership",
+      ownership: [{
+        path: [2], parentPath: [], id: 2, depth: 3, state: "running",
+        model: "p/leaf-one", thinking: "low",
+      }],
+    });
+    children[1].emit({
+      type: "subagent_ownership",
+      ownership: [{
+        path: [2], parentPath: [], id: 2, depth: 3, state: "running",
+        model: "p/leaf-two", thinking: "low",
+      }],
+    });
+
+    expect(controller.activeSubtree().map((runtime) => ({
+      path: runtime.path,
+      parentPath: runtime.parentPath,
+      model: runtime.model,
+    }))).toEqual([
+      { path: [1], parentPath: [], model: "p/owner" },
+      { path: [1, 2], parentPath: [1], model: "p/leaf-one" },
+      { path: [2], parentPath: [], model: "p/owner" },
+      { path: [2, 2], parentPath: [2], model: "p/leaf-two" },
+    ]);
+  });
+
   it("suppresses pongs and clears state on shutdown", async () => {
     const { controller, children, pongs } = setup();
     await Promise.all([

@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { BUILTIN_TOOL_PROVIDER } from "./capabilities.ts";
-import { buildChildInvocation } from "./rpc-child.ts";
+import {
+  parseStandardDialogRequest,
+  relayStandardDialog,
+  STANDARD_DIALOG_METHODS,
+} from "./dialogs.ts";
+import {
+  OWNERSHIP_STATUS_KEY,
+  encodeOwnershipStatus,
+  parseOwnershipStatus,
+} from "./ownership.ts";
+import { buildChildInvocation, RpcSubprocess } from "./rpc-child.ts";
 
 function valueAfter(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
@@ -10,6 +21,302 @@ function valueAfter(args: string[], flag: string): string | undefined {
 function valuesAfter(args: string[], flag: string): string[] {
   return args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
 }
+
+const DIALOG_CHILD_SCRIPT = String.raw`
+  let buffer = "";
+  let commandId;
+  const dialog = JSON.parse(process.env.DIALOG_REQUEST);
+  const deadline = setTimeout(() => process.exit(2), 1000);
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    while (true) {
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      const message = JSON.parse(line);
+      if (message.type === "trigger") {
+        commandId = message.id;
+        process.stdout.write(JSON.stringify(dialog) + "\n");
+      } else if (message.type === "extension_ui_response") {
+        clearTimeout(deadline);
+        process.stdout.write(JSON.stringify({
+          type: "response",
+          id: commandId,
+          command: "trigger",
+          success: true,
+          data: message,
+        }) + "\n");
+      }
+    }
+  });
+`;
+
+function dialogChildInvocation(dialog: Record<string, unknown>) {
+  return {
+    command: process.execPath,
+    args: ["-e", DIALOG_CHILD_SCRIPT],
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      DIALOG_REQUEST: JSON.stringify({ type: "extension_ui_request", ...dialog }),
+    },
+  };
+}
+
+describe("ownership status protocol", () => {
+  it("round-trips a bounded active subtree without transcript fields", () => {
+    const ownership = [{
+      path: [2],
+      parentPath: [],
+      id: 2,
+      depth: 3,
+      state: "running" as const,
+      name: "leaf",
+      model: "provider/model",
+      thinking: "medium" as const,
+    }];
+
+    const encoded = encodeOwnershipStatus(ownership);
+
+    expect(OWNERSHIP_STATUS_KEY).toBe("ompi:subagents:ownership-v1");
+    expect(parseOwnershipStatus(encoded)).toEqual(ownership);
+    expect(encoded).not.toContain("preview");
+    expect(encoded).not.toContain("finalText");
+    expect(() => parseOwnershipStatus(JSON.stringify({
+      version: 1,
+      ownership: [{ ...ownership[0], path: [2, 3, 4] }],
+    }))).toThrow("invalid");
+  });
+});
+
+describe("standard dialog relay", () => {
+  it("uses only the user UI and preserves method-appropriate responses", async () => {
+    const calls: unknown[] = [];
+    const ui = {
+      select: async (title: string, options: string[], settings: unknown) => {
+        calls.push({ method: "select", title, options, settings });
+        return "Allow";
+      },
+      confirm: async (title: string, message: string, settings: unknown) => {
+        calls.push({ method: "confirm", title, message, settings });
+        return false;
+      },
+      input: async (title: string, placeholder: string, settings: unknown) => {
+        calls.push({ method: "input", title, placeholder, settings });
+        return "typed";
+      },
+      editor: async (title: string, prefill: string) => {
+        calls.push({ method: "editor", title, prefill });
+        return "edited";
+      },
+    } as unknown as ExtensionUIContext;
+    const signal = new AbortController().signal;
+
+    await expect(relayStandardDialog(ui, {
+      id: "1",
+      method: "select",
+      title: "Choose",
+      options: ["Allow", "Block"],
+    }, signal)).resolves.toEqual({ value: "Allow" });
+    await expect(relayStandardDialog(ui, {
+      id: "2",
+      method: "confirm",
+      title: "Continue",
+      message: "Proceed?",
+    }, signal)).resolves.toEqual({ confirmed: false });
+    await expect(relayStandardDialog(ui, {
+      id: "3",
+      method: "input",
+      title: "Value",
+      placeholder: "type",
+    }, signal)).resolves.toEqual({ value: "typed" });
+    await expect(relayStandardDialog(ui, {
+      id: "4",
+      method: "editor",
+      title: "Edit",
+      prefill: "before",
+    }, signal)).resolves.toEqual({ value: "edited" });
+
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toMatchObject({
+      method: "select",
+      settings: { timeout: 30_000, signal },
+    });
+    expect(calls[1]).toMatchObject({ method: "confirm" });
+    expect(calls[2]).toMatchObject({ method: "input" });
+  });
+
+  it("fails closed when the user UI does not settle before the relay deadline", async () => {
+    const ui = {
+      confirm: async () => new Promise<boolean>(() => undefined),
+    } as unknown as ExtensionUIContext;
+    const relaying = relayStandardDialog(ui, {
+      id: "slow",
+      method: "confirm",
+      title: "Continue?",
+      message: "No response",
+      timeout: 5,
+    }, new AbortController().signal);
+    const observed = await Promise.race([
+      relaying,
+      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 25)),
+    ]);
+
+    expect(observed).toEqual({ cancelled: true });
+  });
+
+  it("keeps TUI-only custom components outside the standard relay protocol", () => {
+    expect(STANDARD_DIALOG_METHODS).toEqual(["select", "confirm", "input", "editor"]);
+    expect(() => parseStandardDialogRequest({
+      type: "extension_ui_request",
+      id: "custom-1",
+      method: "custom",
+      title: "Unsupported",
+    })).toThrow("invalid");
+  });
+});
+
+describe("RpcSubprocess dialog transport", () => {
+  it("correlates a standard child dialog with the relay response", async () => {
+    const requests: unknown[] = [];
+    const child = new RpcSubprocess(dialogChildInvocation({
+      id: "child-dialog-7",
+      method: "select",
+      title: "Allow?",
+      options: ["Allow", "Block"],
+    }), {
+      onDialog: async (request) => {
+        requests.push(request);
+        return { value: "Allow" };
+      },
+    });
+
+    await expect(child.request({ type: "trigger" })).resolves.toEqual({
+      type: "extension_ui_response",
+      id: "child-dialog-7",
+      value: "Allow",
+    });
+    expect(requests).toEqual([{
+      id: "child-dialog-7",
+      method: "select",
+      title: "Allow?",
+      options: ["Allow", "Block"],
+    }]);
+    await child.close();
+  });
+
+  it("fails a standard dialog closed immediately when no relay is available", async () => {
+    const child = new RpcSubprocess(dialogChildInvocation({
+      id: "child-dialog-8",
+      method: "confirm",
+      title: "Continue?",
+      message: "This needs a user decision.",
+    }));
+
+    await expect(child.request({ type: "trigger" })).resolves.toEqual({
+      type: "extension_ui_response",
+      id: "child-dialog-8",
+      cancelled: true,
+    });
+    await child.close();
+  });
+
+  it("cancels and settles a pending dialog before process cleanup", async () => {
+    let relayStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      relayStarted = resolve;
+    });
+    let aborted = false;
+    const child = new RpcSubprocess(dialogChildInvocation({
+      id: "child-dialog-9",
+      method: "input",
+      title: "Value",
+    }), {
+      onDialog: async (_request, signal) => {
+        relayStarted();
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            resolve();
+          }, { once: true });
+        });
+        return { value: "too late" };
+      },
+    });
+
+    const requesting = child.request({ type: "trigger" });
+    await started;
+    const closing = child.close();
+    await expect(requesting).resolves.toEqual({
+      type: "extension_ui_response",
+      id: "child-dialog-9",
+      cancelled: true,
+    });
+    await closing;
+    expect(aborted).toBe(true);
+  });
+});
+
+describe("RpcSubprocess ownership transport", () => {
+  it("intercepts a strict JSONL ownership frame and forwards only validated status", async () => {
+    const ownership = [{
+      path: [2],
+      parentPath: [],
+      id: 2,
+      depth: 3,
+      state: "running" as const,
+      name: "leaf\u2028runtime",
+      model: "provider/model",
+      thinking: "medium" as const,
+    }];
+    const status = JSON.stringify({ version: 1, ownership });
+    const script = String.raw`
+      process.stdout.write(JSON.stringify({
+        type: "extension_ui_request",
+        id: "status-1",
+        method: "setStatus",
+        statusKey: process.env.STATUS_KEY,
+        statusText: process.env.STATUS_TEXT,
+      }) + "\n");
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const command = JSON.parse(buffer.slice(0, newline));
+        process.stdout.write(JSON.stringify({
+          type: "response",
+          id: command.id,
+          command: command.type,
+          success: true,
+          data: "pong",
+        }) + "\n");
+      });
+    `;
+    const child = new RpcSubprocess({
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        STATUS_KEY: OWNERSHIP_STATUS_KEY,
+        STATUS_TEXT: status,
+      },
+    });
+    const events: unknown[] = [];
+    child.onEvent((event) => events.push(event));
+
+    await expect(child.request({ type: "ping" })).resolves.toBe("pong");
+    await vi.waitFor(() => expect(events).toEqual([{
+      type: "subagent_ownership",
+      ownership,
+    }]));
+    await child.close();
+  });
+});
 
 describe("buildChildInvocation", () => {
   it("creates a clean Pi launch with exact tools, required providers, and normal resource discovery", () => {
