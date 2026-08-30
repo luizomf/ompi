@@ -2,6 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { fileURLToPath } from "node:url";
+import {
+  CAPABILITY_PROBE_STATUS_KEY,
+  parseCapabilityProbe,
+  type CapabilitySnapshot,
+} from "./capabilities.ts";
 import type { LaunchSpec, RpcChild, RpcEvent } from "./controller.ts";
 
 interface RpcResponse {
@@ -18,11 +24,7 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
-const WORKER_SYSTEM_PROMPT = [
-  "You are a worker subagent in a conversation orchestrated by a parent agent.",
-  "Complete the assigned task yourself and report the result to the parent.",
-  "Do not spawn or delegate to other agents, Pi processes, or tmux workers, including through shell commands or skills.",
-].join(" ");
+const CAPABILITY_PROBE_PATH = fileURLToPath(new URL("./capability-probe.ts", import.meta.url));
 
 export interface ChildInvocation {
   command: string;
@@ -31,19 +33,21 @@ export interface ChildInvocation {
   env: NodeJS.ProcessEnv;
 }
 
-export function buildChildInvocation(spec: LaunchSpec, userSkillsDir: string): ChildInvocation {
-  const args = [
-    "--mode", "rpc",
-    "--no-extensions",
-    "--no-skills",
-    "--skill", userSkillsDir,
-    "--append-system-prompt", WORKER_SYSTEM_PROMPT,
+export function buildChildInvocation(spec: LaunchSpec): ChildInvocation {
+  const args = ["--mode", "rpc", "--no-extensions"];
+  for (const extensionPath of spec.capabilities.extensionPaths) {
+    args.push("--extension", extensionPath);
+  }
+  args.push(
+    "--extension", CAPABILITY_PROBE_PATH,
     "--model", spec.model,
     "--thinking", spec.thinking,
-  ];
+  );
   if (spec.session) args.push("--session", spec.session);
   if (spec.name && !spec.session) args.push("--name", spec.name);
-  if (spec.tools !== undefined) args.push("--tools", spec.tools.join(","));
+  const tools = spec.capabilities.tools.map((tool) => tool.name);
+  if (tools.length > 0) args.push("--tools", tools.join(","));
+  else args.push("--no-tools");
 
   const currentScript = process.argv[1];
   const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
@@ -71,11 +75,19 @@ export class RpcSubprocess implements RpcChild {
   private exited = false;
   private exitPromise: Promise<void>;
   private resolveExit!: () => void;
+  private readonly capabilitiesPromise: Promise<CapabilitySnapshot>;
+  private resolveCapabilities!: (snapshot: CapabilitySnapshot) => void;
+  private rejectCapabilities!: (error: Error) => void;
 
   constructor(invocation: ChildInvocation) {
     this.exitPromise = new Promise((resolve) => {
       this.resolveExit = resolve;
     });
+    this.capabilitiesPromise = new Promise((resolve, reject) => {
+      this.resolveCapabilities = resolve;
+      this.rejectCapabilities = reject;
+    });
+    void this.capabilitiesPromise.catch(() => undefined);
     this.process = spawn(invocation.command, invocation.args, {
       cwd: invocation.cwd,
       env: invocation.env,
@@ -96,6 +108,10 @@ export class RpcSubprocess implements RpcChild {
     this.process.stdin.on("error", (error) => {
       if (!this.exited) this.rejectPending(error);
     });
+  }
+
+  getCapabilities(): Promise<CapabilitySnapshot> {
+    return this.capabilitiesPromise;
   }
 
   request(command: Record<string, unknown>): Promise<unknown> {
@@ -172,6 +188,22 @@ export class RpcSubprocess implements RpcChild {
     } catch {
       return;
     }
+    if (
+      message.type === "extension_ui_request"
+      && "method" in message
+      && message.method === "setStatus"
+      && "statusKey" in message
+      && message.statusKey === CAPABILITY_PROBE_STATUS_KEY
+    ) {
+      try {
+        this.resolveCapabilities(parseCapabilityProbe(
+          "statusText" in message ? message.statusText : undefined,
+        ));
+      } catch (error) {
+        this.rejectCapabilities(error instanceof Error ? error : new Error(String(error)));
+      }
+      return;
+    }
     if (message.type === "response" && "id" in message && message.id) {
       const pending = this.pending.get(message.id);
       if (!pending) return;
@@ -187,7 +219,9 @@ export class RpcSubprocess implements RpcChild {
   private handleExit(error?: Error): void {
     if (this.exited) return;
     this.exited = true;
-    this.rejectPending(error ?? new Error("Child RPC process exited."));
+    const exitError = error ?? new Error("Child RPC process exited.");
+    this.rejectCapabilities(exitError);
+    this.rejectPending(exitError);
     this.resolveExit();
     for (const listener of this.exitListeners) listener(error);
   }

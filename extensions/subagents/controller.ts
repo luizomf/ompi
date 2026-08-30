@@ -1,3 +1,9 @@
+import {
+  assertCapabilityMatch,
+  cloneCapabilities,
+  type CapabilitySnapshot,
+} from "./capabilities.ts";
+
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type TerminalOutcome = "completed" | "failed" | "interrupted";
 export type SubagentState = "handshaking" | "running" | "steering" | "interrupting" | "finalizing" | TerminalOutcome;
@@ -6,7 +12,7 @@ export interface LaunchSpec {
   cwd: string;
   model: string;
   thinking: ThinkingLevel;
-  tools?: string[];
+  capabilities: CapabilitySnapshot;
   name?: string;
   session?: string;
 }
@@ -20,6 +26,7 @@ export interface RpcEvent {
 
 export interface RpcChild {
   request(command: Record<string, unknown>): Promise<unknown>;
+  getCapabilities(): Promise<CapabilitySnapshot>;
   onEvent(listener: (event: RpcEvent) => void): () => void;
   onExit(listener: (error?: Error) => void): () => void;
   close(): Promise<void>;
@@ -34,7 +41,7 @@ export interface ContinueInput {
   prompt: string;
   model: string;
   thinking: ThinkingLevel;
-  tools?: string[];
+  capabilities: CapabilitySnapshot;
 }
 
 export interface SubagentView {
@@ -63,6 +70,7 @@ export interface Pong {
 }
 
 interface RecordState extends SubagentView {
+  capabilities: CapabilitySnapshot;
   child?: RpcChild;
   accepted: boolean;
   finalizing: boolean;
@@ -112,9 +120,9 @@ export class SubagentController {
   }
 
   list(): SubagentView[] {
-    return [...this.records.values()].map(({ child: _child, accepted: _accepted, finalizing: _finalizing, ponged: _ponged, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, directResolve: _directResolve, ...view }) => ({
+    return [...this.records.values()].map(({ capabilities, child: _child, accepted: _accepted, finalizing: _finalizing, ponged: _ponged, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, directResolve: _directResolve, ...view }) => ({
       ...view,
-      tools: view.tools ? [...view.tools] : undefined,
+      tools: capabilities.tools.map((tool) => tool.name),
     }));
   }
 
@@ -194,12 +202,12 @@ export class SubagentController {
       error: record.error,
       model: record.model,
       thinking: record.thinking,
-      tools: record.tools ? [...record.tools] : undefined,
+      capabilities: cloneCapabilities(record.capabilities),
       directResolve: record.directResolve,
     };
     record.model = input.model;
     record.thinking = input.thinking;
-    if (input.tools !== undefined) record.tools = [...input.tools];
+    record.capabilities = cloneCapabilities(input.capabilities);
     record.state = "handshaking";
     record.active = true;
     record.startedAt = this.options.now();
@@ -224,7 +232,7 @@ export class SubagentController {
       record.error = previous.error;
       record.model = previous.model;
       record.thinking = previous.thinking;
-      record.tools = previous.tools;
+      record.capabilities = previous.capabilities;
       record.directResolve = previous.directResolve;
       record.active = false;
       record.startedAt = undefined;
@@ -285,7 +293,7 @@ export class SubagentController {
       cwd: record.cwd,
       model: record.model,
       thinking: record.thinking,
-      tools: record.tools ? [...record.tools] : undefined,
+      capabilities: cloneCapabilities(record.capabilities),
       name: record.name,
       session: record.sessionRef,
     };
@@ -297,6 +305,7 @@ export class SubagentController {
         record.child = child;
         child.onEvent((event) => this.handleEvent(record, event));
         child.onExit((error) => this.handleExit(record, error));
+        assertCapabilityMatch(spec.capabilities, await child.getCapabilities());
         const state = stateData(await child.request({ type: "get_state" }));
         if (!state.sessionFile) throw new Error("Child did not provide a native session reference.");
         record.sessionRef = state.sessionFile;
@@ -317,7 +326,7 @@ export class SubagentController {
       } catch {
         // Preserve the original handshake error.
       }
-      throw new Error(`Subagent prompt was not accepted: ${errorMessage(error)}`);
+      throw new Error(`Subagent dispatch was not accepted: ${errorMessage(error)}`);
     }
   }
 
@@ -419,7 +428,7 @@ export class SubagentController {
       cwd: input.cwd,
       model: input.model,
       thinking: input.thinking,
-      tools: input.tools ? [...input.tools] : undefined,
+      capabilities: cloneCapabilities(input.capabilities),
       accepted: false,
       finalizing: false,
       ponged: false,

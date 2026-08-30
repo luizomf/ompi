@@ -3,8 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.hoisted(() => ({
   invocations: [] as Array<{ args: string[] }>,
+  capabilityReports: [] as Array<{
+    tools: Array<{ name: string; provider: string }>;
+    extensionPaths: string[];
+  }>,
   children: [] as Array<{
     closed: boolean;
+    requests: Array<Record<string, unknown>>;
     emit(event: { type: string }): void;
   }>,
 }));
@@ -15,8 +20,13 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
     ...actual,
     RpcSubprocess: class {
       closed = false;
+      requests: Array<Record<string, unknown>> = [];
       private listeners: Array<(event: { type: string }) => void> = [];
       private readonly sessionFile: string;
+      private readonly capabilities: {
+        tools: Array<{ name: string; provider: string }>;
+        extensionPaths: string[];
+      };
 
       constructor(invocation: { args: string[] }) {
         rpc.invocations.push({ args: invocation.args });
@@ -24,13 +34,24 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
         this.sessionFile = sessionIndex >= 0
           ? invocation.args[sessionIndex + 1]
           : `/sessions/${rpc.children.length + 1}.jsonl`;
+        const toolsIndex = invocation.args.indexOf("--tools");
+        const names = toolsIndex >= 0 ? invocation.args[toolsIndex + 1].split(",") : [];
+        this.capabilities = rpc.capabilityReports.shift() ?? {
+          tools: names.map((name) => ({ name, provider: "builtin" })),
+          extensionPaths: [],
+        };
         rpc.children.push(this);
       }
 
       async request(command: Record<string, unknown>): Promise<unknown> {
+        this.requests.push(command);
         if (command.type === "get_state") return { sessionFile: this.sessionFile };
         if (command.type === "get_last_assistant_text") return { text: "done" };
         return undefined;
+      }
+
+      async getCapabilities() {
+        return this.capabilities;
       }
 
       onEvent(listener: (event: { type: string }) => void): () => void {
@@ -66,12 +87,26 @@ function setup() {
   const messages: unknown[] = [];
   const activityEvents: Array<{ channel: string; data: unknown }> = [];
   let thinking = "low";
+  let activeTools = ["read", "bash", "edit", "write"];
+  let configuredTools = ["read", "bash", "edit", "write", "grep", "find", "ls"].map((name) => ({
+    name,
+    description: `${name} description`,
+    parameters: {},
+    sourceInfo: {
+      source: "builtin",
+      path: `<builtin:${name}>`,
+      scope: "temporary",
+      origin: "top-level",
+    },
+  }));
   const pi = {
     registerTool: (tool: { name: string }) => tools.set(tool.name, tool),
     registerCommand: (name: string, command: unknown) => commands.set(name, command),
     registerMessageRenderer: () => undefined,
     on: () => undefined,
     getThinkingLevel: () => thinking,
+    getActiveTools: () => [...activeTools],
+    getAllTools: () => configuredTools.map((tool) => ({ ...tool })),
     sendMessage: (message: unknown) => messages.push(message),
     events: {
       emit: (channel: string, data: unknown) => activityEvents.push({ channel, data }),
@@ -93,6 +128,13 @@ function setup() {
     notifications,
     activityEvents,
     setThinking: (level: string) => { thinking = level; },
+    setCapabilities: (
+      active: string[],
+      configured: typeof configuredTools,
+    ) => {
+      activeTools = [...active];
+      configuredTools = configured.map((tool) => ({ ...tool }));
+    },
   };
 }
 
@@ -104,6 +146,7 @@ async function settle(index: number): Promise<void> {
 describe("subagent routing inheritance", () => {
   beforeEach(() => {
     rpc.invocations.length = 0;
+    rpc.capabilityReports.length = 0;
     rpc.children.length = 0;
   });
 
@@ -128,6 +171,168 @@ describe("subagent routing inheritance", () => {
       channel: "ompi:async-activity",
       data: { source: "subagents", active: 0 },
     });
+  });
+
+  it("inherits each then-active extension tool and provider on start and continuation", async () => {
+    const { tools, ctx, setCapabilities } = setup();
+    const builtins = ["read", "bash"].map((name) => ({
+      name,
+      description: `${name} description`,
+      parameters: {},
+      sourceInfo: {
+        source: "builtin",
+        path: `<builtin:${name}>`,
+        scope: "temporary",
+        origin: "top-level",
+      },
+    }));
+    const extensionTool = {
+      name: "browser_fetch",
+      description: "Fetch a rendered page",
+      parameters: {},
+      sourceInfo: {
+        source: "cli",
+        path: "/extensions/browser-fetch/index.ts",
+        scope: "temporary",
+        origin: "top-level",
+      },
+    };
+    setCapabilities(["read", "browser_fetch"], [...builtins, extensionTool]);
+    rpc.capabilityReports.push({
+      tools: [
+        { name: "read", provider: "builtin" },
+        { name: "browser_fetch", provider: "/extensions/browser-fetch/index.ts" },
+      ],
+      extensionPaths: ["/extensions/browser-fetch/index.ts"],
+    });
+
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "one", name: "reviewer" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(valueAfter(rpc.invocations[0].args, "--tools")).toBe("read,browser_fetch");
+    expect(valueAfter(rpc.invocations[0].args, "--extension")).toBe(
+      "/extensions/browser-fetch/index.ts",
+    );
+    await settle(0);
+
+    setCapabilities(["bash", "browser_fetch"], [...builtins, extensionTool]);
+    rpc.capabilityReports.push({
+      tools: [
+        { name: "bash", provider: "builtin" },
+        { name: "browser_fetch", provider: "/extensions/browser-fetch/index.ts" },
+      ],
+      extensionPaths: ["/extensions/browser-fetch/index.ts"],
+    });
+    await tools.get("subagent_continue").execute(
+      "continue",
+      { id: 1, prompt: "two" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(valueAfter(rpc.invocations[1].args, "--tools")).toBe("bash,browser_fetch");
+    expect(valueAfter(rpc.invocations[1].args, "--extension")).toBe(
+      "/extensions/browser-fetch/index.ts",
+    );
+  });
+
+  it("treats tools as monotonic restrictions and gives names no hidden capability effect", async () => {
+    const { tools, ctx, setCapabilities } = setup();
+    const configured = ["read", "write"].map((name) => ({
+      name,
+      description: `${name} description`,
+      parameters: {},
+      sourceInfo: {
+        source: "builtin",
+        path: `<builtin:${name}>`,
+        scope: "temporary",
+        origin: "top-level",
+      },
+    }));
+    setCapabilities(["read"], configured);
+
+    await tools.get("subagent_start").execute(
+      "named",
+      { prompt: "one", name: "writer" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(valueAfter(rpc.invocations[0].args, "--tools")).toBe("read");
+
+    await expect(tools.get("subagent_start").execute(
+      "escalate",
+      { prompt: "two", tools: ["write"] },
+      undefined,
+      undefined,
+      ctx,
+    )).rejects.toThrow(
+      "Restrictions can only keep tools active in the parent. Unavailable: write.",
+    );
+    expect(rpc.invocations).toHaveLength(1);
+
+    await tools.get("subagent_start").execute(
+      "empty",
+      { prompt: "three", tools: [] },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(rpc.invocations[1].args).toContain("--no-tools");
+  });
+
+  it("rejects start and continuation capability mismatches before prompt acceptance", async () => {
+    const { tools, ctx } = setup();
+    rpc.capabilityReports.push({
+      tools: [{ name: "read", provider: "builtin" }],
+      extensionPaths: [],
+    });
+
+    await expect(tools.get("subagent_start").execute(
+      "start",
+      { prompt: "not accepted" },
+      undefined,
+      undefined,
+      ctx,
+    )).rejects.toThrow("bash (expected builtin, missing)");
+    expect(rpc.children[0].requests).not.toContainEqual(
+      expect.objectContaining({ type: "prompt" }),
+    );
+    expect(rpc.children[0].closed).toBe(true);
+
+    rpc.capabilityReports.push({
+      tools: ["read", "bash", "edit", "write"].map((name) => ({ name, provider: "builtin" })),
+      extensionPaths: [],
+    });
+    await tools.get("subagent_start").execute(
+      "accepted",
+      { prompt: "one" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await settle(1);
+
+    rpc.capabilityReports.push({
+      tools: [{ name: "read", provider: "builtin" }],
+      extensionPaths: [],
+    });
+    await expect(tools.get("subagent_continue").execute(
+      "continue",
+      { id: 2, prompt: "not accepted either" },
+      undefined,
+      undefined,
+      ctx,
+    )).rejects.toThrow("bash (expected builtin, missing)");
+    expect(rpc.children[2].requests).not.toContainEqual(
+      expect.objectContaining({ type: "prompt" }),
+    );
+    expect(rpc.children[2].closed).toBe(true);
   });
 
   it("exposes opt-in routing schemas and default-routing guidance", () => {

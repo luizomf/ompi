@@ -12,9 +12,17 @@ _Avoid_: Product, service, platform, mechanical controller
 An independent Pi agent conversation started by the orchestrator agent and owned by its current session. Its conversation persists across turns, while its process exists only during an active turn.
 _Avoid_: Worker service, task, job
 
+**Inherited runtime baseline**:
+The orchestrator's active operating environment projected into a subagent by default: active Pi and extension tools, the extension providers required to reproduce those tools, normal skill discovery, applicable repository instructions, working directory, routing defaults, and environment. Inheritance is launch mechanics rather than a model-visible negotiation tool. Explicit caller restrictions are opt-in; omission means inherit the baseline.
+_Avoid_: Conversation fork, ambient extension discovery, role profile, inheritance prompt
+
+**Capability snapshot**:
+The exact set of tools active in the orchestrator when a start or continuation dispatch is accepted. A subagent inherits this snapshot by default, including extension tools, without gaining inactive or undiscovered tools. The caller may explicitly narrow the snapshot; assigning a writer, reviewer, or other name does not silently change it. Required provider loading and validation happen mechanically before prompt acceptance.
+_Avoid_: Installed tool catalog, role profile, automatic capability discovery
+
 **Clean start**:
-A new subagent conversation that receives its explicit prompt but none of the orchestrator conversation history.
-_Avoid_: Context fork, implicit inheritance
+A new subagent conversation that receives the inherited runtime baseline and its explicit prompt but none of the orchestrator transcript, compaction summary, hidden continuation state, or prior messages. A continuation preserves only that subagent's native Pi conversation; runtime inheritance never implies conversation sharing.
+_Avoid_: Context fork, implicit transcript inheritance, automatic conversation sharing
 
 **Subagent extension**:
 The mechanical Pi extension that connects the orchestrator agent to subagents and owns their process lifecycle, message transport, and status for the current session. It does not decide or interpret delegated work.
