@@ -78,10 +78,19 @@ const FRAME_CHILD_SCRIPT = String.raw`
       buffer = buffer.slice(newline + 1);
       if (command.type === "emit_frame") {
         frameCommand = command;
-        const text = "x".repeat(Number(process.env.FRAME_TEXT_BYTES));
+        const totalBytes = Number(process.env.FRAME_TEXT_BYTES);
+        const imageCount = 6;
+        const imageBytes = Math.ceil(totalBytes / imageCount);
         process.stdout.write(JSON.stringify({
           type: "agent_end",
-          messages: [{ role: "assistant", content: [{ type: "text", text }] }],
+          messages: Array.from({ length: imageCount }, (_, index) => ({
+            role: "toolResult",
+            toolCallId: "read-image-" + index,
+            toolName: "read",
+            content: [{ type: "image", data: "A".repeat(imageBytes), mimeType: "image/png" }],
+            isError: false,
+            timestamp: index,
+          })),
         }) + "\n");
         continue;
       }
@@ -419,7 +428,7 @@ describe("RpcSubprocess ownership transport", () => {
   });
 });
 
-describe("RpcSubprocess frame bounds", () => {
+describe("RpcSubprocess frame transport", () => {
   it("accepts a valid model-sized frame and settles following responses", async () => {
     const child = new RpcSubprocess(frameChildInvocation(1024 * 1024));
     const followingResponse = new Promise<unknown>((resolve, reject) => {
@@ -437,16 +446,20 @@ describe("RpcSubprocess frame bounds", () => {
     await child.close();
   });
 
-  it("terminates frames above the 8 MiB safety bound", async () => {
-    const child = new RpcSubprocess(frameChildInvocation(8 * 1024 * 1024));
-    const exited = new Promise<Error | undefined>((resolve) => child.onExit(resolve));
+  it("accepts an image-bearing frame above 8 MiB and settles following responses", async () => {
+    const child = new RpcSubprocess(frameChildInvocation(10 * 1024 * 1024));
+    const followingResponse = new Promise<unknown>((resolve, reject) => {
+      child.onEvent((event) => {
+        if (event.type === "agent_end") {
+          void child.request({ type: "after_frame" }).then(resolve, reject);
+        }
+      });
+      child.onExit((error) => reject(error ?? new Error("Child exited before the image frame settled.")));
+    });
 
-    const request = expect(child.request({ type: "emit_frame" })).rejects.toThrow(
-      "Child RPC stdout frame exceeded 8388608 bytes.",
-    );
-    const error = await exited;
-    expect(error?.message).toContain("Child RPC stdout frame exceeded 8388608 bytes.");
-    await request;
+    const frameResponse = child.request({ type: "emit_frame" });
+    await expect(followingResponse).resolves.toBe("pong");
+    await expect(frameResponse).resolves.toBe("frame accepted");
     await child.close();
   });
 });

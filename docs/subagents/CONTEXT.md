@@ -53,7 +53,7 @@ A new subagent conversation that receives the inherited runtime baseline and its
 _Avoid_: Context fork, implicit transcript inheritance, automatic conversation sharing
 
 **Subagent extension**:
-The mechanical Pi extension that connects each parent agent to direct subagents and owns their managed process lifecycle, message transport, local limits, and status for the current session. It does not decide or interpret delegated work.
+The mechanical Pi extension that connects each parent agent to direct subagents and owns their managed process lifecycle, message transport, local limits, and status for the current session. Its child transport follows Pi's strict JSONL record semantics and does not terminate valid records at a smaller extension-specific byte cap; bounded terminal results and status metadata remain separate parent-visible limits. It does not decide or interpret delegated work.
 _Avoid_: Agent, daemon, orchestration platform, scheduler, workflow engine
 
 **Steering**:

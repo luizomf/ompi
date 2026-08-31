@@ -382,7 +382,9 @@ the default: a call returns after child RPC prompt acceptance and later queues
 exactly one completion, failure, or interruption pong. Set `delivery` to
 `"direct"` explicitly when dependent work must receive the bounded terminal
 result through the pending tool call; direct delivery emits no later pong.
-Independent direct siblings issued together still run concurrently.
+Independent direct siblings issued together still run concurrently. Child
+transport follows Pi's strict JSONL framing without a smaller ompi-specific
+record cap; parent-visible terminal text remains bounded separately.
 
 The normal widget and footer remain compact and show only direct current
 activity. They never stream child transcripts into the parent conversation or
