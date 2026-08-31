@@ -85,7 +85,7 @@ One parent agent plus every active descendant runtime reachable through that par
 _Avoid_: Global agent registry, session inventory, machine process tree, globally actionable runtime ID
 
 **Live status**:
-A compact Pi widget near the editor that shows only direct current subagent activity without adding streaming updates to the parent conversation. The default stays non-recursive, and a minimal footer count remains visible while a direct subagent turn is active. The same direct active count is published through the shared extension event bus so session-level status integrations do not mistake a settled parent turn for an idle session. `subagent_status` and `/subtree` provide a user-requested, active-only ownership subtree; status propagation contains bounded runtime metadata, never prompts, transcript text, final text, unrelated sessions, or a permanent dashboard.
+A compact Pi widget near the editor that shows only direct current subagent activity without adding streaming updates to the parent conversation. The widget stays non-recursive, while the compact footer summarizes the active ownership subtree as `direct: N • nested: N • total: N`. The shared extension event bus continues to publish the direct active count, not the footer total, so session-level status integrations do not mistake a settled parent turn for an idle session. `subagent_status` and `/subtree` provide a user-requested, active-only ownership subtree; status propagation contains bounded runtime metadata, never prompts, transcript text, final text, unrelated sessions, or a permanent dashboard.
 _Avoid_: Transcript message, progress polling, full output, recursive default widget
 
 **Headless UI relay**:
