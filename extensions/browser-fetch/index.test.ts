@@ -94,6 +94,10 @@ describe("browser_fetch background delivery", () => {
     const guidance = tool.promptGuidelines.join(" ");
     expect(guidance).toContain("never wait");
     expect(guidance).toMatch(/independently useful.*same turn.*concurrently.*do not wait/s);
+    expect(guidance).toMatch(/direct HTTP\/curl.*browser_fetch.*original URL.*codex_search.*quick.*markdown\.new.*r\.jina\.ai/is);
+    expect(guidance).toMatch(/do not restart.*transformed fallback URL/i);
+    expect(guidance).toMatch(/third-party.*credentials.*signed.*confidential/i);
+    expect(guidance).toMatch(/every safe stage fails.*could not access or verify.*must not invent/is);
 
     const { browser, close } = fakeBrowser();
     launch.resolve(browser);

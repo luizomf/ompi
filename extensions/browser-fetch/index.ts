@@ -208,14 +208,16 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(background.wrapTool({
 		name: "browser_fetch",
 		label: "Browser Fetch",
-		description: `Fetch a public HTTP or HTTPS page with a fresh headless Chromium profile and return its rendered readable text and links. In print mode, the tool waits and returns the result directly. In other modes, it runs asynchronously: the call returns immediately after starting bounded background work and completion arrives later as one background result. Use it when curl cannot read a page or JavaScript rendering is required. It does not bypass logins, CAPTCHAs, or anti-bot checks, and it rejects non-public network destinations across navigation and page requests. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}.`,
-		promptSnippet: "Fetch a rendered page with headless Chromium",
+		description: `Fetch a public HTTP or HTTPS page with a fresh headless Chromium profile and return its rendered readable text and links. In print mode, the tool waits and returns the result directly. In other modes, it runs asynchronously: the call returns immediately after starting bounded background work and completion arrives later as one background result. Use it when curl cannot read a page or JavaScript rendering is required. It does not bypass logins, CAPTCHAs, or anti-bot checks; agents should continue the available exact-URL fallback chain rather than infer page contents. It rejects non-public network destinations across navigation and page requests. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}.`,
+		promptSnippet: "Fetch a rendered page and continue exact-URL fallbacks when blocked",
 		promptGuidelines: [
-			"Use browser_fetch when curl fails, returns blocked or nearly empty HTML, or the requested page requires JavaScript rendering.",
+			"For the contents of a specific public URL, use this strict, non-looping fallback sequence, advancing after a transport error, CAPTCHA, anti-bot or login block, empty or unreadable output, or inability to establish exact-target access: (1) ordinary direct HTTP/curl on the original URL; (2) browser_fetch on the original URL; (3) codex_search with effort quick and an explicit instruction to fetch and extract the exact URL rather than merely search for related pages, and to disclose if exact-URL access failed; (4) browser_fetch on https://markdown.new/<absolute-target-URL>; (5) browser_fetch on https://r.jina.ai/<absolute-target-URL>.",
+			"Do not restart the chain for a transformed fallback URL at markdown.new or r.jina.ai, and do not repeat a completed stage.",
+			"Treat markdown.new and r.jina.ai as third-party disclosure boundaries. Do not submit target URLs containing credentials, signed or private query parameters, or confidential identifiers to them without explicit user authorization.",
+			"A model-produced answer, snippets, or related pages do not prove access to the supplied URL. If every safe stage fails, explicitly state that you could not access or verify the URL and must not invent page-specific facts or imply that you read it.",
 			"When multiple browser_fetch calls or other research calls are independently useful, start them in the same turn so Pi can run them concurrently; outside print mode, do not wait for one result before starting another.",
 			"In print mode, browser_fetch returns the rendered result directly; inspect it before continuing dependent work.",
 			"Outside print mode, after browser_fetch starts background work, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so the later background result can be delivered.",
-			"If browser_fetch reports a login, CAPTCHA, anti-bot block, or unreadable page, mark the source unverified instead of guessing.",
 		],
 		parameters: browserFetchParameters,
 

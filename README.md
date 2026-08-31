@@ -69,6 +69,23 @@ validated IP so Chromium cannot re-resolve it. The proxy
 preserves the original hostname and TLS verification. Service workers are
 disabled so they cannot bypass this network boundary.
 
+For a specific public URL, the agent-facing guidance defines one strict fallback
+chain: direct HTTP/curl on the original URL, `browser_fetch` on the original URL,
+`codex_search` with the `quick` profile and an explicit exact-URL extraction
+request, then `browser_fetch` through `https://markdown.new/<absolute-URL>` and
+finally `https://r.jina.ai/<absolute-URL>`. Transport errors, blocked or login
+pages, unreadable output, and failure to establish exact-URL access advance the
+chain. Transformed fallback URLs never restart it. Generated prose, snippets,
+and related pages are not evidence that the supplied URL was read; if every safe
+stage fails, the agent reports that it could not access or verify the page rather
+than inventing page-specific facts.
+
+`markdown.new` and `r.jina.ai` are third-party hosted services that receive the
+submitted absolute URL. The guidance prohibits sending them credentials,
+signed or private query parameters, or confidential identifiers without
+explicit user authorization. Neither service is an ompi component or a trusted
+extension of the local public-network boundary.
+
 The extension keeps its `playwright-core` dependency local. Install it after a
 fresh checkout with:
 
@@ -79,10 +96,13 @@ npm ci --prefix extensions/browser-fetch
 ### Codex research and image generation
 
 The extension in `extensions/codex-search/` provides one narrow `codex_search`
-tool for difficult web research and image generation. Research remains useful
-when normal browser fetching is blocked or insufficient, or when an independent
-second research path is useful. Image generation is an explicit mode of the same
-tool, not a second backend. Enable it explicitly for one Pi process:
+tool for web search, exact-URL fetching, scraping and extraction, and image
+generation. It is the model-backed stage after direct HTTP and `browser_fetch`
+when retrieving a specific URL. Exact-URL work uses the default `quick` profile
+and explicitly requires Codex to say when it could not access the supplied URL;
+the `research` profile remains for independently complex source comparison or
+synthesis. Image generation is an explicit mode of the same tool, not a second
+backend. Enable it explicitly for one Pi process:
 
 ```sh
 pi --no-extensions --extension ./extensions/codex-search/index.ts

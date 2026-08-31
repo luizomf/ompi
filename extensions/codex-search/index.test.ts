@@ -59,6 +59,7 @@ describe("codex_search background delivery", () => {
     expect(accepted.content[0].text).toContain("Background operation #1");
     expect(messages).toEqual([]);
     expect(tool.description).toContain("asynchronously");
+    expect(tool.description).toMatch(/search, fetch, scrape, and extract/i);
     expect(tool.parameters.properties.effort.anyOf.map((item: { const: string }) => item.const)).toEqual([
       "quick",
       "research",
@@ -78,6 +79,10 @@ describe("codex_search background delivery", () => {
     const guidance = tool.promptGuidelines.join(" ");
     expect(guidance).toContain("never wait");
     expect(guidance).toMatch(/independently useful.*same turn.*concurrently.*do not wait/s);
+    expect(guidance).toMatch(/specific URL.*quick.*fetch and extract.*exact URL.*related pages/is);
+    expect(guidance).toMatch(/markdown\.new.*r\.jina\.ai/is);
+    expect(guidance).toMatch(/third-party.*credentials.*signed.*confidential/is);
+    expect(guidance).toMatch(/could not access or verify.*must not invent/is);
     expect(guidance).not.toMatch(/MUST inform the user/i);
 
     search.resolve({
