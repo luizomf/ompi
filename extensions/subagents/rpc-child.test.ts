@@ -65,6 +65,41 @@ function dialogChildInvocation(dialog: Record<string, unknown>) {
   };
 }
 
+const FRAME_CHILD_SCRIPT = String.raw`
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    const newline = buffer.indexOf("\n");
+    if (newline < 0) return;
+    const command = JSON.parse(buffer.slice(0, newline));
+    process.stdout.write(JSON.stringify({
+      type: "response",
+      id: command.id,
+      command: command.type,
+      success: true,
+      data: "pong",
+    }) + "\n");
+    const text = "x".repeat(Number(process.env.FRAME_TEXT_BYTES));
+    process.stdout.write(JSON.stringify({
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [{ type: "text", text }] }],
+    }) + "\n");
+  });
+`;
+
+function frameChildInvocation(frameTextBytes: number) {
+  return {
+    command: process.execPath,
+    args: ["-e", FRAME_CHILD_SCRIPT],
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      FRAME_TEXT_BYTES: String(frameTextBytes),
+    },
+  };
+}
+
 describe("ownership status protocol", () => {
   it("round-trips a bounded active subtree without transcript fields", () => {
     const ownership = [{
@@ -365,6 +400,32 @@ describe("RpcSubprocess ownership transport", () => {
       type: "subagent_ownership",
       ownership,
     }]));
+    await child.close();
+  });
+});
+
+describe("RpcSubprocess frame bounds", () => {
+  it("accepts valid protocol frames above the legacy 512 KiB limit", async () => {
+    const child = new RpcSubprocess(frameChildInvocation(1024 * 1024));
+    const observed = new Promise<"event" | "exit">((resolve) => {
+      child.onEvent((event) => {
+        if (event.type === "agent_end") resolve("event");
+      });
+      child.onExit(() => resolve("exit"));
+    });
+
+    await expect(child.request({ type: "ping" })).resolves.toBe("pong");
+    await expect(observed).resolves.toBe("event");
+    await child.close();
+  });
+
+  it("terminates frames above the 8 MiB safety bound", async () => {
+    const child = new RpcSubprocess(frameChildInvocation(8 * 1024 * 1024));
+    const exited = new Promise<Error | undefined>((resolve) => child.onExit(resolve));
+
+    await expect(child.request({ type: "ping" })).resolves.toBe("pong");
+    const error = await exited;
+    expect(error?.message).toContain("Child RPC stdout frame exceeded 8388608 bytes.");
     await child.close();
   });
 });

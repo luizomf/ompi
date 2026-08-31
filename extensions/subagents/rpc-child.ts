@@ -48,7 +48,8 @@ export interface RpcSubprocessOptions {
 }
 
 const CAPABILITY_PROBE_PATH = fileURLToPath(new URL("./capability-probe.ts", import.meta.url));
-const MAX_RPC_FRAME_BYTES = 512 * 1024;
+// Pi's agent_end frame carries the complete turn messages, so legitimate long turns need model-sized headroom.
+const MAX_RPC_FRAME_BYTES = 8 * 1024 * 1024;
 
 export interface ChildInvocation {
   command: string;
