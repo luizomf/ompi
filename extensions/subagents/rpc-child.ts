@@ -48,8 +48,6 @@ export interface RpcSubprocessOptions {
 }
 
 const CAPABILITY_PROBE_PATH = fileURLToPath(new URL("./capability-probe.ts", import.meta.url));
-// Pi's agent_end frame carries the complete turn messages, so legitimate long turns need model-sized headroom.
-const MAX_RPC_FRAME_BYTES = 8 * 1024 * 1024;
 
 export interface ChildInvocation {
   command: string;
@@ -204,32 +202,14 @@ export class RpcSubprocess implements RpcChild {
         if (newline < 0) break;
         let line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
-        if (Buffer.byteLength(line, "utf8") > MAX_RPC_FRAME_BYTES) {
-          this.rejectOversizedFrame();
-          buffer = "";
-          return;
-        }
         if (line.endsWith("\r")) line = line.slice(0, -1);
         this.handleLine(line);
-      }
-      if (Buffer.byteLength(buffer, "utf8") > MAX_RPC_FRAME_BYTES) {
-        this.rejectOversizedFrame();
-        buffer = "";
       }
     });
     this.process.stdout.on("end", () => {
       buffer += decoder.end();
-      if (Buffer.byteLength(buffer, "utf8") > MAX_RPC_FRAME_BYTES) {
-        this.rejectOversizedFrame();
-        return;
-      }
       if (buffer) this.handleLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
     });
-  }
-
-  private rejectOversizedFrame(): void {
-    this.stderr = `${this.stderr} Child RPC stdout frame exceeded ${MAX_RPC_FRAME_BYTES} bytes.`.slice(-8_000);
-    this.process.kill("SIGTERM");
   }
 
   private handleLine(line: string): void {
