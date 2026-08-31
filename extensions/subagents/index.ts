@@ -150,9 +150,14 @@ function boundedTerminalText(pong: TerminalResult): { text?: string; truncated: 
   return { text: pong.finalText.slice(0, TERMINAL_TEXT_LIMIT), truncated: true };
 }
 
-export function buildActiveUi(views: SubagentView[], now: number): { lines?: string[]; status?: string } {
+export function buildActiveUi(
+  views: SubagentView[],
+  now: number,
+  ownership: OwnershipRuntime[] = [],
+): { lines?: string[]; status?: string } {
   const active = views.filter((view) => view.active);
   if (active.length === 0) return {};
+  const nestedCount = ownership.filter((runtime) => runtime.path.length > 1).length;
   const lines = active.map((view) => {
     const elapsed = view.startedAt ? Math.max(0, Math.floor((now - view.startedAt) / 1_000)) : 0;
     const name = view.name ? ` ${oneLine(view.name, 20)}` : "";
@@ -161,7 +166,10 @@ export function buildActiveUi(views: SubagentView[], now: number): { lines?: str
     const preview = view.preview ? ` · ${oneLine(view.preview, 72)}` : "";
     return `#${view.id}${name} · ${view.state} · ${elapsed}s · ${model} · reasoning ${view.thinking}${tool}${preview}`;
   });
-  return { lines, status: `subagents: ${active.length}` };
+  return {
+    lines,
+    status: `direct: ${active.length} • nested: ${nestedCount} • total: ${active.length + nestedCount}`,
+  };
 }
 
 interface OwnershipStatusNode {
@@ -264,7 +272,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   const refreshUi = () => {
     const views = controller.list();
     const activeCount = views.filter((view) => view.active).length;
-    const presentation = buildActiveUi(views, Date.now());
+    const ownership = controller.activeSubtree();
+    const presentation = buildActiveUi(views, Date.now(), ownership);
     if (
       ui
       && (uiMode === "tui" || (lineage.depth === 1 && uiMode === "rpc"))
@@ -280,7 +289,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       );
     }
     if (ui && lineage.depth > 1 && uiMode === "rpc") {
-      const ownershipStatus = encodeOwnershipStatus(controller.activeSubtree());
+      const ownershipStatus = encodeOwnershipStatus(ownership);
       if (publishedOwnershipStatus !== ownershipStatus) {
         publishedOwnershipStatus = ownershipStatus;
         ui.setStatus(OWNERSHIP_STATUS_KEY, ownershipStatus);

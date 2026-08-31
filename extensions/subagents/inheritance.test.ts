@@ -256,12 +256,59 @@ describe("subagent routing inheritance", () => {
       ctx,
     );
 
-    expect(statuses.at(-1)).toEqual({ key: "subagents", text: "subagents: 1" });
+    expect(statuses.at(-1)).toEqual({
+      key: "subagents",
+      text: "direct: 1 • nested: 0 • total: 1",
+    });
     expect(widgets.at(-1)).toMatchObject({
       key: "subagents",
       lines: [expect.stringContaining("#1 worker · running")],
     });
     expect(statuses.some((status) => status.key === "ompi:subagents:ownership-v1")).toBe(false);
+  });
+
+  it("refreshes and clears root footer counts from nested ownership", async () => {
+    const { tools, ctx, startSession, statuses, widgets } = setup();
+    await startSession("rpc");
+    await tools.get("subagent_start").execute(
+      "start",
+      { prompt: "coordinate", name: "coordinator" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    rpc.children[0].emit({
+      type: "subagent_ownership",
+      ownership: [{
+        path: [7],
+        parentPath: [],
+        id: 7,
+        depth: 3,
+        state: "running",
+        name: "leaf",
+        model: "provider/leaf",
+        thinking: "medium",
+      }],
+    });
+
+    expect(statuses.findLast((status) => status.key === "subagents")).toEqual({
+      key: "subagents",
+      text: "direct: 1 • nested: 1 • total: 2",
+    });
+    expect(widgets.at(-1)).toMatchObject({
+      key: "subagents",
+      lines: [expect.stringContaining("#1 coordinator · running")],
+    });
+    expect(widgets.at(-1)?.lines?.join(" ")).not.toContain("leaf");
+
+    await settle(0);
+
+    expect(statuses.findLast((status) => status.key === "subagents")).toEqual({
+      key: "subagents",
+      text: undefined,
+    });
+    expect(widgets.at(-1)).toEqual({ key: "subagents", lines: undefined });
   });
 
   it("returns nested active state only when ownership status is requested", async () => {

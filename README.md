@@ -386,13 +386,15 @@ Independent direct siblings issued together still run concurrently. Child
 transport follows Pi's strict JSONL framing without a smaller ompi-specific
 record cap; parent-visible terminal text remains bounded separately.
 
-The normal widget and footer remain compact and show only direct current
-activity. They never stream child transcripts into the parent conversation or
-render a recursive dashboard. When a user asks to inspect nesting,
-`subagent_status` or `/subtree` returns the active ownership subtree relative to
-the invoking parent: `self`, depth, state, parent runtime, and owner-local
-numeric ID. A nested parent therefore sees itself and descendants, not its
-parent, siblings, idle conversations, unrelated controllers, or other sessions.
+The normal widget remains compact and shows only direct current activity. The
+compact footer summarizes the active ownership subtree as `direct: N • nested:
+N • total: N`; it does not add recursive widget lines. Neither surface streams
+child transcripts into the parent conversation or renders a recursive
+dashboard. When a user asks to inspect nesting, `subagent_status` or `/subtree`
+returns the active ownership subtree relative to the invoking parent: `self`,
+depth, state, parent runtime, and owner-local numeric ID. A nested parent
+therefore sees itself and descendants, not its parent, siblings, idle
+conversations, unrelated controllers, or other sessions.
 Descendant paths explain ownership but are not new action identifiers; existing
 steer and interrupt operations still accept only the direct owner's local ID.
 

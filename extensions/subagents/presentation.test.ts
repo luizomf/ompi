@@ -1,6 +1,6 @@
 import { initTheme, type ExtensionAPI, type MessageRenderer } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import type { SubagentView, TerminalResult } from "./controller.ts";
+import type { OwnershipRuntime, SubagentView, TerminalResult } from "./controller.ts";
 import subagentsExtension, {
   buildActiveUi,
   buildDirectResult,
@@ -71,14 +71,32 @@ describe("ownership status operation", () => {
 });
 
 describe("subagent presentation", () => {
-  it("shows only active work and the minimal concurrent footer count", () => {
+  it("shows direct widget lines and direct, nested, and total footer counts", () => {
+    const ownership: OwnershipRuntime[] = [
+      {
+        path: [1], parentPath: [], id: 1, depth: 2, state: "running",
+        model: "provider/model", thinking: "medium",
+      },
+      {
+        path: [1, 7], parentPath: [1], id: 7, depth: 3, state: "running",
+        model: "provider/model", thinking: "medium",
+      },
+      {
+        path: [2], parentPath: [], id: 2, depth: 2, state: "finalizing",
+        model: "provider/model", thinking: "medium",
+      },
+      {
+        path: [2, 8], parentPath: [2], id: 8, depth: 3, state: "running",
+        model: "provider/model", thinking: "medium",
+      },
+    ];
     const presentation = buildActiveUi([
       view({ id: 1, name: "reader", currentTool: "read", preview: "visible progress" }),
       view({ id: 2, state: "finalizing" }),
       view({ id: 3, active: false, state: "completed" }),
-    ], 4_500);
+    ], 4_500, ownership);
 
-    expect(presentation.status).toBe("subagents: 2");
+    expect(presentation.status).toBe("direct: 2 • nested: 2 • total: 4");
     expect(presentation.lines).toHaveLength(2);
     expect(presentation.lines?.[0]).toContain("#1 reader · running · 3s · provider/model · reasoning medium · read · visible progress");
     expect(presentation.lines?.join(" ")).not.toContain("#3");
