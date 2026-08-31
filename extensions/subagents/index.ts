@@ -34,13 +34,14 @@ import {
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
 const DELIVERY_MODES = ["async", "direct"] as const;
+type DeliveryMode = typeof DELIVERY_MODES[number];
 const TERMINAL_TEXT_LIMIT = 8_000;
 
 const ReasoningSchema = StringEnum(THINKING_LEVELS, {
   description: "Reasoning override for this dispatch; omit to inherit the parent's current level",
 });
 const DeliverySchema = StringEnum(DELIVERY_MODES, {
-  description: "Delivery for this dispatch; async returns after acceptance and sends one later pong, while direct waits and returns the terminal result without a pong",
+  description: "Caller delivery preference where lifecycle permits; root TUI is always async, print and managed nested lineage are always direct, and root RPC defaults async while honoring explicit direct",
 });
 const ToolsSchema = Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
   maxItems: 256,
@@ -96,6 +97,16 @@ const ListSchema = Type.Object({});
 
 type StartParams = Static<typeof StartSchema>;
 type ContinueParams = Static<typeof ContinueSchema>;
+
+function effectiveDelivery(
+  mode: ExtensionContext["mode"],
+  lineageDepth: number,
+  requested?: DeliveryMode,
+): DeliveryMode {
+  if (mode === "print" || lineageDepth > 1) return "direct";
+  if (mode === "tui") return "async";
+  return requested ?? "async";
+}
 
 function activeModel(ctx: ExtensionContext): string {
   if (!ctx.model) throw new Error("The parent has no active model to inherit.");
@@ -380,19 +391,20 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: 'Start a clean persistent Pi conversation with the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Normal skills and repository instructions are discovered for the child cwd. Async delivery is the default outside print mode: it returns after acceptance and sends one later pong. Select direct delivery explicitly to keep the tool call pending and return one bounded terminal result without a pong. Print mode is always direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start a clean persistent Pi conversation with the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Normal skills and repository instructions are discovered for the child cwd. Delivery is enforced from the runtime: root TUI is async, print and managed nested lineage are direct, and root RPC defaults async while honoring explicit direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptSnippet: "Start an independent Pi conversation with a complete prompt",
     promptGuidelines: [
       "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the parent's active value.",
       "Only after deciding to call subagent_start, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the parent's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
-      "When multiple independent delegations are useful, issue their subagent_start calls in the same turn so Pi can run them concurrently; outside print mode, do not wait for one pong before starting another.",
-      "Use subagent_start delivery=direct only for dependent work that must consume the bounded terminal result in the current turn; role, name, and delegation depth never select direct delivery implicitly.",
-      "In print mode, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
-      "Outside print mode, after an asynchronous subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      "When multiple independent delegations use asynchronous root delivery, issue their subagent_start calls in the same turn so Pi can run them concurrently; do not wait for one pong before starting another.",
+      "Delivery is selected mechanically from runtime mode and managed lineage: root TUI is always async, print and managed nested lineage are always direct, and root RPC defaults async while honoring explicit direct.",
+      "Use subagent_start delivery=direct only for dependent root RPC work; root TUI ignores conflicting direct input, while managed nested and print calls remain direct even when delivery is omitted or async.",
+      "In print or managed nested lineage, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
+      "After an asynchronous root subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
     ],
     parameters: StartSchema,
     async execute(_id, params, signal, _onUpdate, ctx) {
-      if (ctx.mode === "print" || params.delivery === "direct") {
+      if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
         const pong = await controller.run(startInput(params, ctx), signal);
         const message = buildDirectResult(pong);
         return {
@@ -415,17 +427,18 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: 'Start another turn in a settled known subagent conversation with a fresh snapshot of the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Async delivery is the default outside print mode: it returns after acceptance and sends one later pong. Select direct delivery explicitly to keep the tool call pending and return one bounded terminal result without a pong. Print mode is always direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start another turn in a settled known subagent conversation with a fresh snapshot of the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Delivery is enforced from the runtime: root TUI is async, print and managed nested lineage are direct, and root RPC defaults async while honoring explicit direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptGuidelines: [
       "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the parent's active value.",
       "Only after deciding to call subagent_continue, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the parent's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
-      "Use subagent_continue delivery=direct only for dependent work that must consume the bounded terminal result in the current turn; role, name, and delegation depth never select direct delivery implicitly.",
-      "In print mode, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
-      "Outside print mode, after an asynchronous subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      "Delivery is selected mechanically from runtime mode and managed lineage: root TUI is always async, print and managed nested lineage are always direct, and root RPC defaults async while honoring explicit direct.",
+      "Use subagent_continue delivery=direct only for dependent root RPC work; root TUI ignores conflicting direct input, while managed nested and print calls remain direct even when delivery is omitted or async.",
+      "In print or managed nested lineage, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
+      "After an asynchronous root subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
     ],
     parameters: ContinueSchema,
     async execute(_id, params, signal, _onUpdate, ctx) {
-      if (ctx.mode === "print" || params.delivery === "direct") {
+      if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
         const pong = await controller.runContinuation(continuationInput(params, ctx), signal);
         const message = buildDirectResult(pong);
         return {
@@ -512,7 +525,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         const object = parseObject<StartParams>(args);
         const params = object ?? { prompt: args.trim() };
         if (!params.prompt) throw new Error("Usage: /sub <prompt> or /sub {\"prompt\": \"...\"}");
-        if (params.delivery === "direct") {
+        if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
           const result = await controller.run(startInput(params, ctx));
           ctx.ui.notify(buildDirectResult(result).content, "info");
         } else {
@@ -534,7 +547,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           const parsed = parseIdMessage(args, "Usage: /subcont <id> <prompt>");
           return { id: parsed.id, prompt: parsed.message };
         })();
-        if (params.delivery === "direct") {
+        if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
           const result = await controller.runContinuation(continuationInput(params, ctx));
           ctx.ui.notify(buildDirectResult(result).content, "info");
         } else {
