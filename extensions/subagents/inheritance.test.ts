@@ -202,6 +202,92 @@ describe("subagent routing inheritance", () => {
     expect(rpc.invocations).toEqual([]);
   });
 
+  it("forces nested starts and continuations direct when delivery is omitted or conflicts", async () => {
+    process.env.OMPI_SUBAGENT_LINEAGE = JSON.stringify({
+      version: 1,
+      depth: 2,
+      maxDepth: 3,
+      maxChildren: 2,
+    });
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "rpc";
+
+    let startCompleted = false;
+    const starting = tools.get("subagent_start").execute(
+      "start",
+      { prompt: "one" },
+      undefined,
+      undefined,
+      ctx,
+    ).then((result: unknown) => {
+      startCompleted = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+    expect(startCompleted).toBe(false);
+    await settle(0);
+    await expect(starting).resolves.toMatchObject({
+      details: { id: 1, outcome: "completed", sessionRef: "/sessions/1.jsonl" },
+    });
+
+    let continueCompleted = false;
+    const continuing = tools.get("subagent_continue").execute(
+      "continue",
+      { id: 1, prompt: "two", delivery: "async" },
+      undefined,
+      undefined,
+      ctx,
+    ).then((result: unknown) => {
+      continueCompleted = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
+    expect(continueCompleted).toBe(false);
+    await settle(1);
+    await expect(continuing).resolves.toMatchObject({
+      details: { id: 1, outcome: "completed", sessionRef: "/sessions/1.jsonl" },
+    });
+
+    const omittedContinuation = tools.get("subagent_continue").execute(
+      "continue-omitted",
+      { id: 1, prompt: "three" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(3));
+    await settle(2);
+    await expect(omittedContinuation).resolves.toMatchObject({
+      details: { id: 1, outcome: "completed", sessionRef: "/sessions/1.jsonl" },
+    });
+    expect(messages).toEqual([]);
+  });
+
+  it("forces a conflicting async nested start to remain direct", async () => {
+    process.env.OMPI_SUBAGENT_LINEAGE = JSON.stringify({
+      version: 1,
+      depth: 2,
+      maxDepth: 3,
+      maxChildren: 2,
+    });
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "rpc";
+
+    const starting = tools.get("subagent_start").execute(
+      "start",
+      { prompt: "one", delivery: "async" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+    await settle(0);
+    await expect(starting).resolves.toMatchObject({
+      details: { id: 1, outcome: "completed", sessionRef: "/sessions/1.jsonl" },
+    });
+    expect(messages).toEqual([]);
+  });
+
   it("lets a nested parent opt out with a zero direct-child ceiling", async () => {
     process.env.OMPI_SUBAGENT_LINEAGE = JSON.stringify({
       version: 1,
@@ -429,13 +515,20 @@ describe("subagent routing inheritance", () => {
       return "root user value";
     };
     await startSession("rpc");
-    await tools.get("subagent_start").execute(
+    const running = tools.get("subagent_start").execute(
       "start",
       { prompt: "nested leaf" },
       undefined,
       undefined,
       ctx,
     );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+    await vi.waitFor(() => {
+      const status = statuses.findLast(
+        (candidate) => candidate.key === "ompi:subagents:ownership-v1",
+      );
+      expect(JSON.parse(status?.text ?? "").ownership[0]?.state).toBe("running");
+    });
     const ownershipStatus = statuses.findLast(
       (status) => status.key === "ompi:subagents:ownership-v1",
     );
@@ -465,6 +558,7 @@ describe("subagent routing inheritance", () => {
     expect(forwarded).toEqual(["Value from root user"]);
 
     await settle(0);
+    await running;
     const clearedStatus = statuses.findLast(
       (status) => status.key === "ompi:subagents:ownership-v1",
     );
@@ -646,6 +740,11 @@ describe("subagent routing inheritance", () => {
       expect(tool.parameters.properties.reasoning.enum).toEqual([
         "off", "minimal", "low", "medium", "high", "xhigh", "max",
       ]);
+      expect(tool.parameters.properties.delivery.enum).toEqual(["async", "direct"]);
+      expect(tool.parameters.properties.delivery.description).toContain("root TUI is always async");
+      expect(tool.description).toContain("root TUI is async");
+      expect(tool.description).toContain("managed nested lineage are direct");
+      expect(tool.description).toContain("root RPC defaults async while honoring explicit direct");
       expect(tool.description).toContain("explicit user request");
       expect(tool.description).toContain("<provider>/<model>");
       expect(tool.promptGuidelines.join(" ")).toContain("only when the user explicitly requests");
@@ -655,6 +754,8 @@ describe("subagent routing inheritance", () => {
       expect(tool.promptGuidelines.join(" ")).not.toContain("openai-codex/gpt-5.6-sol");
       expect(tool.promptGuidelines.join(" ")).toContain("PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL");
       expect(tool.promptGuidelines.join(" ")).toContain("Do not inspect routing on ordinary turns");
+      expect(tool.promptGuidelines.join(" ")).toContain("selected mechanically from runtime mode and managed lineage");
+      expect(tool.promptGuidelines.join(" ")).toContain("root TUI ignores conflicting direct input");
     }
   });
 
@@ -689,44 +790,30 @@ describe("subagent routing inheritance", () => {
     expect(rpc.invocations).toHaveLength(1);
   });
 
-  it("returns an explicitly direct start outside print mode exactly once without a later pong", async () => {
+  it("forces a conflicting direct root TUI start to return after acceptance and pong exactly once", async () => {
     const { tools, ctx, messages } = setup();
-    (ctx as any).mode = "tui";
     const start = tools.get("subagent_start");
     expect(start.parameters.properties.delivery.enum).toEqual(["async", "direct"]);
-    let completed = false;
 
-    const running = start.execute(
+    await expect(start.execute(
       "start",
       { prompt: "one", delivery: "direct" },
       undefined,
       undefined,
       ctx,
-    ).then((result: unknown) => {
-      completed = true;
-      return result;
-    });
-
-    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
-    expect(completed).toBe(false);
-    await settle(0);
-    rpc.children[0].emit({ type: "agent_settled" });
-
-    await expect(running).resolves.toMatchObject({
-      content: [{ type: "text", text: expect.stringContaining("done") }],
-      details: {
-        id: 1,
-        outcome: "completed",
-        sessionRef: "/sessions/1.jsonl",
-        finalText: "done",
-      },
+    )).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("accepted the prompt") }],
     });
     expect(messages).toEqual([]);
+
+    await settle(0);
+    expect(messages).toHaveLength(1);
+    rpc.children[0].emit({ type: "agent_settled" });
+    expect(messages).toHaveLength(1);
   });
 
-  it("returns an explicitly direct continuation outside print mode without another pong", async () => {
+  it("forces a conflicting direct root TUI continuation to return after acceptance and pong once", async () => {
     const { tools, ctx, messages } = setup();
-    (ctx as any).mode = "tui";
     await tools.get("subagent_start").execute(
       "start",
       { prompt: "one" },
@@ -737,52 +824,97 @@ describe("subagent routing inheritance", () => {
     await settle(0);
     expect(messages).toHaveLength(1);
 
-    const continuing = tools.get("subagent_continue").execute(
+    await expect(tools.get("subagent_continue").execute(
       "continue",
       { id: 1, prompt: "two", delivery: "direct" },
       undefined,
       undefined,
       ctx,
-    );
-    await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
-    await settle(1);
-
-    await expect(continuing).resolves.toMatchObject({
-      details: {
-        id: 1,
-        outcome: "completed",
-        sessionRef: "/sessions/1.jsonl",
-      },
+    )).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("accepted the continuation") }],
     });
     expect(messages).toHaveLength(1);
+
+    await settle(1);
+    expect(messages).toHaveLength(2);
   });
 
-  it("keeps independently issued direct siblings concurrent", async () => {
+  it("keeps accepted root TUI async siblings alive when a later turn is cancelled", async () => {
     const { tools, ctx, messages } = setup();
-    (ctx as any).mode = "tui";
     const start = tools.get("subagent_start");
-    let completed = 0;
-    const first = start.execute("one", {
-      prompt: "one",
-      delivery: "direct",
-    }, undefined, undefined, ctx).then((result: unknown) => {
-      completed += 1;
-      return result;
+    const laterTurn = new AbortController();
+
+    await start.execute("one", { prompt: "one" }, undefined, undefined, ctx);
+    await start.execute(
+      "two",
+      { prompt: "two", delivery: "direct" },
+      laterTurn.signal,
+      undefined,
+      ctx,
+    );
+    expect(rpc.children).toHaveLength(2);
+
+    laterTurn.abort();
+    expect(rpc.children.every((child) => !child.closed)).toBe(true);
+    await Promise.all([settle(0), settle(1)]);
+    expect(messages).toHaveLength(2);
+  });
+
+  it("preserves root RPC defaults and explicit direct delivery for start and continuation", async () => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "rpc";
+    const start = tools.get("subagent_start");
+    const continuation = tools.get("subagent_continue");
+
+    await expect(start.execute(
+      "async-start",
+      { prompt: "one" },
+      undefined,
+      undefined,
+      ctx,
+    )).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("accepted the prompt") }],
     });
-    const second = start.execute("two", {
-      prompt: "two",
-      delivery: "direct",
-    }, undefined, undefined, ctx).then((result: unknown) => {
-      completed += 1;
-      return result;
+    await settle(0);
+
+    await expect(continuation.execute(
+      "async-continuation",
+      { id: 1, prompt: "two" },
+      undefined,
+      undefined,
+      ctx,
+    )).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("accepted the continuation") }],
+    });
+    await settle(1);
+    expect(messages).toHaveLength(2);
+
+    const directContinuation = continuation.execute(
+      "direct-continuation",
+      { id: 1, prompt: "three", delivery: "direct" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(3));
+    await settle(2);
+    await expect(directContinuation).resolves.toMatchObject({
+      details: { id: 1, outcome: "completed", sessionRef: "/sessions/1.jsonl" },
     });
 
-    await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
-    expect(completed).toBe(0);
-    await Promise.all([settle(0), settle(1)]);
-    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
-    expect(completed).toBe(2);
-    expect(messages).toEqual([]);
+    const directStart = start.execute(
+      "direct-start",
+      { prompt: "four", delivery: "direct" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(4));
+    await settle(3);
+    await expect(directStart).resolves.toMatchObject({
+      details: { id: 2, outcome: "completed", sessionRef: "/sessions/4.jsonl" },
+    });
+    expect(messages).toHaveLength(2);
   });
 
   it("returns the terminal subagent result directly in print mode without a pong follow-up", async () => {
@@ -791,7 +923,13 @@ describe("subagent routing inheritance", () => {
     const start = tools.get("subagent_start");
     let completed = false;
 
-    const running = start.execute("start", { prompt: "one" }, undefined, undefined, ctx)
+    const running = start.execute(
+      "start",
+      { prompt: "one", delivery: "async" },
+      undefined,
+      undefined,
+      ctx,
+    )
       .then((result: unknown) => {
         completed = true;
         return result;
@@ -819,7 +957,13 @@ describe("subagent routing inheritance", () => {
     await settle(0);
     await starting;
 
-    const continuing = continuation.execute("continue", { id: 1, prompt: "two" }, undefined, undefined, ctx);
+    const continuing = continuation.execute(
+      "continue",
+      { id: 1, prompt: "two", delivery: "async" },
+      undefined,
+      undefined,
+      ctx,
+    );
     await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
     await settle(1);
 
@@ -924,21 +1068,27 @@ describe("subagent routing inheritance", () => {
     expect(valueAfter(rpc.invocations[1].args, "--thinking")).toBe("high");
   });
 
-  it("honors explicit direct delivery in JSON slash commands without a pong", async () => {
+  it("forces conflicting direct JSON slash commands in the root TUI to stay async", async () => {
     const { commands, ctx, messages, notifications } = setup();
-    const starting = commands.get("sub").handler(
+
+    await commands.get("sub").handler(
       '{"prompt":"one","delivery":"direct"}',
       ctx,
     );
-    await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
-    expect(notifications).toEqual([]);
-    await settle(0);
-    await starting;
-
+    expect(notifications).toEqual(["Subagent #1 started."]);
     expect(messages).toEqual([]);
+    await settle(0);
+
+    await commands.get("subcont").handler(
+      '{"id":1,"prompt":"two","delivery":"direct"}',
+      ctx,
+    );
     expect(notifications).toEqual([
-      expect.stringContaining("[SUBAGENT #1] completed"),
+      "Subagent #1 started.",
+      "Subagent #1 continued.",
     ]);
+    await settle(1);
+    expect(messages).toHaveLength(2);
   });
 
   it("applies JSON slash-command overrides independently per dispatch", async () => {

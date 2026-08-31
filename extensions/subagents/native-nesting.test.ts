@@ -151,7 +151,7 @@ function streamFixture(model, context, options) {
         : "LEAF";
     return toolStream(model, "call_leaf", "subagent_start", {
       prompt,
-      delivery: "direct",
+      delivery: "async",
     });
   }
   if (phase === "dialog-leaf-before") {
@@ -220,7 +220,7 @@ function processIsAlive(pid: number): boolean {
 }
 
 describe("native nested subagents", () => {
-  it("retains nested direct work, distinguishes cancellation, and shuts down the lineage", async () => {
+  it("forces nested work direct for retention, distinguishes cancellation, and shuts down the lineage", async () => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), "ompi-subagent-nesting-"));
     temporaryRoots.push(temporaryRoot);
     const root = await realpath(temporaryRoot);

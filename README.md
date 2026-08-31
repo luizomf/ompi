@@ -375,16 +375,19 @@ or administer OMQueue.
 ## Subagents
 
 `just subagents` explicitly enables the extension in
-`extensions/subagents/`. It starts clean, persistent Pi conversations. In print
-mode, start and continuation tool calls wait for terminal completion and return
-the bounded result directly. Outside print mode, asynchronous delivery remains
-the default: a call returns after child RPC prompt acceptance and later queues
-exactly one completion, failure, or interruption pong. Set `delivery` to
-`"direct"` explicitly when dependent work must receive the bounded terminal
-result through the pending tool call; direct delivery emits no later pong.
-Independent direct siblings issued together still run concurrently. Child
-transport follows Pi's strict JSONL framing without a smaller ompi-specific
-record cap; parent-visible terminal text remains bounded separately.
+`extensions/subagents/`. It starts clean, persistent Pi conversations and
+derives effective delivery mechanically from the current Pi mode and managed
+lineage depth for both start and continuation. A root depth-1 TUI always returns
+after child RPC prompt acceptance and later queues exactly one completion,
+failure, or interruption pong, even when caller input requests `"direct"`.
+Print and managed nested lineage (`depth > 1`) always wait for terminal
+completion and return one bounded direct result without a pong, even when
+caller input requests `"async"` or omits delivery. This keeps the root TUI
+responsive and retains a nested parent runtime through descendant settlement.
+A root depth-1 RPC remains async by default and honors explicit `"direct"`.
+Child transport follows Pi's strict JSONL framing without a smaller
+ompi-specific record cap; parent-visible terminal text remains bounded
+separately.
 
 The normal widget remains compact and shows only direct current activity. The
 compact footer summarizes the active ownership subtree as `direct: N • nested:
@@ -428,8 +431,10 @@ The extension exposes these tools and matching commands:
 
 Use plain command arguments for common operations, or JSON with `/sub` and
 `/subcont` for delivery, lineage ceilings, routing, working-directory, tool, and
-name options. Each omitted routing value inherits the parent's active value when
-that turn is
+name options. `delivery` remains exposed on both tool schemas and JSON command
+surfaces, but a root-TUI command cannot block on conflicting `"direct"` input;
+print and managed nested calls cannot become async through conflicting input.
+Each omitted routing value inherits the parent's active value when that turn is
 dispatched. An explicit `model` override must use the qualified
 `provider/model` form; bare or malformed values are rejected before child
 launch. Optional `model` and `reasoning` overrides apply to one dispatch only
@@ -447,8 +452,8 @@ neither value can be raised. For example:
 /sub Inspect the authentication flow and report risks.
 /sub {"prompt":"Run the focused tests","name":"tests","tools":["read","bash"]}
 /sub {"prompt":"Inspect memory handling","model":"openai-codex/gpt-5.6-luna","reasoning":"high"}
-/sub {"prompt":"Return a dependent result now","delivery":"direct","maxDepth":2,"maxChildren":0}
-/subcont {"id":1,"prompt":"Continue and return here","delivery":"direct"}
+/sub {"prompt":"Record a delivery preference; root TUI remains async","delivery":"direct","maxDepth":2,"maxChildren":0}
+/subcont {"id":1,"prompt":"Continue; root TUI still remains async","delivery":"direct"}
 /subcont 1 Check the newly changed files.
 /substeer 1 Focus only on the parser.
 /substop 1
