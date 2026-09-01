@@ -3,16 +3,189 @@
 A learning lab for building a small, explicit, and security-conscious
 [Pi Coding Agent](https://github.com/earendil-works/pi-mono) workflow.
 
-## Requirements
+## Fresh-checkout setup
 
-- Pi Coding Agent
-- [just](https://github.com/casey/just)
-- Git and GitHub CLI
+Install external tools from their linked upstream or locally managed
+distribution before configuring the checkout. ompi does not install system
+browsers, authenticate accounts, configure OMQueue, or load `.env` files.
 
-## Recommended skills
+### Compatibility baseline
+
+| Dependency | Required source or compatibility evidence |
+| --- | --- |
+| [Node.js](https://nodejs.org/) and npm | Node must be `>=22.19.0`, the engine required by the locked Pi packages. npm has no separate repository range; use the npm supplied with that Node installation and the committed lockfiles through `npm ci`. |
+| [Pi Coding Agent](https://github.com/earendil-works/pi-mono) | Root [`package.json`](package.json) and [`package-lock.json`](package-lock.json) are authoritative: `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` are pinned to `0.81.1`, and the lock resolves `@earendil-works/pi-ai` to `0.81.1`. The recipes invoke `pi` from `PATH`. |
+| [just](https://github.com/casey/just) | No semver range is declared. The installed CLI version and successful parsing/dry-runs of this checkout's [`justfile`](justfile) are the compatibility evidence. |
+| [Git](https://git-scm.com/) and [GitHub CLI](https://cli.github.com/) | No semver ranges are declared. Use each installed CLI's version output; `gh auth status` separately verifies authentication needed by GitHub-backed workflows. |
+| [Chromium-based browser](https://www.chromium.org/getting-involved/download-chromium/) | Browser Fetch requires an external Chromium, Chrome, or Edge executable; it does not download one. Its local manifest declares `playwright-core ^1.55.0`, its lock currently resolves `1.61.1`, and the stricter Pi Node baseline above controls the checkout. The repository declares no universal browser release range, so verify the actual executable and run the smoke check below. |
+| Codex retrieval helper or compatible direct [Codex CLI](https://github.com/openai/codex) | The extension invokes an executable named `codex_search`, not bare `codex`. That name must provide the documented helper interface, authenticated Codex access, and `gpt-5.6-luna` and `gpt-5.6-sol` at high reasoning. The repository-tested helper delegates authentication and execution to a separate `codex` CLI; an all-in-one compatible CLI may instead expose the same contract directly as `codex_search`. No semantic version range is declared; local version, authentication, interface, and model-catalog checks are authoritative. A bare incompatible Codex CLI is not a substitute. |
+| `bq` and OMQueue | Scheduler requires the `bq` interface shown by `bq --help` and a configured, healthy OMQueue service. Neither has a repository semver range, and `bq` has no `--version`; `bq --help`, `omqueue status`, and `omqueue check` are the local compatibility and health sources. `bq`'s non-durable local fallback does not satisfy the Scheduler prerequisite. |
+| [omskills](https://github.com/luizomf/omskills) | Required only by skill-enabled profiles: `research` for `just research`, and `handoff`, `tmux-worker`, and `wormhole` for `just orchestrate`. Its README owns installation and compatibility guidance. |
+| [tmux](https://github.com/tmux/tmux) and optional `osalert` | tmux and an active tmux session are required by `just orchestrate` when using `tmux-worker` or `wormhole`, and by the optional globally installed tmux-status integration. No version range is declared; use the installed tmux interface as the compatibility source. Missing tmux makes tmux-status inert but makes those two orchestration skills unavailable. `osalert` is optional and affects only tmux-status sound. |
+
+Managed processes additionally require Unix process-group semantics; their start
+tool rejects Windows rather than weakening cleanup behavior.
+
+### Install the locked checkout
+
+From a fresh checkout root:
+
+```sh
+npm ci
+npm ci --prefix extensions/browser-fetch
+export PATH="$(pwd)/node_modules/.bin:${PATH}"
+```
+
+The `PATH` line makes the root lock's Pi `0.81.1` executable available to
+`just` for the current shell. Use an equivalent persistent installation only if
+it preserves that tested version. Browser Fetch keeps its dependency local, so
+both `npm ci` commands are required.
+
+`just research` names the global extension locations explicitly. On a fresh
+machine, create those links from the repository root after reviewing the source:
+
+```sh
+mkdir -p "${HOME}/.pi/agent/extensions"
+ln -s "$(pwd)/extensions/browser-fetch" "${HOME}/.pi/agent/extensions/browser-fetch"
+ln -s "$(pwd)/extensions/codex-search" "${HOME}/.pi/agent/extensions/codex-search"
+```
+
+Do not replace an existing real directory or link implicitly; inspect it and
+move or remove it deliberately first. Install the required omskills directories
+according to the linked repository before using `research` or `orchestrate`.
+Verify those profile inputs without printing their contents:
+
+```sh
+test -f "${HOME}/.pi/agent/extensions/browser-fetch/index.ts"
+test -f "${HOME}/.pi/agent/extensions/codex-search/index.ts"
+test -f "${HOME}/.pi/agent/skills/research/SKILL.md"
+test -f "${HOME}/.pi/agent/skills/handoff/SKILL.md"
+test -f "${HOME}/.pi/agent/skills/tmux-worker/SKILL.md"
+test -f "${HOME}/.pi/agent/skills/wormhole/SKILL.md"
+```
+
+A failed check here is a missing link or skill installation, not an unavailable
+model or a capability leak from another profile.
+
+Browser Fetch checks `BROWSER_FETCH_CHROMIUM_PATH` first, then its explicit
+macOS, Linux, and Windows Chromium/Chrome/Edge candidates. Set the override to
+an executable path when those candidates do not match the installation:
+
+```sh
+export BROWSER_FETCH_CHROMIUM_PATH="/absolute/path/to/chromium"
+test -x "${BROWSER_FETCH_CHROMIUM_PATH}"
+"${BROWSER_FETCH_CHROMIUM_PATH}" --version
+```
+
+### Verify without exposing secrets
+
+Run these checks locally. Version strings are evidence about that installation,
+not new repository compatibility promises. Do not paste authentication output,
+account details, executable paths, Queue diagnostics, or model catalogs into a
+public report.
+
+```sh
+command -v node npm pi just git gh
+node --version                 # must be >=22.19.0
+npm --version
+pi --version                   # 0.81.1 with the checkout PATH above
+just --version
+git --version
+gh --version
+gh auth status
+```
+
+Verify the tmux dependency before using `tmux-worker`, `wormhole`, or the
+optional globally discovered tmux-status integration:
+
+```sh
+command -v tmux
+tmux -V
+test -n "${TMUX:-}" && test -n "${TMUX_PANE:-}"
+tmux display-message -t "${TMUX_PANE}" -p '#{session_name}' >/dev/null
+```
+
+The last two checks distinguish an installed tmux client from the active tmux
+session required by the orchestration skills. `command -v osalert` checks only
+the optional tmux-status sound helper.
+
+Pi itself still needs an authenticated model provider before a profile can make
+model calls; use Pi's interactive `/login` flow and inspect its model list
+locally. Codex Search has a separate executable, authentication, interface, and
+model check:
+
+```sh
+command -v codex_search
+codex_search --version
+codex_search --help
+codex_search --list-models
+
+# Required when codex_search is the repository-tested helper backed by Codex:
+command -v codex
+codex --version
+codex login status
+```
+
+The model-catalog command must list both fixed routes and high reasoning. An
+absent `codex_search` is an installation failure. For the tested helper, an
+absent `codex` is another installation failure and a failed `codex login status`
+is an authentication failure. An all-in-one compatible `codex_search` must
+provide its own non-secret authentication/readiness check instead. Missing Luna
+or Sol after authentication is model availability or interface compatibility,
+not a launch-profile problem.
+
+Check Scheduler without submitting a Job or reading Queue records:
+
+```sh
+command -v bq omqueue
+bq --help
+omqueue status
+omqueue check
+```
+
+`bq --help` succeeding while either OMQueue health command fails means the Queue
+service is unavailable or misconfigured. Do not treat the advertised local
+fallback as Scheduler readiness.
+
+After setting the Chromium override, exercise the same browser launch boundary
+without navigation or a model call:
+
+```sh
+(
+  cd extensions/browser-fetch
+  node --input-type=module <<'NODE'
+import { chromium } from "playwright-core";
+
+const executablePath = process.env.BROWSER_FETCH_CHROMIUM_PATH;
+if (!executablePath) throw new Error("Set BROWSER_FETCH_CHROMIUM_PATH first");
+const browser = await chromium.launch({
+  executablePath,
+  headless: true,
+  args: ["--disable-dev-shm-usage", "--disable-extensions"],
+});
+const page = await browser.newPage();
+await page.setContent("<main>Browser Fetch smoke check</main>");
+if ((await page.textContent("main")) !== "Browser Fetch smoke check") {
+  throw new Error("Chromium rendering smoke check failed");
+}
+await browser.close();
+console.log("Browser Fetch smoke check passed");
+NODE
+)
+```
+
+A missing executable fails before launch; a version that prints but fails this
+smoke check is incompatible with the locked `playwright-core` baseline.
+
+Finally, `just --list` and `just --dry-run <recipe>` verify profile composition
+without starting Pi or making a model call. If a dry-run does not name an
+extension, that capability is intentionally absent from the selected isolated
+profile—not broken or unauthenticated.
+
+## Profile skills
 
 The companion [omskills](https://github.com/luizomf/omskills) collection
-provides the agent skills used by this repository's workflows and skill-enabled
+provides the skills used by this repository's workflows and skill-enabled
 launch profiles. Its README documents the available skills and installation
 steps.
 
@@ -26,29 +199,58 @@ README remains the source for public setup and observable usage.
 
 ## Launch profiles
 
-List the available recipes:
+List the available recipes with `just` or `just --list`. Start from the smallest
+profile that has the required capability. Every recipe retains Pi's built-in
+tools; this map lists the additional repository resources and extension tools.
 
-```sh
-just
-```
+| Recipe | Explicit resources | Repository capability exposed |
+| --- | --- | --- |
+| `just bare` | `/exit` alias only; no skills, prompt templates, or context files | No repository tool |
+| `just core` | `bare` plus [`AGENTS.md`](AGENTS.md) as an appended system prompt | No repository tool |
+| `just research` | `core`-like instructions plus the `research` skill, Browser Fetch, and Codex Search | `browser_fetch` for rendered HTTP(S) retrieval; `codex_search` for exact-URL Codex retrieval, complex research, and image generation |
+| `just orchestrate` | `core`-like instructions plus `handoff`, `tmux-worker`, and `wormhole` skills; the latter two require an active tmux session | No repository tool beyond the `/exit` command |
+| `just scheduler` | `core`-like instructions plus Scheduler | `scheduler_submit` for immediate or timed finite OMQueue work and heartbeats |
+| `just managed-processes` | `core`-like instructions plus Managed Processes | `managed_process_start`, `managed_process_list`, `managed_process_output`, and `managed_process_stop` |
+| `just subagents` | `core`-like instructions plus Subagents | `subagent_start`, `subagent_continue`, `subagent_steer`, `subagent_interrupt`, `subagent_status`, and `subagent_list` |
 
-Start from the smallest profile and add only the capabilities needed for the
-current task:
+These capability-isolated profiles disable automatic discovery of agent-facing
+skills, extensions, prompt templates, and context files, then load only the
+paths shown by `just --dry-run <recipe>`. Theme discovery is presentation rather
+than an agent capability; no recipe selects `omtheme` automatically.
 
-```sh
-just bare         # Only the /exit alias extension
-just core         # AGENTS.md and the /exit alias extension
-just research     # Core plus research skill, Browser Fetch, and Codex Search
-just orchestrate  # Core plus handoff, tmux-worker, and wormhole skills
-just scheduler          # Core plus the OMQueue background runner and scheduler
-just managed-processes  # Core plus session-scoped long-running processes
-just subagents          # Core plus the asynchronous subagent extension
-```
+`just p` and `just pi` are discovery convenience recipes, not isolated
+capability profiles:
 
-These profiles disable automatic discovery of agent-facing resources. Explicit
-`--skill`, `--extension`, and `--append-system-prompt` paths still load, so
-unrelated Claude, Codex, project, package, or global resources do not enter the
-agent context.
+- `just p` disables automatic skill discovery and explicitly loads only
+  `${HOME}/.pi/agent/skills`; extensions, prompt templates, context files, and
+  themes otherwise retain Pi's normal discovery behavior because the recipe
+  does not disable them.
+- `just pi` passes no resource-selection flags and restores Pi's normal
+  discovery behavior.
+
+Global links for tmux-status, Subagents, Browser Fetch, and Codex Search make
+those extensions available to normal Pi discovery, but they do not bypass an
+isolated profile's `--no-extensions` flag. `research` and `subagents` expose
+their named extensions because those recipes load them explicitly; tmux-status
+is not named by any isolated recipe. The linked theme remains a presentation
+resource that Pi may discover, but no recipe selects it. Likewise, a standalone
+`pi --no-extensions --extension ...` command affects that Pi process only and is
+not another profile capability. If globally discovered Scheduler alone must be
+suppressed, `--no-scheduler` removes only `scheduler_submit` and its callback
+endpoint for that Pi process; it does not disable unrelated extensions.
+
+### Lifetime summary
+
+This profile map is an inventory, not a second lifecycle specification.
+Session [background operations](docs/background-tools/CONTEXT.md) can deliver
+one background result only on a best-effort basis while their owning Pi session
+is live. [Scheduler](docs/scheduler/CONTEXT.md) work may remain durable in
+OMQueue, but its wake is best effort within the live owning session.
+[Managed-process](docs/managed-processes/CONTEXT.md) state belongs to one live
+session, whose explicit stop and shutdown paths attempt best-effort process-group
+cleanup. Globally discovered tmux-status similarly attempts best-effort removal
+of its tmux window option on session shutdown. See [`CONTEXT-MAP.md`](CONTEXT-MAP.md)
+for the canonical contracts, including the distinct Subagent lifecycle.
 
 ### Browser fetch
 
@@ -93,12 +295,9 @@ signed or private query parameters, or confidential identifiers without
 explicit user authorization. Neither service is an ompi component or a trusted
 local extension; each remains an external disclosure boundary.
 
-The extension keeps its `playwright-core` dependency local. Install it after a
-fresh checkout with:
-
-```sh
-npm ci --prefix extensions/browser-fetch
-```
+The extension keeps its `playwright-core` dependency local. The fresh-checkout
+steps above install that directory's committed lockfile and verify it against
+the selected browser executable.
 
 ### Codex retrieval, research, and image generation
 
@@ -115,16 +314,21 @@ The caller supplies only a focused `query`, one `intent`, and an optional image
 `destination`. It cannot select a model, reasoning level, workspace mode, or
 approval behavior. The helper's `quick` and `research` profiles remain internal
 invocation details rather than agent-facing effort choices. `just research`
-enables this tool alongside Browser Fetch. To enable it in another isolated Pi
-process:
+enables this tool alongside Browser Fetch. To load it explicitly in another Pi
+process while disabling automatic extension discovery:
 
 ```sh
 pi --no-extensions --extension ./extensions/codex-search/index.ts
 ```
 
-An authenticated `codex_search` helper and Codex CLI must be executable from
-`PATH`, and the account must expose `gpt-5.6-luna` and `gpt-5.6-sol` with high
-reasoning. Every invocation is direct and shell-free, uses the Pi session cwd,
+Other resource types retain Pi's defaults unless their own discovery flags are
+also disabled; this standalone command is not one of the isolated recipes.
+
+An authenticated compatible `codex_search` executable must be available from
+`PATH`, and its account must expose `gpt-5.6-luna` and `gpt-5.6-sol` with high
+reasoning. The repository-tested helper also requires its authenticated `codex`
+CLI backend; an all-in-one compatible executable may own that authentication
+and execution itself. Every invocation is direct and shell-free, uses the Pi session cwd,
 sends its request through stdin, and includes the helper's accepted unsandboxed
 mode. The extension fixes the routes explicitly instead of trusting helper or
 machine defaults:
@@ -189,25 +393,10 @@ not enabled by a package manifest or unrelated launch profile.
 
 Browser Fetch and Codex Search share the single background wrapper maintained at
 `extensions/background-tool.ts`. Their extension-local aliases preserve jiti
-module resolution when each global extension directory is a symlink. To restore
-the audited global installation from a fresh checkout, install Browser Fetch's
-dependency as above, then create the links from the repository root:
-
-```sh
-ln -s "$(pwd)/extensions/browser-fetch" "${HOME}/.pi/agent/extensions/browser-fetch"
-ln -s "$(pwd)/extensions/codex-search" "${HOME}/.pi/agent/extensions/codex-search"
-```
-
-Existing real directories or links must be moved or removed deliberately before
-running these commands.
-
-For comparison, start Pi with every user skill or its normal discovery
-behavior:
-
-```sh
-just p
-just pi
-```
+module resolution when each global extension directory is a symlink. The
+fresh-checkout setup above installs the local dependency and creates the links
+needed by `just research`; the discovery distinction remains the one documented
+in the profile map.
 
 ## Tmux status
 
@@ -219,7 +408,8 @@ background tool operations such as browser fetches and Codex research
 participate in that status. Durable scheduler submissions and managed processes
 do not: their lifecycle is not a pending in-session automatic result. The name
 is the native Pi session name when available, otherwise the current directory
-name. The option is removed on shutdown.
+name. Session shutdown attempts best-effort removal of the window option; tmux
+failure or abrupt process/host loss can prevent cleanup.
 
 When the published state changes from active to idle, the extension can invoke
 `osalert` from `PATH` without a shell. The sound is disabled by default. Use
@@ -598,10 +788,10 @@ TUI-only `ctx.ui.custom()` remains unavailable in RPC children and the extension
 does not emulate it. Fire-and-forget child UI components are not turned into a
 root dashboard.
 
-Install dependencies and verify the extension with:
+After installing the committed root lockfile with `npm ci` as described above,
+verify the extension with:
 
 ```sh
-npm install
 npm run typecheck
 npm test
 ```
