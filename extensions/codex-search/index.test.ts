@@ -109,7 +109,7 @@ describe("codex_search background delivery", () => {
 
   it("uses direct image intent as artifact authorization and passes a final destination", async () => {
     processMock.run.mockResolvedValueOnce({
-      stdout: "Saved final image to /repo/output.png",
+      stdout: "Saved final image",
       stderr: "",
       code: 0,
       stdoutTruncated: false,
@@ -121,6 +121,7 @@ describe("codex_search background delivery", () => {
     expect(tool.label).toContain("Image");
     expect(tool.promptSnippet).toMatch(/image generation/i);
     expect(tool.parameters.properties.destination.description).toMatch(/only with intent: image/i);
+    expect(tool.parameters.properties.destination.maxLength).toBe(4_096);
     expect(tool.parameters.properties.query.description).toMatch(/free-form image intent/i);
     expect(tool.promptGuidelines.join(" ")).toMatch(/direct intent: image.*authorizes creation/i);
 
@@ -148,8 +149,9 @@ describe("codex_search background delivery", () => {
     expect(guidance).toMatch(/after image generation starts.*do not inspect, move, or modify.*artifact paths/i);
 
     await vi.waitFor(() => expect(messages).toHaveLength(1));
-    expect(messages[0].message.content).toContain("Saved final image to /repo/output.png");
-    expect(messages[0].message.content).toMatch(/destination passed to the helper.*\/repo\/output\.png/i);
+    expect(messages[0].message.content).toContain("Saved final image");
+    expect(messages[0].message.content).toMatch(/supplied final image destination was passed to the helper/i);
+    expect(messages[0].message.content).not.toContain("/repo/output.png");
     expect(messages[0].message.content).not.toContain("not a verified primary source");
   });
 
@@ -204,6 +206,25 @@ describe("codex_search background delivery", () => {
     await vi.waitFor(() => expect(messages).toHaveLength(1));
     expect(processMock.run).not.toHaveBeenCalled();
     expect(messages[0].message.content).toMatch(/destination is valid only with intent: image/i);
+  });
+
+  it("rejects an oversized image destination without echoing it into the bounded result", async () => {
+    const { tools, messages } = setup();
+    const tool = tools.get("codex_search");
+    const destination = `/${"x".repeat(4_096)}`;
+
+    await tool.execute(
+      "image-oversized-destination",
+      { query: "Generate an icon", intent: "image", destination },
+      undefined,
+      undefined,
+      { cwd: "/repo" } as ExtensionContext,
+    );
+
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(processMock.run).not.toHaveBeenCalled();
+    expect(messages[0].message.content).toMatch(/destination must not exceed 4096 characters/i);
+    expect(messages[0].message.content).not.toContain(destination);
   });
 
   it("makes exact-URL helper failures visible and advances the remaining fallback stages", async () => {

@@ -3,6 +3,8 @@ import { Type, type Static } from "typebox";
 import { createBackgroundToolManager } from "./background-tool.ts";
 import { runCodexSearch } from "./process.ts";
 
+const MAX_IMAGE_DESTINATION_CHARS = 4_096;
+
 const QuerySchema = Type.Object({
   query: Type.String({
     minLength: 1,
@@ -17,6 +19,7 @@ const QuerySchema = Type.Object({
   }),
   destination: Type.Optional(Type.String({
     minLength: 1,
+    maxLength: MAX_IMAGE_DESTINATION_CHARS,
     description: "Optional final image artifact location, valid only with intent: image. Relative paths are interpreted from the Pi session cwd.",
   })),
 });
@@ -55,6 +58,9 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
       }
       if (params.destination !== undefined && !params.destination.trim()) {
         throw new Error("Image destination must not be empty.");
+      }
+      if (params.destination !== undefined && params.destination.length > MAX_IMAGE_DESTINATION_CHARS) {
+        throw new Error(`Image destination must not exceed ${MAX_IMAGE_DESTINATION_CHARS} characters.`);
       }
 
       let result;
@@ -98,7 +104,7 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
       if (params.intent === "image") {
         text += params.destination === undefined
           ? "\n\n[No final image destination was supplied. This is helper output, not confirmation of final placement or delivery. The calling agent must inspect any reported artifact and place it as the task requires.]"
-          : `\n\n[Requested final image destination passed to the helper: ${JSON.stringify(params.destination)}. Treat the helper output above as the source of truth for whether creation succeeded.]`;
+          : "\n\n[The supplied final image destination was passed to the helper. Treat the helper output above as the source of truth for whether creation succeeded.]";
       } else {
         text += `\n\n[Reminder: this is codex_search helper/model-produced ${outputKind} output, not a verified primary source. Verify cited URLs and primary sources before relying on it.]`;
       }
