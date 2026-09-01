@@ -118,7 +118,7 @@ describe("browser_fetch background delivery", () => {
     const guidance = tool.promptGuidelines.join(" ");
     expect(guidance).toContain("never wait");
     expect(guidance).toMatch(/independently useful.*same turn.*concurrently.*do not wait/s);
-    expect(guidance).toMatch(/direct HTTP\/curl.*browser_fetch.*original URL.*codex_search.*quick.*markdown\.new.*r\.jina\.ai/is);
+    expect(guidance).toMatch(/direct HTTP\/curl.*browser_fetch.*original URL.*codex_search.*intent exact_url.*markdown\.new.*r\.jina\.ai/is);
     expect(guidance).toMatch(/do not restart.*transformed fallback URL/i);
     expect(guidance).toMatch(/third-party.*credentials.*signed.*confidential/i);
     expect(guidance).toMatch(/every safe stage fails.*could not access or verify.*must not invent/is);
@@ -206,8 +206,8 @@ describe("browser_fetch background delivery", () => {
       outcome: "failed",
     });
     expect(message.content).toMatch(/transport or navigation failed.*ERR_CONNECTION_RESET/is);
-    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick.*exact URL/is);
-    expect(message.content).toMatch(/related prose.*not proof of access/i);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*intent "exact_url".*exact URL/is);
+    expect(message.content).toMatch(/helper\/model-produced prose.*not proof of access/i);
   });
 
   it("reports a missing navigation response without treating page text as access proof", async () => {
@@ -218,7 +218,7 @@ describe("browser_fetch background delivery", () => {
       retrievalOutcome: "no_http_response",
     });
     expect(message.content).toMatch(/no HTTP response.*exact-target access could not be established/is);
-    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*intent "exact_url"/is);
   });
 
   it("reports HTTP failures with the next exact-URL stage", async () => {
@@ -229,7 +229,7 @@ describe("browser_fetch background delivery", () => {
       retrievalOutcome: "http_failure",
     });
     expect(message.content).toMatch(/HTTP failure.*503/is);
-    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*intent "exact_url"/is);
   });
 
   it("does not infer a login or CAPTCHA response from an HTTP status alone", async () => {
@@ -254,7 +254,7 @@ describe("browser_fetch background delivery", () => {
       retrievalOutcome: "access_block",
     });
     expect(message.content).toMatch(/login, CAPTCHA, anti-bot, or other access-block response.*HTTP 403/is);
-    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*intent "exact_url"/is);
   });
 
   it("reports unreadable rendered content with the next exact-URL stage", async () => {
@@ -264,7 +264,7 @@ describe("browser_fetch background delivery", () => {
       retrievalOutcome: "no_readable_content",
     });
     expect(message.content).toMatch(/unreadable.*7 characters/is);
-    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*intent "exact_url"/is);
   });
 
   it("bounds rendered failure results containing a long valid URL", async () => {

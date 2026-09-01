@@ -72,47 +72,93 @@ async function runParentLeavingDescendant(
 }
 
 describe("codex_search process wrapper", () => {
-  it("builds a fixed shell-free quick invocation with the query on stdin", () => {
+  it("routes exact-URL retrieval through unsandboxed Luna with high reasoning", () => {
     const signal = new AbortController().signal;
-    const request = buildCodexSearchRequest("find primary sources", "/repo", "quick", {}, signal);
+    const request = buildCodexSearchRequest(
+      "fetch and extract https://example.com/source",
+      "/repo",
+      "exact_url",
+      undefined,
+      signal,
+    );
 
     expect([request.command, ...request.args]).toEqual([
       "codex_search",
       "--profile",
       "quick",
+      "--yolo",
+      "--model",
+      "gpt-5.6-luna",
+      "--config",
+      "model_reasoning_effort=high",
       "--skip-git-repo-check",
       "--cd",
       "/repo",
       "-",
     ]);
     expect(request).toMatchObject({
-      input: "find primary sources",
+      input: "fetch and extract https://example.com/source",
       cwd: "/repo",
       signal,
       timeoutMs: 600_000,
+      maxStdoutBytes: 48_000,
+      maxStderrBytes: 2_000,
     });
     expect(request).not.toHaveProperty("shell");
   });
 
-  it("passes only explicit write and yolo capability opt-ins", () => {
+  it("routes complex research through unsandboxed Sol with high reasoning", () => {
     const request = buildCodexSearchRequest(
-      "create an artifact from compared sources",
+      "compare the primary sources",
       "/repo",
       "research",
-      { write: true, yolo: true },
     );
 
     expect([request.command, ...request.args]).toEqual([
       "codex_search",
       "--profile",
       "research",
-      "--write",
       "--yolo",
+      "--model",
+      "gpt-5.6-sol",
+      "--config",
+      "model_reasoning_effort=high",
       "--skip-git-repo-check",
       "--cd",
       "/repo",
       "-",
     ]);
+    expect(request.input).toBe("compare the primary sources");
+  });
+
+  it("routes image generation through unsandboxed Sol and passes its destination on stdin", () => {
+    const request = buildCodexSearchRequest(
+      "Generate a cinematic mountain landscape",
+      "/repo",
+      "image",
+      "/repo/artifacts/final.png",
+    );
+
+    expect([request.command, ...request.args]).toEqual([
+      "codex_search",
+      "--profile",
+      "research",
+      "--yolo",
+      "--model",
+      "gpt-5.6-sol",
+      "--config",
+      "model_reasoning_effort=high",
+      "--skip-git-repo-check",
+      "--cd",
+      "/repo",
+      "-",
+    ]);
+    expect(request.input).toBe([
+      "Generate a cinematic mountain landscape",
+      "",
+      'Final output location (JSON string): "/repo/artifacts/final.png"',
+      "Create the final image artifact at that location.",
+    ].join("\n"));
   });
 
   it("passes shell syntax through stdin as inert text", async () => {
@@ -152,6 +198,18 @@ describe("codex_search process wrapper", () => {
         ),
       }),
     );
+  });
+
+  it("reports an unavailable helper with an actionable hint and original cause", async () => {
+    const command = join(tmpdir(), "missing", "codex_search");
+    const error = await runProcess({
+      ...nodeRequest(""),
+      command,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/Failed to start.*codex_search.*installed.*executable.*PATH/is);
+    expect((error as Error).cause).toMatchObject({ code: "ENOENT" });
   });
 
   it("reports a nonzero exit with bounded diagnostics and invocation context", async () => {

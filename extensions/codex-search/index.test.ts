@@ -36,7 +36,7 @@ function setup() {
 describe("codex_search background delivery", () => {
   beforeEach(() => processMock.run.mockReset());
 
-  it("releases the tool call before research completes and delivers the bounded result later", async () => {
+  it("routes exact-URL retrieval by required intent and delivers helper/model output later", async () => {
     const search = deferred<{
       stdout: string;
       stderr: string;
@@ -50,7 +50,7 @@ describe("codex_search background delivery", () => {
 
     const accepted = await tool.execute(
       "search-1",
-      { query: "find Bash sources" },
+      { query: "Fetch and extract https://example.com/source", intent: "exact_url" },
       undefined,
       undefined,
       { cwd: "/repo" } as ExtensionContext,
@@ -60,35 +60,37 @@ describe("codex_search background delivery", () => {
     expect(messages).toEqual([]);
     expect(tool.description).toContain("asynchronously");
     expect(tool.description).toMatch(/completion may arrive later.*owning Pi session remains live/i);
-    expect(tool.description).toMatch(/search, fetch, scrape, and extract/i);
-    expect(tool.parameters.properties.effort.anyOf.map((item: { const: string }) => item.const)).toEqual([
-      "quick",
+    expect(tool.description).toMatch(/exact-URL retrieval.*Luna.*high.*complex research.*Sol.*high.*image generation.*Sol.*high/is);
+    expect(tool.description).toMatch(/every.*unsandboxed/i);
+    expect(tool.parameters.properties.intent.anyOf.map((item: { const: string }) => item.const)).toEqual([
+      "exact_url",
       "research",
+      "image",
     ]);
-    expect(tool.parameters.properties.effort.description).toMatch(/helper owns.*default model and reasoning/i);
-    expect(tool.parameters.properties).not.toHaveProperty("model");
-    expect(tool.parameters.properties).not.toHaveProperty("reasoning");
-    expect(tool.parameters.properties).toHaveProperty("write");
-    expect(tool.parameters.properties).toHaveProperty("yolo");
+    expect(tool.parameters.required).toEqual(expect.arrayContaining(["query", "intent"]));
+    expect(tool.parameters.properties).toHaveProperty("destination");
+    for (const removed of ["effort", "image", "write", "yolo", "model", "reasoning"]) {
+      expect(tool.parameters.properties).not.toHaveProperty(removed);
+    }
     expect(processMock.run).toHaveBeenCalledWith(
-      "find Bash sources",
+      "Fetch and extract https://example.com/source",
       "/repo",
-      "quick",
-      { write: undefined, yolo: undefined },
+      "exact_url",
+      undefined,
       expect.any(AbortSignal),
     );
     const guidance = tool.promptGuidelines.join(" ");
     expect(guidance).toContain("never wait");
     expect(guidance).toMatch(/later result.*only while the owning Pi session remains live/i);
     expect(guidance).toMatch(/independently useful.*same turn.*concurrently.*do not wait/s);
-    expect(guidance).toMatch(/specific URL.*quick.*fetch and extract.*exact URL.*related pages/is);
+    expect(guidance).toMatch(/specific URL.*intent: exact_url.*fetch and extract.*exact URL.*related pages/is);
     expect(guidance).toMatch(/markdown\.new.*r\.jina\.ai/is);
     expect(guidance).toMatch(/third-party.*credentials.*signed.*confidential/is);
     expect(guidance).toMatch(/could not access or verify.*must not invent/is);
-    expect(guidance).not.toMatch(/MUST inform the user/i);
+    expect(guidance).toMatch(/exact_url and research.*do not authorize.*workspace mutation/is);
 
     search.resolve({
-      stdout: "primary research",
+      stdout: "retrieved page text",
       stderr: "",
       code: 0,
       stdoutTruncated: false,
@@ -96,7 +98,8 @@ describe("codex_search background delivery", () => {
     });
     await vi.waitFor(() => expect(messages).toHaveLength(1));
 
-    expect(messages[0].message.content).toContain("primary research");
+    expect(messages[0].message.content).toContain("retrieved page text");
+    expect(messages[0].message.content).toMatch(/helper\/model-produced exact-URL retrieval output/i);
     expect(messages[0].message.content).toContain("not a verified primary source");
     expect(messages[0].message.details).toMatchObject({
       toolName: "codex_search",
@@ -104,9 +107,9 @@ describe("codex_search background delivery", () => {
     });
   });
 
-  it("generates images through the research profile without adding research-verification reminders", async () => {
+  it("uses direct image intent as artifact authorization and passes a final destination", async () => {
     processMock.run.mockResolvedValueOnce({
-      stdout: "Saved final image to /repo/output.png",
+      stdout: "Saved final image",
       stderr: "",
       code: 0,
       stdoutTruncated: false,
@@ -116,19 +119,18 @@ describe("codex_search background delivery", () => {
     const tool = tools.get("codex_search");
 
     expect(tool.label).toContain("Image");
-    expect(tool.description).toMatch(/image generation.*Codex\/ImageGen/i);
     expect(tool.promptSnippet).toMatch(/image generation/i);
-    expect(tool.parameters.properties.image.description).toMatch(/save.*inspect.*iterate/i);
-    expect(tool.parameters.properties.query.description).toMatch(/free-form.*without.*template/i);
-    expect(tool.promptGuidelines.join(" ")).toMatch(/do not rewrite.*post-processing/i);
+    expect(tool.parameters.properties.destination.description).toMatch(/only with intent: image/i);
+    expect(tool.parameters.properties.destination.maxLength).toBe(4_096);
+    expect(tool.parameters.properties.query.description).toMatch(/free-form image intent/i);
+    expect(tool.promptGuidelines.join(" ")).toMatch(/direct intent: image.*authorizes creation/i);
 
     await tool.execute(
       "image-1",
       {
-        query: "Generate a cinematic 16:9 mountain landscape and save the final PNG",
-        effort: "quick",
-        image: true,
-        write: true,
+        query: "Generate a cinematic 16:9 mountain landscape",
+        intent: "image",
+        destination: "/repo/output.png",
       },
       undefined,
       undefined,
@@ -136,30 +138,66 @@ describe("codex_search background delivery", () => {
     );
 
     expect(processMock.run).toHaveBeenCalledWith(
-      "Generate a cinematic 16:9 mountain landscape and save the final PNG",
+      "Generate a cinematic 16:9 mountain landscape",
       "/repo",
-      "research",
-      { write: true, yolo: undefined },
+      "image",
+      "/repo/output.png",
       expect.any(AbortSignal),
     );
     const guidance = tool.promptGuidelines.join(" ");
-    expect(guidance).toMatch(/Codex\/ImageGen generates.*Pi.*deliver/i);
-    expect(guidance).toMatch(/workspace-write.*Pi session cwd.*primary workspace/i);
-    expect(guidance).toMatch(/write or yolo.*do not read or modify.*overlapping workspace paths/i);
-    expect(guidance).toMatch(/never.*yolo.*specific.*authoriz/i);
+    expect(guidance).toMatch(/free-form intent.*without.*rigid visual template/i);
+    expect(guidance).toMatch(/after image generation starts.*do not inspect, move, or modify.*artifact paths/i);
 
     await vi.waitFor(() => expect(messages).toHaveLength(1));
-    expect(messages[0].message.content).toContain("Saved final image to /repo/output.png");
+    expect(messages[0].message.content).toContain("Saved final image");
+    expect(messages[0].message.content).toMatch(/supplied final image destination was passed to the helper/i);
+    expect(messages[0].message.content).not.toContain("/repo/output.png");
     expect(messages[0].message.content).not.toContain("not a verified primary source");
   });
 
-  it("requires an explicit workspace-write opt-in before image generation", async () => {
+  it("reports image helper output without claiming final placement when destination is absent", async () => {
+    processMock.run.mockResolvedValueOnce({
+      stdout: "Created a candidate at /tmp/generated-image.png",
+      stderr: "",
+      code: 0,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
     const { tools, messages } = setup();
     const tool = tools.get("codex_search");
 
     await tool.execute(
       "image-2",
-      { query: "Generate an icon", image: true },
+      { query: "Generate an icon", intent: "image" },
+      undefined,
+      undefined,
+      { cwd: "/repo" } as ExtensionContext,
+    );
+
+    expect(processMock.run).toHaveBeenCalledWith(
+      "Generate an icon",
+      "/repo",
+      "image",
+      undefined,
+      expect.any(AbortSignal),
+    );
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(messages[0].message.content).toContain("Created a candidate at /tmp/generated-image.png");
+    expect(messages[0].message.content).toMatch(/not confirmation of final placement or delivery.*calling agent must inspect.*place it/is);
+    expect(messages[0].message.content).not.toContain("not a verified primary source");
+  });
+
+  it("rejects an image destination for non-image intent before helper execution", async () => {
+    const { tools, messages } = setup();
+    const tool = tools.get("codex_search");
+
+    await tool.execute(
+      "search-destination",
+      {
+        query: "Compare primary sources",
+        intent: "research",
+        destination: "/repo/ambiguous.png",
+      },
       undefined,
       undefined,
       { cwd: "/repo" } as ExtensionContext,
@@ -167,10 +205,29 @@ describe("codex_search background delivery", () => {
 
     await vi.waitFor(() => expect(messages).toHaveLength(1));
     expect(processMock.run).not.toHaveBeenCalled();
-    expect(messages[0].message.content).toMatch(/requires explicit write: true/i);
+    expect(messages[0].message.content).toMatch(/destination is valid only with intent: image/i);
   });
 
-  it("passes the research profile and makes failures require user-visible reporting without stopping fallback work", async () => {
+  it("rejects an oversized image destination without echoing it into the bounded result", async () => {
+    const { tools, messages } = setup();
+    const tool = tools.get("codex_search");
+    const destination = `/${"x".repeat(4_096)}`;
+
+    await tool.execute(
+      "image-oversized-destination",
+      { query: "Generate an icon", intent: "image", destination },
+      undefined,
+      undefined,
+      { cwd: "/repo" } as ExtensionContext,
+    );
+
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(processMock.run).not.toHaveBeenCalled();
+    expect(messages[0].message.content).toMatch(/destination must not exceed 4096 characters/i);
+    expect(messages[0].message.content).not.toContain(destination);
+  });
+
+  it("makes exact-URL helper failures visible and advances the remaining fallback stages", async () => {
     processMock.run.mockRejectedValueOnce(new Error("configured model is unavailable"));
     const { tools, messages } = setup();
     const tool = tools.get("codex_search");
@@ -178,27 +235,26 @@ describe("codex_search background delivery", () => {
     await tool.execute(
       "search-2",
       {
-        query: "synthesize conflicting primary sources",
-        effort: "research",
-        write: true,
-        yolo: true,
+        query: "Fetch and extract https://example.com/source",
+        intent: "exact_url",
       },
       undefined,
       undefined,
       { cwd: "/repo" } as ExtensionContext,
     );
     expect(processMock.run).toHaveBeenCalledWith(
-      "synthesize conflicting primary sources",
+      "Fetch and extract https://example.com/source",
       "/repo",
-      "research",
-      { write: true, yolo: true },
+      "exact_url",
+      undefined,
       expect.any(AbortSignal),
     );
 
     await vi.waitFor(() => expect(messages).toHaveLength(1));
 
     expect(messages[0].message.content).toMatch(/MUST report this codex_search failure in your next user-facing response/i);
-    expect(messages[0].message.content).toMatch(/MUST NOT stop or abandon the task solely because codex_search failed.*continue with another appropriate tool when useful or available/is);
+    expect(messages[0].message.content).toMatch(/MUST NOT stop or abandon the task solely because codex_search failed/i);
+    expect(messages[0].message.content).toMatch(/markdown\.new.*then.*r\.jina\.ai.*do not restart/is);
     expect(messages[0].message.content).toContain("configured model is unavailable");
     expect(messages[0].message.details).toMatchObject({
       toolName: "codex_search",

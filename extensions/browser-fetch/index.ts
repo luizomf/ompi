@@ -237,9 +237,9 @@ function nextExactUrlStage(requestedUrl: string): string {
 	}
 
 	return [
-		"Next exact-URL stage: call codex_search with effort \"quick\" and explicitly require it to fetch and extract",
+		"Next exact-URL stage: call codex_search with intent \"exact_url\" and explicitly require it to fetch and extract",
 		`this exact URL (${diagnosticField(requestedUrl)}) and disclose if exact-URL access failed.`,
-		"Related prose, snippets, and pages are not proof of access.",
+		"Helper/model-produced prose, snippets, and related pages are not proof of access.",
 	].join(" ");
 }
 
@@ -284,10 +284,10 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "Fetch a rendered page and continue exact-URL fallbacks when blocked",
 		promptGuidelines: [
 			"Use browser_fetch only for an HTTP or HTTPS destination the user has authorized; the tool does not impose a public/private network classification.",
-			"For the contents of a specific authorized URL, use this strict, non-looping fallback sequence, advancing after a transport error, HTTP failure, CAPTCHA, anti-bot or login block, empty or unreadable output, or inability to establish exact-target access: (1) ordinary direct HTTP/curl on the original URL; (2) browser_fetch on the original URL; (3) codex_search with effort quick and an explicit instruction to fetch and extract the exact URL rather than merely search for related pages, and to disclose if exact-URL access failed; (4) browser_fetch on https://markdown.new/<absolute-target-URL>; (5) browser_fetch on https://r.jina.ai/<absolute-target-URL>.",
+			"For the contents of a specific authorized URL, use this strict, non-looping fallback sequence, advancing after a transport error, HTTP failure, CAPTCHA, anti-bot or login block, empty or unreadable output, or inability to establish exact-target access: (1) ordinary direct HTTP/curl on the original URL; (2) browser_fetch on the original URL; (3) codex_search with intent exact_url and an explicit instruction to fetch and extract the exact URL rather than merely search for related pages, and to disclose if exact-URL access failed; (4) browser_fetch on https://markdown.new/<absolute-target-URL>; (5) browser_fetch on https://r.jina.ai/<absolute-target-URL>.",
 			"Do not restart the chain for a transformed fallback URL at markdown.new or r.jina.ai, and do not repeat a completed stage.",
 			"Treat markdown.new and r.jina.ai as third-party disclosure boundaries. Do not submit target URLs containing credentials, signed or private query parameters, or confidential identifiers to them without explicit user authorization.",
-			"A model-produced answer, snippets, or related pages do not prove access to the supplied URL. If every safe stage fails, explicitly state that you could not access or verify the URL and must not invent page-specific facts or imply that you read it.",
+			"A helper/model-produced answer, snippets, or related pages do not prove access to the supplied URL. If every safe stage fails, explicitly state that you could not access or verify the URL and must not invent page-specific facts or imply that you read it.",
 			"When multiple browser_fetch calls or other research calls are independently useful, start them in the same turn so Pi can run them concurrently; outside print mode, do not wait for one result before starting another.",
 			"In print mode, browser_fetch returns the rendered result directly; inspect it before continuing dependent work.",
 			"Outside print mode, after browser_fetch starts background work, never wait, sleep, or poll for its result. Continue only useful independent work or end the response; a later result can be delivered only while the owning Pi session remains live.",
