@@ -18,6 +18,7 @@ const RENDER_WAIT_MS = 2_000;
 const MAX_LINKS = 100;
 const MAX_TEXT_CHARS = 200_000;
 const MIN_READABLE_CHARS = 120;
+const MAX_DIAGNOSTIC_FIELD_BYTES = 8_000;
 
 const browserFetchParameters = Type.Object({
 	url: Type.String({
@@ -202,6 +203,23 @@ function hostedFallbackTarget(requestedUrl: URL, hostname: string): URL | undefi
 	}
 }
 
+function utf8Head(text: string, maximumBytes: number): string {
+	const buffer = Buffer.from(text, "utf8");
+	if (buffer.length <= maximumBytes) return text;
+	let end = maximumBytes;
+	while (end > 0 && (buffer[end] & 0xc0) === 0x80) end -= 1;
+	return buffer.subarray(0, end).toString("utf8");
+}
+
+function diagnosticField(text: string): string {
+	if (Buffer.byteLength(text, "utf8") <= MAX_DIAGNOSTIC_FIELD_BYTES) return text;
+	const notice = " [truncated]";
+	return `${utf8Head(
+		text,
+		MAX_DIAGNOSTIC_FIELD_BYTES - Buffer.byteLength(notice, "utf8"),
+	)}${notice}`;
+}
+
 function nextExactUrlStage(requestedUrl: string): string {
 	const parsed = new URL(requestedUrl);
 	const jinaTarget = hostedFallbackTarget(parsed, "r.jina.ai");
@@ -213,14 +231,14 @@ function nextExactUrlStage(requestedUrl: string): string {
 	if (markdownTarget) {
 		return [
 			"Next exact-URL stage (only if third-party disclosure is authorized): call browser_fetch with",
-			`https://r.jina.ai/${markdownTarget.href}`,
+			diagnosticField(`https://r.jina.ai/${markdownTarget.href}`),
 			"Do not restart the fallback chain from that transformed URL.",
 		].join(" ");
 	}
 
 	return [
 		"Next exact-URL stage: call codex_search with effort \"quick\" and explicitly require it to fetch and extract",
-		`this exact URL (${requestedUrl}) and disclose if exact-URL access failed.`,
+		`this exact URL (${diagnosticField(requestedUrl)}) and disclose if exact-URL access failed.`,
 		"Related prose, snippets, and pages are not proof of access.",
 	].join(" ");
 }
@@ -230,12 +248,12 @@ function retrievalFailure(
 	requestedUrl: string,
 	details: BrowserFetchDetails,
 ) {
-	const locations = [`Requested URL: ${requestedUrl}`];
-	if (details.finalUrl !== requestedUrl) locations.push(`Final URL: ${details.finalUrl}`);
+	const locations = [`Requested URL: ${diagnosticField(requestedUrl)}`];
+	if (details.finalUrl !== requestedUrl) locations.push(`Final URL: ${diagnosticField(details.finalUrl)}`);
 	return {
 		content: [{
 			type: "text" as const,
-			text: [summary, ...locations, "", nextExactUrlStage(requestedUrl)].join("\n"),
+			text: boundedText([summary, ...locations, "", nextExactUrlStage(requestedUrl)].join("\n")),
 		}],
 		details,
 	};
@@ -243,6 +261,13 @@ function retrievalFailure(
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function boundedText(text: string): string {
+	return truncateHead(text, {
+		maxLines: DEFAULT_MAX_LINES,
+		maxBytes: DEFAULT_MAX_BYTES,
+	}).content;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -326,7 +351,7 @@ export default function (pi: ExtensionAPI) {
 					details.retrievalOutcome = "access_block";
 					const statusText = status === null ? "without an HTTP status" : `with HTTP ${status}`;
 					return retrievalFailure(
-						`Rendered retrieval encountered a login, CAPTCHA, anti-bot, or other access-block response ${statusText} at ${extracted.finalUrl}.`,
+						`Rendered retrieval encountered a login, CAPTCHA, anti-bot, or other access-block response ${statusText}.`,
 						requestedUrl,
 						details,
 					);
@@ -335,7 +360,7 @@ export default function (pi: ExtensionAPI) {
 				if (status === null) {
 					details.retrievalOutcome = "no_http_response";
 					return retrievalFailure(
-						`Rendered navigation produced no HTTP response for ${extracted.finalUrl}, so exact-target access could not be established.`,
+						"Rendered navigation produced no HTTP response, so exact-target access could not be established.",
 						requestedUrl,
 						details,
 					);
@@ -344,7 +369,7 @@ export default function (pi: ExtensionAPI) {
 				if (status >= 400) {
 					details.retrievalOutcome = "http_failure";
 					return retrievalFailure(
-						`Rendered retrieval received an HTTP failure (HTTP ${status}) at ${extracted.finalUrl}.`,
+						`Rendered retrieval received an HTTP failure (HTTP ${status}).`,
 						requestedUrl,
 						details,
 					);
@@ -353,7 +378,7 @@ export default function (pi: ExtensionAPI) {
 				if (extracted.text.length < MIN_READABLE_CHARS) {
 					details.retrievalOutcome = "no_readable_content";
 					return retrievalFailure(
-						`Rendered retrieval produced unreadable content (${extracted.text.length} characters; at least ${MIN_READABLE_CHARS} required) at ${extracted.finalUrl}.`,
+						`Rendered retrieval produced unreadable content (${extracted.text.length} characters; at least ${MIN_READABLE_CHARS} required).`,
 						requestedUrl,
 						details,
 					);
@@ -381,12 +406,13 @@ export default function (pi: ExtensionAPI) {
 				};
 			} catch (error) {
 				if (aborted) throw new Error("Browser fetch cancelled", { cause: error });
-				throw new Error([
-					`Rendered retrieval ${phase} failed for ${requestedUrl}.`,
-					`Cause: ${errorMessage(error)}`,
+				throw new Error(boundedText([
+					`Rendered retrieval ${phase} failed.`,
+					`Requested URL: ${diagnosticField(requestedUrl)}`,
+					`Cause: ${diagnosticField(errorMessage(error))}`,
 					"",
 					nextExactUrlStage(requestedUrl),
-				].join("\n"), { cause: error });
+				].join("\n")), { cause: error });
 			} finally {
 				signal?.removeEventListener("abort", abortHandler);
 				await browser?.close().catch(() => undefined);

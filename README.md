@@ -59,11 +59,12 @@ and returns the rendered result directly. In other modes it returns immediately
 after a session-scoped background operation starts and may later deliver one
 collapsible rendered-text result only while the owning Pi session remains live.
 At most four Browser Fetch operations run concurrently. Output remains bounded,
-Chromium is closed on completion or cancellation, and transport errors, HTTP
-failures, login, CAPTCHA, anti-bot, and unreadable-page responses report what
-happened and the next exact-URL stage rather than bypassing or hiding the
-failure. When multiple rendered-page or other background research calls are
-independently useful, the orchestrator starts them in the same turn so Pi can run
+best-effort Chromium cleanup is attempted on completion or cancellation, and
+transport errors, HTTP failures, login, CAPTCHA, anti-bot, and unreadable-page
+responses report what happened and the next exact-URL stage rather than
+bypassing or hiding the failure. When multiple rendered-page or other background
+research calls are independently useful, the orchestrator starts them in the
+same turn so Pi can run
 them concurrently; it does not await one result before starting another.
 
 Browser Fetch attempts every valid user-authorized HTTP or HTTPS destination

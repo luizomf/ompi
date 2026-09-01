@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  DEFAULT_MAX_BYTES,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -261,6 +265,53 @@ describe("browser_fetch background delivery", () => {
     });
     expect(message.content).toMatch(/unreadable.*7 characters/is);
     expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+  });
+
+  it("bounds rendered failure results containing a long valid URL", async () => {
+    const fake = fakeBrowser({ status: 503 });
+    mocks.launch.mockResolvedValue(fake.browser);
+    const { tools } = setup();
+    const longUrl = `https://example.com/${"a".repeat(DEFAULT_MAX_BYTES * 2)}`;
+
+    const result = await tools.get("browser_fetch").execute(
+      "fetch-long-result",
+      { url: longUrl },
+      undefined,
+      undefined,
+      { cwd: "/repo", mode: "print" } as ExtensionContext,
+    );
+
+    expect(Buffer.byteLength(result.content[0].text, "utf8")).toBeLessThanOrEqual(DEFAULT_MAX_BYTES);
+    expect(result.content[0].text).toMatch(/HTTP failure.*503/is);
+    expect(result.content[0].text).toMatch(/Requested URL:.*\[truncated\]/is);
+    expect(result.content[0].text).toMatch(/Next exact-URL stage.*codex_search/is);
+  });
+
+  it("bounds transport errors while preserving the original cause", async () => {
+    const transportError = new Error(`net::ERR_FAILED ${"x".repeat(DEFAULT_MAX_BYTES * 2)}`);
+    const fake = fakeBrowser({ gotoError: transportError });
+    mocks.launch.mockResolvedValue(fake.browser);
+    const { tools } = setup();
+
+    let thrown: unknown;
+    try {
+      await tools.get("browser_fetch").execute(
+        "fetch-long-error",
+        { url: "https://example.com/article" },
+        undefined,
+        undefined,
+        { cwd: "/repo", mode: "print" } as ExtensionContext,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const error = thrown as Error;
+    expect(Buffer.byteLength(error.message, "utf8")).toBeLessThanOrEqual(DEFAULT_MAX_BYTES);
+    expect(error.message).toMatch(/transport or navigation failed.*ERR_FAILED.*\[truncated\]/is);
+    expect(error.message).toMatch(/Next exact-URL stage.*codex_search/is);
+    expect(error.cause).toBe(transportError);
   });
 
   it("advances a failed markdown.new request only to the final hosted fallback", async () => {
