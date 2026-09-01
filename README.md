@@ -270,8 +270,9 @@ list retained process state, retrieve recent output, and stop a process:
 | `managed_process_output` | Retrieve bounded recent stdout and stderr tails |
 | `managed_process_stop` | Terminate a known process and its owned Unix process group |
 
-Start returns after the operating system accepts the spawn; it does not wait for
-completion or prove that a server is ready. Commands run directly with no shell,
+Start confirmation means only that the operating system accepted the spawn. It
+does not confirm application readiness, successful binding, eventual
+completion, or automatic wake delivery. Commands run directly with no shell,
 stdin is ignored, and no interactive TTY is allocated. The child inherits Pi's
 current environment, including any credentials or SSH-agent authority, and is
 not sandboxed. The extension does not load `.env` files or accept custom
@@ -281,20 +282,29 @@ in the host process table, so do not put secrets in argv.
 The manager cannot force an application to bind loopback. Inspect the
 application and pass its verified host/listen option when network exposure
 matters. On Unix, each child owns a detached process group. Stop, leader exit,
-startup cancellation, and Pi session shutdown send SIGTERM, then SIGKILL after a
-bounded grace period and verifies that the group is gone. Permission failures,
-a surviving group, or a missing leader outcome are reported as cleanup failures.
-Descendants that deliberately create another session or process group can escape
-this mechanism. Starts are rejected on Windows because direct-child signaling
-cannot satisfy the ownership contract.
+startup cancellation, and Pi session shutdown attempt SIGTERM, then SIGKILL after
+a bounded grace period, followed by a group-existence check. Snapshots and stop
+results report which signals were attempted, signaling failures, whether the
+group was gone, surviving, or unknown, and whether the leader exited, was
+signaled, or supplied no terminal outcome. They also warn that descendants which
+create another session or process group may remain even after the owned group is
+gone. This best-effort cleanup is resource hygiene, not a sandbox, proof of
+process ownership, security boundary, or supervisor. Starts are rejected on Windows
+because direct-child signaling cannot satisfy the ownership contract.
 
-State is session-local and in memory. At most eight processes are active, at
-most sixty-four records are retained, and argument vectors are limited to 128
-items, 8,000 UTF-8 bytes per item, and 64 KiB total. Each record keeps the
-latest 64 KiB from each output stream. One output request returns at most 20 KiB
-per stream and reports omitted earlier bytes. The extension does not inject automatic
-completion turns or wakes; list and output calls are concrete snapshots, not
-polling or wait operations. Use ordinary bash instead for finite work that should
+State is session-local and in memory; the extension adds no durable supervisor,
+registry, process discovery, or multi-instance management. At most eight
+processes are active, at most sixty-four records are retained, and argument
+vectors are limited to 128 items, 8,000 UTF-8 bytes per item, and 64 KiB total.
+Terminal records are evicted oldest-first when space is needed, never active
+records. List text and details are each bounded to 48,000 UTF-8 bytes, always
+include every retained active ID and observable state, prefer newest terminal
+history in the remaining budget, and identify omitted records, arguments, and
+oversized fields. Each record keeps the latest 64 KiB from each output stream.
+One output request returns at most 20 KiB per stream and reports omitted earlier
+bytes. The extension does not inject automatic completion turns or wakes; list
+and output calls are concrete snapshots, not polling or wait operations. Use
+ordinary bash instead for finite work that should
 complete synchronously in the current turn. Use `scheduler_submit` for fixed,
 non-interactive finite work that should run through OMQueue and wake Pi after its
 outcome. See [Managed Processes](docs/managed-processes/CONTEXT.md) for the

@@ -88,7 +88,23 @@ describe("ManagedProcessController", () => {
       descendantPid = Number(controller.output(view.id).stdout.text.trim());
 
       const stopped = await controller.stop(view.id);
-      expect(stopped).toMatchObject({ id: view.id, active: false, state: "signaled", exitSignal: "SIGKILL", stopReason: "explicit" });
+      expect(stopped).toMatchObject({
+        id: view.id,
+        active: false,
+        state: "signaled",
+        exitSignal: "SIGKILL",
+        stopReason: "explicit",
+        cleanup: {
+          status: "completed",
+          reason: "explicit",
+          sigterm: "sent",
+          sigkill: "sent",
+          group: "gone",
+          leader: "signaled",
+          errors: [],
+          possibleEscapedDescendants: true,
+        },
+      });
       await expect.poll(() => {
         try {
           process.kill(descendantPid, 0);
@@ -125,6 +141,32 @@ describe("ManagedProcessController", () => {
     }
   });
 
+  it("evicts terminal history immediately so a newly active record remains within the total limit", async () => {
+    const controller = new ManagedProcessController({ maxRecords: 2 });
+
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        const terminal = await controller.start({
+          executable: process.execPath,
+          args: ["--input-type=module", "--eval", "process.exit(0)"],
+          cwd: process.cwd(),
+        });
+        await expect.poll(() => controller.list().find((item) => item.id === terminal.id)?.active).toBe(false);
+      }
+      const active = await controller.start({
+        executable: process.execPath,
+        args: ["--input-type=module", "--eval", "setInterval(() => {}, 1000)"],
+        cwd: process.cwd(),
+      });
+
+      expect(controller.list()).toHaveLength(2);
+      expect(controller.list()).toContainEqual(expect.objectContaining({ id: active.id, active: true }));
+      expect(controller.list().map((view) => view.id)).toEqual([2, 3]);
+    } finally {
+      await controller.shutdown();
+    }
+  });
+
   it("rejects cancellation before spawn acceptance and leaves no active process", async () => {
     const controller = new ManagedProcessController();
     const abort = new AbortController();
@@ -140,6 +182,14 @@ describe("ManagedProcessController", () => {
 
       await expect(starting).rejects.toThrow("cancelled before spawn acceptance");
       await expect.poll(() => controller.list()[0]?.active).toBe(false);
+      expect(controller.list()[0]).toMatchObject({
+        stopReason: "startup_cancelled",
+        cleanup: {
+          status: expect.stringMatching(/^(completed|failed)$/),
+          reason: "startup_cancelled",
+          possibleEscapedDescendants: true,
+        },
+      });
     } finally {
       await controller.shutdown();
     }
@@ -176,7 +226,18 @@ describe("ManagedProcessController", () => {
       await expect.poll(() => controller.output(view.id).stdout.text.trim()).toMatch(/^\d+$/);
       descendantPid = Number(controller.output(view.id).stdout.text.trim());
       await expect.poll(() => controller.list()[0]?.state).toBe("exited");
-      expect(controller.list()[0]).toMatchObject({ active: false, exitCode: 0, stopReason: "leader_exit_cleanup" });
+      expect(controller.list()[0]).toMatchObject({
+        active: false,
+        exitCode: 0,
+        stopReason: "leader_exit_cleanup",
+        cleanup: {
+          status: "completed",
+          reason: "leader_exit_cleanup",
+          group: "gone",
+          leader: "exited",
+          possibleEscapedDescendants: true,
+        },
+      });
       await expect.poll(() => {
         try {
           process.kill(descendantPid, 0);
@@ -247,6 +308,34 @@ describe("ManagedProcessController", () => {
     }
   });
 
+  it("returns a bounded cleanup report when session shutdown clears active records", async () => {
+    const controller = new ManagedProcessController({ stopGraceMs: 20 });
+    const view = await controller.start({
+      executable: process.execPath,
+      args: ["--input-type=module", "--eval", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+      cwd: process.cwd(),
+    });
+
+    const report = await controller.shutdown();
+
+    expect(report).toMatchObject({
+      processes: [{
+        id: view.id,
+        state: "signaled",
+        stopReason: "session_shutdown",
+        cleanup: {
+          status: "completed",
+          reason: "session_shutdown",
+          group: "gone",
+          leader: "signaled",
+          possibleEscapedDescendants: true,
+        },
+      }],
+    });
+    expect(Buffer.byteLength(JSON.stringify(report), "utf8")).toBeLessThanOrEqual(16_000);
+    expect(controller.list()).toEqual([]);
+  });
+
   it("does not hang when an escaped descendant keeps the captured pipes open", async () => {
     const controller = new ManagedProcessController({ stopGraceMs: 20 });
     let escapedPid = 0;
@@ -295,6 +384,58 @@ describe("ManagedProcessController", () => {
         state: "cleanup_failed",
         stopReason: "explicit",
         error: expect.stringContaining("EPERM"),
+        cleanup: {
+          status: "failed",
+          reason: "explicit",
+          sigterm: "failed",
+          sigkill: "failed",
+          group: "unknown",
+          leader: "missing",
+          possibleEscapedDescendants: true,
+          errors: expect.arrayContaining([
+            expect.stringContaining("SIGTERM failed (EPERM)"),
+            expect.stringContaining("SIGKILL failed (EPERM)"),
+            expect.stringContaining("leader did not report a terminal outcome"),
+          ]),
+        },
+      });
+    } finally {
+      killSpy.mockRestore();
+      if (view.pgid) {
+        try { originalKill(-view.pgid, "SIGKILL"); } catch { /* already gone */ }
+      }
+      await controller.shutdown();
+    }
+  });
+
+  it("reports a surviving group and missing leader outcome after bounded escalation", async () => {
+    const controller = new ManagedProcessController({ stopGraceMs: 20 });
+    const view = await controller.start({
+      executable: process.execPath,
+      args: ["--input-type=module", "--eval", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+      cwd: process.cwd(),
+    });
+    const originalKill = process.kill.bind(process);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+      if (pid === -(view.pgid ?? 0)) return true;
+      return originalKill(pid, signal as NodeJS.Signals);
+    }) as typeof process.kill);
+
+    try {
+      await expect(controller.stop(view.id)).resolves.toMatchObject({
+        state: "cleanup_failed",
+        cleanup: {
+          status: "failed",
+          sigterm: "sent",
+          sigkill: "sent",
+          group: "survived",
+          leader: "missing",
+          possibleEscapedDescendants: true,
+          errors: expect.arrayContaining([
+            expect.stringContaining("remained alive after SIGKILL"),
+            expect.stringContaining("did not report a terminal outcome"),
+          ]),
+        },
       });
     } finally {
       killSpy.mockRestore();
@@ -322,5 +463,9 @@ describe("ManagedProcessController", () => {
     expect(() => new ManagedProcessController({ maxStreamBytes: 8, maxOutputBytes: 9 })).toThrow("maxOutputBytes");
     expect(() => new ManagedProcessController({ maxRecords: 0 })).toThrow("maxRecords");
     expect(() => new ManagedProcessController({ stopGraceMs: 0 })).toThrow("stopGraceMs");
+    expect(() => new ManagedProcessController({ maxActive: 9 })).toThrow("maxActive");
+    expect(() => new ManagedProcessController({ maxStreamBytes: 65_537 })).toThrow("maxStreamBytes");
+    expect(() => new ManagedProcessController({ maxOutputBytes: 20_481 })).toThrow("maxOutputBytes");
+    expect(() => new ManagedProcessController({ maxRecords: 65 })).toThrow("maxRecords");
   });
 });

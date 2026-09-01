@@ -13,6 +13,8 @@ const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 8_000;
 const MAX_ARGUMENT_VECTOR_BYTES = 64 * 1024;
 const MAX_PATH_BYTES = 8_000;
+const MAX_CLEANUP_ERRORS = 4;
+const MAX_CLEANUP_ERROR_CHARACTERS = 256;
 
 type ManagedChild = ChildProcessByStdio<null, Readable, Readable>;
 
@@ -39,6 +41,23 @@ export interface StartProcessInput {
   signal?: AbortSignal;
 }
 
+export type ManagedProcessCleanupStatus = "not_attempted" | "pending" | "completed" | "failed";
+export type ManagedProcessSignalOutcome = "not_attempted" | "sent" | "group_gone" | "failed";
+export type ManagedProcessGroupOutcome = "not_checked" | "present" | "gone" | "survived" | "unknown";
+export type ManagedProcessLeaderOutcome = "pending" | "exited" | "signaled" | "missing";
+
+export interface ManagedProcessCleanup {
+  status: ManagedProcessCleanupStatus;
+  reason?: ManagedProcessStopReason;
+  sigterm: ManagedProcessSignalOutcome;
+  sigkill: ManagedProcessSignalOutcome;
+  group: ManagedProcessGroupOutcome;
+  leader: ManagedProcessLeaderOutcome;
+  errors: string[];
+  errorsOmitted: number;
+  possibleEscapedDescendants: boolean;
+}
+
 export interface ManagedProcessView {
   id: number;
   executable: string;
@@ -54,6 +73,7 @@ export interface ManagedProcessView {
   exitSignal?: NodeJS.Signals;
   stopReason?: ManagedProcessStopReason;
   error?: string;
+  cleanup: ManagedProcessCleanup;
 }
 
 export interface StreamOutput {
@@ -68,6 +88,12 @@ export interface ManagedProcessOutput {
   state: ManagedProcessState;
   stdout: StreamOutput;
   stderr: StreamOutput;
+}
+
+export interface ManagedProcessShutdownReport {
+  processes: Array<Pick<ManagedProcessView,
+    "id" | "state" | "active" | "exitCode" | "exitSignal" | "stopReason" | "error" | "cleanup"
+  >>;
 }
 
 export interface ManagedProcessControllerOptions {
@@ -131,6 +157,7 @@ interface ProcessRecord extends ManagedProcessView {
   stderrBuffer: TailBuffer;
   startFailed: boolean;
   cleanupErrors: string[];
+  cleanupErrorsOmitted: number;
   forceKill?: NodeJS.Timeout;
   forceClose?: NodeJS.Timeout;
   pendingExitCode?: number | null;
@@ -148,6 +175,12 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function compactError(error: string): string {
+  if (error.length <= MAX_CLEANUP_ERROR_CHARACTERS) return error;
+  const suffix = `…[truncated from ${error.length} characters]`;
+  return `${error.slice(0, Math.max(0, MAX_CLEANUP_ERROR_CHARACTERS - suffix.length))}${suffix}`;
+}
+
 function errorCode(error: unknown): string {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code ?? "unknown")
@@ -157,6 +190,12 @@ function errorCode(error: unknown): string {
 function requirePositiveInteger(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`Managed process ${name} must be a positive integer.`);
+  }
+}
+
+function requireAtMost(name: string, value: number, maximum: number): void {
+  if (value > maximum) {
+    throw new Error(`Managed process ${name} must not exceed ${maximum}.`);
   }
 }
 
@@ -224,7 +263,7 @@ export class ManagedProcessController {
   private readonly onChange?: () => void;
   private nextId = 1;
   private shuttingDown = false;
-  private shutdownPromise?: Promise<void>;
+  private shutdownPromise?: Promise<ManagedProcessShutdownReport>;
 
   constructor(options: ManagedProcessControllerOptions = {}) {
     this.maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
@@ -237,6 +276,10 @@ export class ManagedProcessController {
     requirePositiveInteger("maxOutputBytes", this.maxOutputBytes);
     requirePositiveInteger("maxRecords", this.maxRecords);
     requirePositiveInteger("stopGraceMs", this.stopGraceMs);
+    requireAtMost("maxActive", this.maxActive, DEFAULT_MAX_ACTIVE);
+    requireAtMost("maxStreamBytes", this.maxStreamBytes, DEFAULT_STREAM_BYTES);
+    requireAtMost("maxOutputBytes", this.maxOutputBytes, DEFAULT_OUTPUT_BYTES);
+    requireAtMost("maxRecords", this.maxRecords, DEFAULT_MAX_RECORDS);
     if (this.maxOutputBytes > this.maxStreamBytes) {
       throw new Error("Managed process maxOutputBytes must not exceed maxStreamBytes.");
     }
@@ -299,10 +342,22 @@ export class ManagedProcessController {
       stderrBuffer: new TailBuffer(this.maxStreamBytes),
       startFailed: false,
       cleanupErrors: [],
+      cleanupErrorsOmitted: 0,
+      cleanup: {
+        status: "not_attempted",
+        sigterm: "not_attempted",
+        sigkill: "not_attempted",
+        group: "not_checked",
+        leader: "pending",
+        errors: [],
+        errorsOmitted: 0,
+        possibleEscapedDescendants: false,
+      },
       closed,
       resolveClosed,
     };
     this.records.set(id, record);
+    this.trimHistory();
     this.changed();
 
     child.stdout.on("data", (chunk: Buffer) => record.stdoutBuffer.append(chunk));
@@ -356,7 +411,7 @@ export class ManagedProcessController {
           reject(new Error(text));
           return;
         }
-        record.cleanupErrors.push(`Managed child process error: ${message(error)}`);
+        this.addCleanupError(record, `Managed child process error: ${message(error)}`);
         this.beginTermination(record, "process_error");
       });
       if (input.signal?.aborted) abort();
@@ -371,15 +426,31 @@ export class ManagedProcessController {
     return this.view(record);
   }
 
-  shutdown(): Promise<void> {
+  shutdown(): Promise<ManagedProcessShutdownReport> {
     if (this.shutdownPromise) return this.shutdownPromise;
     this.shuttingDown = true;
     this.shutdownPromise = (async () => {
       const active = [...this.records.values()].filter((record) => record.active);
       for (const record of active) this.beginTermination(record, "session_shutdown");
       await Promise.allSettled(active.map((record) => record.closed));
+      const report: ManagedProcessShutdownReport = {
+        processes: active.map((record) => {
+          const view = this.view(record);
+          return {
+            id: view.id,
+            state: view.state,
+            active: view.active,
+            exitCode: view.exitCode,
+            exitSignal: view.exitSignal,
+            stopReason: view.stopReason,
+            error: view.error,
+            cleanup: view.cleanup,
+          };
+        }),
+      };
       this.records.clear();
       this.changed();
+      return report;
     })();
     return this.shutdownPromise;
   }
@@ -387,10 +458,13 @@ export class ManagedProcessController {
   private beginTermination(record: ProcessRecord, reason: ManagedProcessStopReason): void {
     if (!record.active) return;
     record.stopReason ??= reason;
+    record.cleanup.status = "pending";
+    record.cleanup.reason = record.stopReason;
+    record.cleanup.possibleEscapedDescendants = true;
     if (record.state !== "starting") record.state = "stopping";
-    this.captureCleanupFailure(record, signalGroup(record.pgid, "SIGTERM"));
+    this.captureSignalOutcome(record, "sigterm", signalGroup(record.pgid, "SIGTERM"));
     record.forceKill ??= setTimeout(() => {
-      this.captureCleanupFailure(record, signalGroup(record.pgid, "SIGKILL"));
+      this.captureSignalOutcome(record, "sigkill", signalGroup(record.pgid, "SIGKILL"));
       record.child.stdout.destroy();
       record.child.stderr.destroy();
       this.awaitGroupCleanup(record, Date.now() + Math.max(500, this.stopGraceMs));
@@ -403,35 +477,76 @@ export class ManagedProcessController {
     const probe = probeGroup(record.pgid);
     const hasOutcome = record.pendingExitCode !== undefined || record.pendingExitSignal !== undefined;
     if (probe.kind === "gone" && hasOutcome) {
+      this.captureGroupOutcome(record, probe, false);
       this.finish(record);
       return;
     }
     if (Date.now() >= deadline) {
-      this.captureCleanupFailure(record, probe);
+      this.captureGroupOutcome(record, probe, true);
       if (probe.kind === "present") {
-        record.cleanupErrors.push("Managed process group remained alive after SIGKILL escalation.");
+        this.addCleanupError(record, "Managed process group remained alive after SIGKILL escalation.");
       }
       if (!hasOutcome) {
-        record.cleanupErrors.push("Managed process leader did not report a terminal outcome before the cleanup deadline.");
+        this.addCleanupError(record, "Managed process leader did not report a terminal outcome before the cleanup deadline.");
       }
       this.finish(record);
       return;
     }
+    this.captureGroupOutcome(record, probe, false);
     record.forceClose = setTimeout(() => this.awaitGroupCleanup(record, deadline), 25);
   }
 
   private finishIfGroupGone(record: ProcessRecord): void {
     if (!record.active) return;
     const probe = probeGroup(record.pgid);
+    this.captureGroupOutcome(record, probe, false);
     if (probe.kind === "gone") {
       this.finish(record);
     }
   }
 
-  private captureCleanupFailure(record: ProcessRecord, probe: GroupProbe): void {
-    if (probe.kind === "failed" && !record.cleanupErrors.includes(probe.error)) {
-      record.cleanupErrors.push(probe.error);
+  private captureSignalOutcome(
+    record: ProcessRecord,
+    signal: "sigterm" | "sigkill",
+    probe: GroupProbe,
+  ): void {
+    if (probe.kind === "present") {
+      record.cleanup[signal] = "sent";
+      return;
     }
+    if (probe.kind === "gone") {
+      record.cleanup[signal] = "group_gone";
+      record.cleanup.group = "gone";
+      return;
+    }
+    record.cleanup[signal] = "failed";
+    record.cleanup.group = "unknown";
+    this.addCleanupError(record, probe.error);
+  }
+
+  private captureGroupOutcome(record: ProcessRecord, probe: GroupProbe, final: boolean): void {
+    if (probe.kind === "gone") {
+      record.cleanup.group = "gone";
+      return;
+    }
+    if (probe.kind === "present") {
+      record.cleanup.group = final ? "survived" : "present";
+      return;
+    }
+    record.cleanup.group = "unknown";
+    if (final) this.addCleanupError(record, probe.error);
+  }
+
+  private addCleanupError(record: ProcessRecord, error: string): void {
+    const bounded = compactError(error);
+    if (record.cleanupErrors.includes(bounded)) return;
+    if (record.cleanupErrors.length < MAX_CLEANUP_ERRORS) {
+      record.cleanupErrors.push(bounded);
+    } else {
+      record.cleanupErrorsOmitted += 1;
+    }
+    record.cleanup.errors = [...record.cleanupErrors];
+    record.cleanup.errorsOmitted = record.cleanupErrorsOmitted;
   }
 
   private finish(record: ProcessRecord): void {
@@ -440,9 +555,27 @@ export class ManagedProcessController {
     if (record.forceClose) clearTimeout(record.forceClose);
     record.active = false;
     record.endedAt = this.now();
+    if (record.cleanup.status !== "not_attempted") {
+      if (record.pendingExitSignal) {
+        record.cleanup.leader = "signaled";
+      } else if (record.pendingExitCode !== undefined && record.pendingExitCode !== null) {
+        record.cleanup.leader = "exited";
+      } else {
+        record.cleanup.leader = "missing";
+        this.addCleanupError(record, "Managed process leader has no reported exit code or signal.");
+      }
+      record.cleanup.status = record.cleanupErrors.length > 0 || record.cleanupErrorsOmitted > 0
+        ? "failed"
+        : "completed";
+      record.cleanup.errors = [...record.cleanupErrors];
+      record.cleanup.errorsOmitted = record.cleanupErrorsOmitted;
+    }
     if (record.cleanupErrors.length > 0) {
       record.state = "cleanup_failed";
-      record.error = record.cleanupErrors.join(" ");
+      const omitted = record.cleanupErrorsOmitted > 0
+        ? ` [${record.cleanupErrorsOmitted} additional cleanup errors omitted.]`
+        : "";
+      record.error = `${record.cleanupErrors.join(" ")}${omitted}`;
     } else if (record.startFailed) {
       record.state = "start_failed";
     } else if (record.pendingExitSignal) {
@@ -487,6 +620,10 @@ export class ManagedProcessController {
       exitSignal: record.exitSignal,
       stopReason: record.stopReason,
       error: record.error,
+      cleanup: {
+        ...record.cleanup,
+        errors: [...record.cleanup.errors],
+      },
     };
   }
 
