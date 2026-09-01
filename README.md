@@ -170,11 +170,13 @@ results; this path is intentionally not durable and does not use `bq` or
 OMQueue.
 
 Each process has a ten-minute timeout, captures at most 48,000 stdout bytes and a
-2,000-byte stderr tail, drains both streams, and terminates its process group on
-cancellation, timeout, or leader exit. Startup, unavailable-helper, timeout,
-stdin, and nonzero-exit failures include bounded diagnostics and actionable
-invocation context. A failure must be mentioned in the next user-facing response
-without abandoning otherwise useful work. An `exact_url` failure continues only
+2,000-byte stderr tail, and drains both streams. On cancellation, timeout, or
+leader exit, it attempts best-effort process-group termination where supported
+and falls back to signaling the direct child; cleanup is not guaranteed.
+Startup, unavailable-helper, timeout, stdin, and nonzero-exit failures include
+bounded diagnostics and actionable invocation context. A failure must be
+mentioned in the next user-facing response without abandoning otherwise useful
+work. An `exact_url` failure continues only
 the remaining `markdown.new` and `r.jina.ai` stages of the strict fallback chain
 and never restarts it.
 
