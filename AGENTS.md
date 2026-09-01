@@ -77,8 +77,6 @@ intent-bearing comments synchronized with an intentional behavior change.
 - `CONTEXT-MAP.md` — routing table for the current domain contexts.
 - `docs/*/CONTEXT.md` — canonical context terminology, contracts, and ownership
   boundaries.
-- `docs/orchestration-exploration.md` and `docs/research/` — historical findings
-  and decision input, not a current feature inventory or executable policy.
 - `docs/agents/` — issue-tracker, triage-label, and domain-doc configuration.
 
 Keep the lifecycle seams visible:

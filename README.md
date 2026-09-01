@@ -797,12 +797,6 @@ npm run typecheck
 npm test
 ```
 
-## Exploration notes
-
-- [Pi orchestration exploration](docs/orchestration-exploration.md) records
-  findings about wormholes, tmux workers, subagents, cross-machine messaging,
-  reliability boundaries, and historically reviewed extensions.
-
 ## Safety defaults
 
 - No automatic `.env` loading.
