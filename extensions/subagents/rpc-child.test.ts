@@ -150,6 +150,24 @@ describe("ownership status protocol", () => {
     }))).toThrow("invalid");
   });
 
+  it("marks bounded ownership metadata omissions before relaying status", () => {
+    const [runtime] = parseOwnershipStatus(encodeOwnershipStatus([{
+      path: [1],
+      parentPath: [],
+      id: 1,
+      depth: 3,
+      state: "running",
+      name: `leaf-${"n".repeat(200)}`,
+      model: `provider/${"m".repeat(300)}`,
+      thinking: "medium",
+    }]));
+
+    expect(runtime.name).toHaveLength(80);
+    expect(runtime.name).toContain("characters omitted");
+    expect(runtime.model).toHaveLength(160);
+    expect(runtime.model).toContain("characters omitted");
+  });
+
   it("omits a whitespace-only optional name instead of rejecting active status", () => {
     const encoded = encodeOwnershipStatus([{
       path: [1],

@@ -3,6 +3,7 @@ import type {
   OwnershipRuntime,
   ThinkingLevel,
 } from "./controller.ts";
+import { boundText } from "./feedback.ts";
 
 export const OWNERSHIP_STATUS_KEY = "ompi:subagents:ownership-v1";
 
@@ -33,8 +34,7 @@ function invalid(): never {
 }
 
 function oneLine(value: string, limit: number): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length > limit ? compact.slice(0, limit) : compact;
+  return boundText(value.replace(/\s+/g, " ").trim(), limit).text;
 }
 
 function positiveId(value: unknown): value is number {

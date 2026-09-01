@@ -1,5 +1,5 @@
 export const PARENT_ERROR_LIMIT = 4_000;
-export const SESSION_REFERENCE_LIMIT = 4_096;
+export const SESSION_REFERENCE_LIMIT = 2_048;
 
 export interface BoundedText {
   text: string;

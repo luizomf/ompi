@@ -117,6 +117,7 @@ function setup(options: {
   lineage?: ManagedLineage;
   delayedClose?: boolean;
   promptError?: Error;
+  sessionFile?: string;
 } = {}) {
   const children: FakeChild[] = [];
   const pongs: unknown[] = [];
@@ -126,7 +127,7 @@ function setup(options: {
     createChild: async (spec) => {
       const child = new FakeChild(
         spec,
-        spec.session ?? `/sessions/${children.length + 1}.jsonl`,
+        spec.session ?? options.sessionFile ?? `/sessions/${children.length + 1}.jsonl`,
         options.delayedPrompt,
         options.reportedCapabilities,
         options.delayedClose,
@@ -514,6 +515,47 @@ describe("SubagentController", () => {
       sessionRef: "/sessions/1.jsonl",
     }]);
     expect(pongs).toEqual([]);
+  });
+
+  it("keeps the complete bounded session reference and a useful cause in unknown feedback", async () => {
+    const sessionRef = `/sessions/${"s".repeat(1_900)}.jsonl`;
+    const cause = new Error(`transport detail: ${"e".repeat(8_000)}`);
+    const promptError = new PromptTransportError(true, cause);
+    const { controller } = setup({ promptError, sessionFile: sessionRef });
+    let captured: unknown;
+
+    try {
+      await controller.start({
+        prompt: "possibly sent",
+        cwd: "/repo",
+        model: "p/m",
+        thinking: "low",
+        capabilities: DEFAULT_CAPABILITIES,
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toHaveLength(4_000);
+    expect((captured as Error).message).toContain(sessionRef);
+    expect((captured as Error).message).toContain("Cause: transport detail:");
+    expect((captured as Error).message).toContain("characters omitted");
+    expect((captured as Error).cause).toBe(promptError);
+    expect(((captured as Error).cause as Error).cause).toBe(cause);
+  });
+
+  it("definitely rejects a multiline session reference before prompt dispatch", async () => {
+    const { controller, children } = setup({ sessionFile: "/sessions/bad\nreference.jsonl" });
+
+    await expect(controller.start({
+      prompt: "not sent",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "low",
+      capabilities: DEFAULT_CAPABILITIES,
+    })).rejects.toThrow("definitely rejected before the prompt crossed");
+    expect(children[0].requests).not.toContainEqual(expect.objectContaining({ type: "prompt" }));
   });
 
   it("preserves the original capability preflight failure as the dispatch error cause", async () => {

@@ -10,7 +10,9 @@ import {
   type ManagedLineage,
 } from "./lineage.ts";
 import {
+  PARENT_ERROR_LIMIT,
   SESSION_REFERENCE_LIMIT,
+  boundText,
   errorText,
 } from "./feedback.ts";
 
@@ -149,6 +151,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function unknownAcceptanceMessage(sessionRef: string | undefined, error: unknown): string {
+  const warning = "Subagent dispatch acceptance is unknown because the prompt may have crossed the child process boundary. Do not blindly retry; retrying could duplicate effects.";
+  const session = sessionRef ? ` Native session: ${sessionRef}.` : "";
+  const causePrefix = " Cause: ";
+  const causeLimit = Math.max(
+    32,
+    PARENT_ERROR_LIMIT - warning.length - session.length - causePrefix.length,
+  );
+  const cause = boundText(errorMessage(error), causeLimit).text;
+  return `${warning}${session}${causePrefix}${cause}`;
+}
+
 function sessionFile(value: unknown): string {
   const candidate = value && typeof value === "object"
     ? (value as { sessionFile?: unknown }).sessionFile
@@ -157,10 +171,10 @@ function sessionFile(value: unknown): string {
     typeof candidate !== "string"
     || candidate.length === 0
     || candidate.length > SESSION_REFERENCE_LIMIT
-    || candidate.includes("\u0000")
+    || /[\u0000\r\n]/.test(candidate)
   ) {
     throw new Error(
-      `Child did not provide a native session reference of at most ${SESSION_REFERENCE_LIMIT} characters.`,
+      `Child did not provide a one-line native session reference of at most ${SESSION_REFERENCE_LIMIT} characters.`,
     );
   }
   return candidate;
@@ -456,7 +470,7 @@ export class SubagentController {
       if (promptMayHaveCrossed) {
         throw new DispatchError(
           "unknown",
-          `Subagent dispatch acceptance is unknown because the prompt may have crossed the child process boundary. Do not blindly retry; retrying could duplicate effects. Native session: ${record.sessionRef}. Cause: ${errorMessage(error)}`,
+          unknownAcceptanceMessage(record.sessionRef, error),
           record.sessionRef,
           error,
         );

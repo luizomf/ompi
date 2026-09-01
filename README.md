@@ -539,9 +539,9 @@ continuation state. Continuation resumes only that child's conversation at the
 same one-based delegation depth while capturing the parent's current
 capabilities again. The root is depth 1, its coordinator is depth 2, a leaf is
 depth 3, and the default maximum is 3. The root owns at most 12 active direct
-children; each nested parent defaults to 2. Handshaking, running, finalizing,
-and direct-wait runtimes occupy the responsible parent's local slot until their
-process exits.
+children; each nested parent defaults to 2. Preflight and handshaking processes,
+plus accepted running, finalizing, and direct-wait runtimes, occupy the
+responsible parent's local slot until their process exits.
 
 A coordinator RPC process remains alive through dependent direct leaf calls and
 exits only after its enclosing Pi turn settles. Parent interruption, process

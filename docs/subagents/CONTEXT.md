@@ -37,7 +37,7 @@ The one-based position of an agent in one managed delegation lineage: root orche
 _Avoid_: Process count, task phase, permission role
 
 **Direct active-child ceiling**:
-The maximum number of direct child processes one parent may own concurrently. The root default is 12 and a nested parent defaults to 2. A nested ceiling may be tightened to 0, 1, or 2 but never raised above what the parent inherited. Handshaking, running, finalizing, and direct-wait runtimes hold a local slot until their owned process has exited. Each controller enforces only its direct children; this is not a global or tree-wide semaphore.
+The maximum number of direct child processes one parent may own concurrently. The root default is 12 and a nested parent defaults to 2. A nested ceiling may be tightened to 0, 1, or 2 but never raised above what the parent inherited. Preflight and handshaking processes, plus accepted running, finalizing, and direct-wait runtimes, hold a local slot until their owned process has exited. Each controller enforces only its direct children; this is not a global or tree-wide semaphore.
 _Avoid_: Global process limit, queue capacity, lifetime spawn count, known conversation count
 
 **Managed delegation lineage**:
