@@ -393,7 +393,7 @@ alongside Browser Fetch by `just research`; outside that explicit profile it is
 not enabled by a package manifest or unrelated launch profile.
 
 Browser Fetch and Codex Search share the single background wrapper maintained at
-`extensions/background-tool.ts`. Their extension-local aliases preserve jiti
+`extensions/shared/background-tool.ts`. Their extension-local aliases preserve jiti
 module resolution when each global extension directory is a symlink. The
 fresh-checkout setup above installs the local dependency and creates the links
 needed by `just research`; the discovery distinction remains the one documented
@@ -424,7 +424,10 @@ commands directly without a shell, and is inert unless both `TMUX` and
 Install it globally from the repository root with:
 
 ```sh
-ln -s "$(pwd)/extensions/tmux-status" "${HOME}/.pi/agent/extensions/tmux-status"
+extensions_dir="${HOME}/.pi/agent/extensions"
+tmux_status_source="$(pwd)/extensions/tmux-status"
+ln -s "$(node -e 'const path = require("node:path"); process.stdout.write(path.relative(process.argv[1], process.argv[2]))' "${extensions_dir}" "${tmux_status_source}")" \
+  "${extensions_dir}/tmux-status"
 ```
 
 Consumers can render the window option directly with `#{@pi_status}`. Existing

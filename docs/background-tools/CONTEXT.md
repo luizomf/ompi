@@ -77,7 +77,7 @@ _Avoid_: Scheduler wake, pong, polling response
 
 ## Implementation ownership
 
-The canonical wrapper source is `extensions/background-tool.ts`. Eligible
+The canonical wrapper source is `extensions/shared/background-tool.ts`. Eligible
 extension directories expose relative `background-tool.ts` symlink aliases so
 imports remain loadable when those directories are themselves reached through
 Pi's global extension symlinks. Browser Fetch uses the wrapper as a read-only

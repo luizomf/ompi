@@ -30,7 +30,7 @@ _Avoid_: Graceful application shutdown guarantee, arbitrary signal API
 
 ## Boundary contract
 
-- The extension is separate from `extensions/background-tool.ts`. That wrapper owns finite read-only completion tasks; managed processes have explicit observation and termination lifecycles.
+- The extension is separate from `extensions/shared/background-tool.ts`. That wrapper owns finite read-only completion tasks; managed processes have explicit observation and termination lifecycles.
 - A managed process is session-scoped and in memory. Records, output, and IDs do not survive reload, session replacement, or Pi exit. The extension adds no durable supervisor, process registry, discovery mechanism, or multi-instance management.
 - Start invokes the executable directly with a literal argument vector and `shell: false`. It does not perform shell expansion, interpolation, redirection, pipelines, or profile loading.
 - The child inherits the active Pi process environment. That environment may include credentials, SSH-agent access, and other authority. The extension does not load `.env` files, accept environment overrides, or enumerate inherited values in diagnostics. Arguments are retained in the Pi session and may also be visible in the host process table, so secrets should not be passed through argv.

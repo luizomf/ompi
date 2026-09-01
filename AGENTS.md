@@ -58,7 +58,7 @@ intent-bearing comments synchronized with an intentional behavior change.
 ## Repository and lifecycle map
 
 - `justfile` — isolated Pi launch profiles grouped by intent.
-- `extensions/background-tool.ts` — session-scoped wrapper for explicitly
+- `extensions/shared/background-tool.ts` — session-scoped wrapper for explicitly
   selected finite text-result tools; each wrapped tool owns its effect and
   authorization boundary.
 - `extensions/browser-fetch/` — bounded Chromium page fetcher for explicitly
