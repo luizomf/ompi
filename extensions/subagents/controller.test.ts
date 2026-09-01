@@ -631,6 +631,48 @@ describe("SubagentController", () => {
     expect(pongs[0]).toMatchObject({ outcome: "failed", error: "provider failed" });
   });
 
+  it("returns a failed pong with the session reference for malformed terminal text metadata", async () => {
+    const { controller, children, pongs } = setup();
+    await controller.start({
+      prompt: "work",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "medium",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+    children[0].finalText = {} as unknown as string;
+
+    await settle(children[0]);
+
+    expect(pongs).toMatchObject([{
+      outcome: "failed",
+      sessionRef: "/sessions/1.jsonl",
+      error: "Child returned invalid last assistant text metadata.",
+    }]);
+  });
+
+  it("returns a direct failed terminal result for malformed terminal text metadata", async () => {
+    const { controller, children, pongs } = setup();
+    const running = controller.run({
+      prompt: "work",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "medium",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    children[0].finalText = [] as unknown as string;
+
+    await settle(children[0]);
+
+    await expect(running).resolves.toMatchObject({
+      outcome: "failed",
+      sessionRef: "/sessions/1.jsonl",
+      error: "Child returned invalid last assistant text metadata.",
+    });
+    expect(pongs).toEqual([]);
+  });
+
   it("continues the same session with the routing values supplied for the new turn", async () => {
     const { controller, children } = setup();
     await controller.start({ prompt: "one", cwd: "/repo", model: "p/old", thinking: "low", capabilities: DEFAULT_CAPABILITIES });
@@ -719,6 +761,27 @@ describe("SubagentController", () => {
     children[0].emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "visible" } });
     children[0].emit({ type: "tool_execution_start", toolName: "read" });
     expect(controller.list()[0]).toMatchObject({ preview: "visible", currentTool: "read" });
+  });
+
+  it("ignores malformed tool metadata and bounds valid tool names from untrusted frames", async () => {
+    const { controller, children } = setup();
+    await controller.start({
+      prompt: "one",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "low",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+
+    expect(() => children[0].emit({
+      type: "tool_execution_start",
+      toolName: {} as unknown as string,
+    })).not.toThrow();
+    expect(controller.list()[0].currentTool).toBeUndefined();
+
+    children[0].emit({ type: "tool_execution_start", toolName: `tool-${"x".repeat(400)}` });
+    expect(controller.list()[0].currentTool).toHaveLength(256);
+    expect(controller.list()[0].currentTool).toContain("characters omitted");
   });
 
   it("reports only the active owned subtree and removes descendants on child settlement", async () => {

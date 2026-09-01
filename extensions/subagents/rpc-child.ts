@@ -248,6 +248,14 @@ export class RpcSubprocess implements RpcChild {
       return;
     }
     if (
+      !message
+      || typeof message !== "object"
+      || Array.isArray(message)
+      || typeof message.type !== "string"
+    ) {
+      return;
+    }
+    if (
       message.type === "extension_ui_request"
       && "method" in message
       && message.method === "setStatus"

@@ -491,6 +491,38 @@ describe("RpcSubprocess prompt transport", () => {
 });
 
 describe("RpcSubprocess frame transport", () => {
+  it("ignores valid JSON values that are not RPC records", async () => {
+    const script = String.raw`
+      process.stdout.write("null\n[]\n42\n");
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const command = JSON.parse(buffer.slice(0, newline));
+        process.stdout.write(JSON.stringify({
+          type: "response",
+          id: command.id,
+          success: true,
+          data: "pong",
+        }) + "\n");
+      });
+    `;
+    const child = new RpcSubprocess({
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+    const events: unknown[] = [];
+    child.onEvent((event) => events.push(event));
+
+    await expect(child.request({ type: "ping" })).resolves.toBe("pong");
+    expect(events).toEqual([]);
+    await child.close();
+  });
+
   it("accepts a valid model-sized frame and settles following responses", async () => {
     const child = new RpcSubprocess(frameChildInvocation(1024 * 1024));
     const followingResponse = new Promise<unknown>((resolve, reject) => {

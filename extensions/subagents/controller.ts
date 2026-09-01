@@ -181,7 +181,51 @@ function sessionFile(value: unknown): string {
 }
 
 function textData(value: unknown): { text?: string | null } {
-  return value && typeof value === "object" ? (value as { text?: string | null }) : {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Child returned invalid last assistant text metadata.");
+  }
+  const text = (value as { text?: unknown }).text;
+  if (text !== undefined && text !== null && typeof text !== "string") {
+    throw new Error("Child returned invalid last assistant text metadata.");
+  }
+  return { text };
+}
+
+function oneLine(value: string, limit: number): string {
+  return boundText(value.replace(/\s+/g, " ").trim(), limit).text;
+}
+
+function ownershipRuntime(value: unknown): value is OwnershipRuntime {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const runtime = value as Partial<OwnershipRuntime>;
+  const path = runtime.path;
+  const parentPath = runtime.parentPath;
+  return Array.isArray(path)
+    && path.length > 0
+    && path.length <= 2
+    && path.every((id) => Number.isSafeInteger(id) && id > 0)
+    && Array.isArray(parentPath)
+    && parentPath.length === path.length - 1
+    && parentPath.every((id, index) => id === path[index])
+    && Number.isSafeInteger(runtime.id)
+    && runtime.id === path.at(-1)
+    && Number.isInteger(runtime.depth)
+    && typeof runtime.state === "string"
+    && ["handshaking", "running", "steering", "interrupting", "finalizing"].includes(runtime.state)
+    && typeof runtime.model === "string"
+    && runtime.model.length > 0
+    && typeof runtime.thinking === "string"
+    && ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(runtime.thinking)
+    && (runtime.name === undefined || typeof runtime.name === "string");
+}
+
+function ownershipData(value: unknown): OwnershipRuntime[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(ownershipRuntime).map((runtime) => ({
+    ...runtime,
+    name: runtime.name ? oneLine(runtime.name, 80) || undefined : undefined,
+    model: oneLine(runtime.model, 160),
+  }));
 }
 
 export class SubagentController {
@@ -506,7 +550,7 @@ export class SubagentController {
   private handleEvent(record: RecordState, event: RpcEvent): void {
     if (!record.active || record.finalizing) return;
     if (event.type === "subagent_ownership") {
-      record.ownership = (event.ownership ?? []).filter((runtime) => (
+      record.ownership = ownershipData(event.ownership).filter((runtime) => (
         runtime.depth === record.lineage.depth + runtime.path.length
         && runtime.depth <= record.lineage.maxDepth
       ));
@@ -522,16 +566,35 @@ export class SubagentController {
       void this.finalize(record, outcome, record.terminalError);
       return;
     }
-    if (event.type === "message_end" && event.message?.role === "assistant") {
+    const message = event.message && typeof event.message === "object"
+      ? event.message
+      : undefined;
+    if (event.type === "message_end" && message?.role === "assistant") {
       record.assistantMessageEnded = true;
-      record.terminalError = event.message.stopReason === "error" || event.message.stopReason === "aborted"
-        ? event.message.errorMessage ?? `Assistant turn ended with ${event.message.stopReason}.`
+      const stopReason = typeof message.stopReason === "string" ? message.stopReason : undefined;
+      const messageError = typeof message.errorMessage === "string"
+        ? errorText(message.errorMessage)
+        : undefined;
+      record.terminalError = stopReason === "error" || stopReason === "aborted"
+        ? messageError ?? `Assistant turn ended with ${stopReason}.`
         : undefined;
     }
-    if (event.type === "tool_execution_start") record.currentTool = event.toolName;
-    if (event.type === "tool_execution_end" && record.currentTool === event.toolName) record.currentTool = undefined;
+    const toolName = typeof event.toolName === "string"
+      ? oneLine(event.toolName, 256)
+      : undefined;
+    if (event.type === "tool_execution_start" && toolName) record.currentTool = toolName;
+    if (event.type === "tool_execution_end" && toolName && record.currentTool === toolName) {
+      record.currentTool = undefined;
+    }
     const delta = event.assistantMessageEvent;
-    if (event.type === "message_update" && delta?.type === "text_delta" && delta.delta) {
+    if (
+      event.type === "message_update"
+      && delta
+      && typeof delta === "object"
+      && delta.type === "text_delta"
+      && typeof delta.delta === "string"
+      && delta.delta
+    ) {
       record.preview = `${record.preview ?? ""}${delta.delta}`.slice(-240);
     }
     this.changed();
