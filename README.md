@@ -300,7 +300,10 @@ Terminal records are evicted oldest-first when space is needed, never active
 records. List text and details are each bounded to 48,000 UTF-8 bytes, always
 include every retained active ID and observable state, prefer newest terminal
 history in the remaining budget, and identify omitted records, arguments, and
-oversized fields. Each record keeps the latest 64 KiB from each output stream.
+oversized fields. If escaped field encoding would otherwise exceed that budget,
+command, cwd, and diagnostic text are omitted from every active summary while
+its ID, process IDs, lifecycle state, and cleanup outcomes remain visible. Each
+record keeps the latest 64 KiB from each output stream.
 One output request returns at most 20 KiB per stream and reports omitted earlier
 bytes. The extension does not inject automatic completion turns or wakes; list
 and output calls are concrete snapshots, not polling or wait operations. Use

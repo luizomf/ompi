@@ -38,7 +38,7 @@ describe("managed-process extension", () => {
     expect(discovery).not.toContain("use ordinary bash for finite commands");
   });
 
-  it("keeps every active process visible while bounding terminal history and detail fields", async () => {
+  it("keeps every active process visible while bounding terminal history and JSON-expanded detail fields", async () => {
     const tools: RegisteredTool[] = [];
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const pi = {
@@ -68,11 +68,19 @@ describe("managed-process extension", () => {
         }).toBe(false);
       }
 
-      const active = await tools[0].execute("active", {
-        executable: process.execPath,
-        args: ["--input-type=module", "--eval", "setInterval(() => {}, 1000)", "y".repeat(4_000)],
-      }, undefined, undefined, ctx);
-      const activeId = (active.details as { id: number }).id;
+      const activeIds: number[] = [];
+      const controlHeavyArgument = "\u0001".repeat(7_900);
+      for (let index = 0; index < 8; index += 1) {
+        const result = await tools[0].execute(`active-${index}`, {
+          executable: process.execPath,
+          args: [
+            "--eval=setInterval(() => {}, 1000)",
+            ...Array.from({ length: 7 }, () => controlHeavyArgument),
+          ],
+        }, undefined, undefined, ctx);
+        activeIds.push((result.details as { id: number }).id);
+      }
+
       const snapshot = await tools[1].execute("list", {}, undefined, undefined, ctx);
       const text = snapshot.content[0].text;
       const details = snapshot.details as {
@@ -81,10 +89,13 @@ describe("managed-process extension", () => {
       };
 
       expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(48_000);
-      expect(text).toContain(`#${activeId} running`);
+      expect(text).toContain("Command, cwd, and diagnostic text omitted");
       expect(text).toMatch(/\[\d+ terminal process records omitted/);
       expect(Buffer.byteLength(JSON.stringify(details), "utf8")).toBeLessThanOrEqual(48_000);
-      expect(details.processes).toContainEqual(expect.objectContaining({ id: activeId, active: true }));
+      for (const activeId of activeIds) {
+        expect(text).toContain(`#${activeId} running`);
+        expect(details.processes).toContainEqual(expect.objectContaining({ id: activeId, active: true }));
+      }
       expect(details.processes.some((process) => process.truncatedFields.includes("args"))).toBe(true);
       expect(details.processes.some((process) => process.omittedArguments === 3)).toBe(true);
       expect(details.terminalHistory).toEqual({ retained: 50, included: expect.any(Number), omitted: expect.any(Number) });

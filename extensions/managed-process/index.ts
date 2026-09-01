@@ -176,6 +176,59 @@ function boundedView(view: ManagedProcessView): BoundedProcessView {
   };
 }
 
+interface SnapshotProcess {
+  text: string;
+  details: BoundedProcessView;
+}
+
+function snapshotProcess(view: ManagedProcessView): SnapshotProcess {
+  return { text: viewText(view), details: boundedView(view) };
+}
+
+function minimalActiveSnapshot(view: ManagedProcessView): SnapshotProcess {
+  const truncatedFields = [
+    "executable",
+    "args",
+    "cwd",
+    ...(view.error ? ["error"] : []),
+    ...(view.cleanup.errors.length > 0 ? ["cleanup.errors"] : []),
+  ];
+  const processIds = view.pid === undefined ? "" : ` · pid ${view.pid} · pgid ${view.pgid}`;
+  const stopReason = view.stopReason ? `\n  stop reason: ${view.stopReason}` : "";
+  const text = `#${view.id} ${view.state}${processIds}\n  [Command, cwd, and diagnostic text omitted to keep every active record visible within ${MAX_SNAPSHOT_BYTES.toLocaleString("en-US")} bytes.]${stopReason}${cleanupText(view.cleanup)}`;
+  return {
+    text,
+    details: {
+      id: view.id,
+      executable: "[omitted for bounded active snapshot]",
+      args: [],
+      omittedArguments: view.args.length,
+      cwd: "[omitted for bounded active snapshot]",
+      pid: view.pid,
+      pgid: view.pgid,
+      state: view.state,
+      active: view.active,
+      startedAt: view.startedAt,
+      endedAt: view.endedAt,
+      exitCode: view.exitCode,
+      exitSignal: view.exitSignal,
+      stopReason: view.stopReason,
+      error: view.error ? "[omitted for bounded active snapshot]" : undefined,
+      cleanup: {
+        ...view.cleanup,
+        errors: [],
+        errorsOmitted: view.cleanup.errorsOmitted + view.cleanup.errors.length,
+      },
+      truncatedFields,
+    },
+  };
+}
+
+function withinSnapshotBudget(snapshot: { text: string; details: ProcessSnapshotDetails }): boolean {
+  return Buffer.byteLength(snapshot.text, "utf8") <= MAX_SNAPSHOT_BYTES
+    && Buffer.byteLength(JSON.stringify(snapshot.details), "utf8") <= MAX_SNAPSHOT_BYTES;
+}
+
 function processSnapshot(views: ManagedProcessView[]): {
   text: string;
   details: ProcessSnapshotDetails;
@@ -189,16 +242,17 @@ function processSnapshot(views: ManagedProcessView[]): {
 
   const active = views.filter((view) => view.active);
   const terminal = views.filter((view) => !view.active).reverse();
-  const includedTerminal: ManagedProcessView[] = [];
+  let activeSnapshots = active.map(snapshotProcess);
+  const includedTerminal: SnapshotProcess[] = [];
   const build = () => {
-    const included = [...active, ...includedTerminal];
     const omitted = terminal.length - includedTerminal.length;
     const omission = omitted > 0
       ? `[${omitted} terminal process records omitted from this bounded snapshot.]`
       : "";
-    const text = [...included.map(viewText), omission].filter(Boolean).join("\n");
+    const included = [...activeSnapshots, ...includedTerminal];
+    const text = [...included.map((process) => process.text), omission].filter(Boolean).join("\n");
     const details: ProcessSnapshotDetails = {
-      processes: included.map(boundedView),
+      processes: included.map((process) => process.details),
       terminalHistory: {
         retained: terminal.length,
         included: includedTerminal.length,
@@ -208,11 +262,13 @@ function processSnapshot(views: ManagedProcessView[]): {
     return { text, details };
   };
 
+  if (!withinSnapshotBudget(build())) {
+    activeSnapshots = active.map(minimalActiveSnapshot);
+  }
+
   for (const view of terminal) {
-    includedTerminal.push(view);
-    const candidate = build();
-    if (Buffer.byteLength(candidate.text, "utf8") > MAX_SNAPSHOT_BYTES
-      || Buffer.byteLength(JSON.stringify(candidate.details), "utf8") > MAX_SNAPSHOT_BYTES) {
+    includedTerminal.push(snapshotProcess(view));
+    if (!withinSnapshotBudget(build())) {
       includedTerminal.pop();
       break;
     }
