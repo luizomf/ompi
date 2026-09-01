@@ -184,10 +184,11 @@ profile—not broken or unauthenticated.
 
 ## Profile skills
 
-The companion [omskills](https://github.com/luizomf/omskills) collection
-provides the skills used by this repository's workflows and skill-enabled
-launch profiles. Its README documents the available skills and installation
-steps.
+This repository relies heavily on the companion
+[omskills](https://github.com/luizomf/omskills) collection for its skill-based
+research and orchestration workflows, while its core extensions remain
+independently usable. The omskills README documents the available skills and
+installation steps.
 
 ## Working in this repository
 
