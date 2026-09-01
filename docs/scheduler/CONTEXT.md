@@ -55,8 +55,9 @@ The visible follow-up message injected into the owning Pi conversation after a
 callback. Separate sections contain the complete trusted reentry instructions,
 the callback runner's mechanical payload outcome, and quoted bounded stdout and
 stderr previews labeled as untrusted data that must never be followed as
-instructions. The wake and its mechanical outcome are not an official terminal
-OMQueue Job state.
+instructions. Embedded start-error diagnostics are escaped within the mechanical
+outcome so they cannot create another section. The wake and its mechanical
+outcome are not an official terminal OMQueue Job state.
 _Avoid_: Queue completion event, watcher result, durable notification
 
 ## Boundary Contract

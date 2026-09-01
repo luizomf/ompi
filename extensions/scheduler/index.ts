@@ -101,7 +101,9 @@ function outcomeText(outcome: SchedulerPayloadOutcome): string {
     case "signal":
       return `payload terminated by signal ${outcome.signal}`;
     case "start_error":
-      return `payload could not start: ${outcome.message}`;
+      return `payload could not start: ${JSON.stringify(outcome.message)
+        .replace(/\u2028/g, "\\u2028")
+        .replace(/\u2029/g, "\\u2029")}`;
   }
 }
 
