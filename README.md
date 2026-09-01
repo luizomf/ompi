@@ -18,10 +18,10 @@ browsers, authenticate accounts, configure OMQueue, or load `.env` files.
 | [just](https://github.com/casey/just) | No semver range is declared. The installed CLI version and successful parsing/dry-runs of this checkout's [`justfile`](justfile) are the compatibility evidence. |
 | [Git](https://git-scm.com/) and [GitHub CLI](https://cli.github.com/) | No semver ranges are declared. Use each installed CLI's version output; `gh auth status` separately verifies authentication needed by GitHub-backed workflows. |
 | [Chromium-based browser](https://www.chromium.org/getting-involved/download-chromium/) | Browser Fetch requires an external Chromium, Chrome, or Edge executable; it does not download one. Its local manifest declares `playwright-core ^1.55.0`, its lock currently resolves `1.61.1`, and the stricter Pi Node baseline above controls the checkout. The repository declares no universal browser release range, so verify the actual executable and run the smoke check below. |
-| Codex retrieval helper and [Codex CLI](https://github.com/openai/codex) | The extension invokes an executable named `codex_search`, not bare `codex`. It requires the helper—or a direct CLI compatibility wrapper installed under that name—to accept the documented helper interface, retain authenticated Codex access, and expose `gpt-5.6-luna` and `gpt-5.6-sol` at high reasoning. No semantic version range is declared; local version, login-status, interface, and model-catalog checks are authoritative. A bare incompatible Codex CLI is not a substitute. |
+| Codex retrieval helper or compatible direct [Codex CLI](https://github.com/openai/codex) | The extension invokes an executable named `codex_search`, not bare `codex`. That name must provide the documented helper interface, authenticated Codex access, and `gpt-5.6-luna` and `gpt-5.6-sol` at high reasoning. The repository-tested helper delegates authentication and execution to a separate `codex` CLI; an all-in-one compatible CLI may instead expose the same contract directly as `codex_search`. No semantic version range is declared; local version, authentication, interface, and model-catalog checks are authoritative. A bare incompatible Codex CLI is not a substitute. |
 | `bq` and OMQueue | Scheduler requires the `bq` interface shown by `bq --help` and a configured, healthy OMQueue service. Neither has a repository semver range, and `bq` has no `--version`; `bq --help`, `omqueue status`, and `omqueue check` are the local compatibility and health sources. `bq`'s non-durable local fallback does not satisfy the Scheduler prerequisite. |
 | [omskills](https://github.com/luizomf/omskills) | Required only by skill-enabled profiles: `research` for `just research`, and `handoff`, `tmux-worker`, and `wormhole` for `just orchestrate`. Its README owns installation and compatibility guidance. |
-| [tmux](https://github.com/tmux/tmux) and optional `osalert` | Required only for the globally installed tmux-status integration. No version range is declared; a missing tmux makes the extension inert, while `osalert` is optional and affects only sound. |
+| [tmux](https://github.com/tmux/tmux) and optional `osalert` | tmux and an active tmux session are required by `just orchestrate` when using `tmux-worker` or `wormhole`, and by the optional globally installed tmux-status integration. No version range is declared; use the installed tmux interface as the compatibility source. Missing tmux makes tmux-status inert but makes those two orchestration skills unavailable. `osalert` is optional and affects only tmux-status sound. |
 
 Managed processes additionally require Unix process-group semantics; their start
 tool rejects Windows rather than weakening cleanup behavior.
@@ -95,9 +95,19 @@ gh --version
 gh auth status
 ```
 
-For the optional globally discovered tmux-status integration, use `tmux -V` to
-record the installed tmux interface; `command -v osalert` checks only the
-optional sound helper.
+Verify the tmux dependency before using `tmux-worker`, `wormhole`, or the
+optional globally discovered tmux-status integration:
+
+```sh
+command -v tmux
+tmux -V
+test -n "${TMUX:-}" && test -n "${TMUX_PANE:-}"
+tmux display-message -t "${TMUX_PANE}" -p '#{session_name}' >/dev/null
+```
+
+The last two checks distinguish an installed tmux client from the active tmux
+session required by the orchestration skills. `command -v osalert` checks only
+the optional tmux-status sound helper.
 
 Pi itself still needs an authenticated model provider before a profile can make
 model calls; use Pi's interactive `/login` flow and inspect its model list
@@ -105,18 +115,24 @@ locally. Codex Search has a separate executable, authentication, interface, and
 model check:
 
 ```sh
-command -v codex_search codex
+command -v codex_search
 codex_search --version
-codex --version
-codex login status
 codex_search --help
 codex_search --list-models
+
+# Required when codex_search is the repository-tested helper backed by Codex:
+command -v codex
+codex --version
+codex login status
 ```
 
-The last command must list both fixed routes and high reasoning. An absent
-`codex_search` is an installation failure; a failed login is an authentication
-failure; missing Luna or Sol after login is model availability or helper
-compatibility, not a launch-profile problem.
+The model-catalog command must list both fixed routes and high reasoning. An
+absent `codex_search` is an installation failure. For the tested helper, an
+absent `codex` is another installation failure and a failed `codex login status`
+is an authentication failure. An all-in-one compatible `codex_search` must
+provide its own non-secret authentication/readiness check instead. Missing Luna
+or Sol after authentication is model availability or interface compatibility,
+not a launch-profile problem.
 
 Check Scheduler without submitting a Job or reading Queue records:
 
@@ -192,7 +208,7 @@ tools; this map lists the additional repository resources and extension tools.
 | `just bare` | `/exit` alias only; no skills, prompt templates, or context files | No repository tool |
 | `just core` | `bare` plus [`AGENTS.md`](AGENTS.md) as an appended system prompt | No repository tool |
 | `just research` | `core`-like instructions plus the `research` skill, Browser Fetch, and Codex Search | `browser_fetch` for rendered HTTP(S) retrieval; `codex_search` for exact-URL Codex retrieval, complex research, and image generation |
-| `just orchestrate` | `core`-like instructions plus `handoff`, `tmux-worker`, and `wormhole` skills | No repository tool beyond the `/exit` command |
+| `just orchestrate` | `core`-like instructions plus `handoff`, `tmux-worker`, and `wormhole` skills; the latter two require an active tmux session | No repository tool beyond the `/exit` command |
 | `just scheduler` | `core`-like instructions plus Scheduler | `scheduler_submit` for immediate or timed finite OMQueue work and heartbeats |
 | `just managed-processes` | `core`-like instructions plus Managed Processes | `managed_process_start`, `managed_process_list`, `managed_process_output`, and `managed_process_stop` |
 | `just subagents` | `core`-like instructions plus Subagents | `subagent_start`, `subagent_continue`, `subagent_steer`, `subagent_interrupt`, `subagent_status`, and `subagent_list` |
@@ -308,9 +324,11 @@ pi --no-extensions --extension ./extensions/codex-search/index.ts
 Other resource types retain Pi's defaults unless their own discovery flags are
 also disabled; this standalone command is not one of the isolated recipes.
 
-An authenticated `codex_search` helper and Codex CLI must be executable from
-`PATH`, and the account must expose `gpt-5.6-luna` and `gpt-5.6-sol` with high
-reasoning. Every invocation is direct and shell-free, uses the Pi session cwd,
+An authenticated compatible `codex_search` executable must be available from
+`PATH`, and its account must expose `gpt-5.6-luna` and `gpt-5.6-sol` with high
+reasoning. The repository-tested helper also requires its authenticated `codex`
+CLI backend; an all-in-one compatible executable may own that authentication
+and execution itself. Every invocation is direct and shell-free, uses the Pi session cwd,
 sends its request through stdin, and includes the helper's accepted unsandboxed
 mode. The extension fixes the routes explicitly instead of trusting helper or
 machine defaults:
