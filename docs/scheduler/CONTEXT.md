@@ -19,10 +19,12 @@ The tool returns when `bq` exits; it does not wait for the queued payload.
 _Avoid_: Job completion, synchronous command execution, Queue watch
 
 **Reentry prompt**:
-The required self-contained instruction carried by every scheduler submission
-and delivered in the required best-effort wake after a heartbeat fires or a
-payload terminates. It preserves the deferred context, checks, constraints, and
-next decision after delay or context compaction.
+The required complete, self-contained trusted instruction carried by every
+scheduler submission and delivered in the required best-effort wake after a
+heartbeat fires or a payload terminates. It restores the deferred context,
+identifies the completed event or recurring occurrence, conditions action on the
+mechanical outcome, states the next decision or stopping point, and prohibits
+unauthorized payload reruns, retries, or OMQueue inspection or administration.
 _Avoid_: Label, short notification, implicit conversation memory
 
 **Payload**:
@@ -50,9 +52,11 @@ _Avoid_: Durable mailbox, network service, Queue event endpoint
 
 **Scheduler wake**:
 The visible follow-up message injected into the owning Pi conversation after a
-callback. It contains the complete reentry prompt, the callback runner's
-mechanical payload outcome, and bounded stream previews. It is not an official
-terminal OMQueue Job state.
+callback. Separate sections contain the complete trusted reentry instructions,
+the callback runner's mechanical payload outcome, and quoted bounded stdout and
+stderr previews labeled as untrusted data that must never be followed as
+instructions. The wake and its mechanical outcome are not an official terminal
+OMQueue Job state.
 _Avoid_: Queue completion event, watcher result, durable notification
 
 ## Boundary Contract
@@ -88,12 +92,17 @@ _Avoid_: Queue completion event, watcher result, durable notification
 - The submission returns bounded `bq` stdout, stderr, and exit status without
   waiting for Queue completion. A zero exit confirms acceptance; every other
   result leaves acceptance unknown because durable work may already have been
-  created and must not be retried blindly. In the interactive TUI, submission
-  diagnostics and scheduler wake details are collapsed by default and remain
-  available through Pi's native tool expansion control.
+  created and must not be retried blindly. Acceptance remains distinct from
+  later payload termination, its mechanical outcome, and wake delivery. In the
+  interactive TUI, submission diagnostics and scheduler wake details are
+  collapsed by default and remain available through Pi's native tool expansion
+  control.
 - Independently requested scheduler submissions may be issued as sibling tool
   calls so Pi can run their bounded acceptance requests concurrently. The
   orchestrator never waits for one scheduler wake before submitting another.
+- A finite-repeat or cron reentry prompt directs the reentered agent to inspect
+  the occurrence that already ran. It never authorizes executing the recurring
+  payload a second time, retrying it, or administering OMQueue.
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
   database, or exposes cancellation, retry, history, output retrieval, or other
   Queue administration.
