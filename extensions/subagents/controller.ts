@@ -9,11 +9,16 @@ import {
   tightenLineage,
   type ManagedLineage,
 } from "./lineage.ts";
+import {
+  SESSION_REFERENCE_LIMIT,
+  errorText,
+} from "./feedback.ts";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type TerminalOutcome = "completed" | "failed" | "interrupted";
 export type ActiveSubagentState = "handshaking" | "running" | "steering" | "interrupting" | "finalizing";
-export type SubagentState = ActiveSubagentState | TerminalOutcome;
+export type SubagentState = ActiveSubagentState | TerminalOutcome | "acceptance-unknown";
+export type DispatchAcceptance = "rejected" | "unknown";
 
 export interface OwnershipRuntime {
   path: number[];
@@ -46,6 +51,7 @@ export interface RpcEvent {
 
 export interface RpcChild {
   request(command: Record<string, unknown>): Promise<unknown>;
+  prompt(message: string): Promise<void>;
   getCapabilities(): Promise<CapabilitySnapshot>;
   onEvent(listener: (event: RpcEvent) => void): () => void;
   onExit(listener: (error?: Error) => void): () => void;
@@ -120,12 +126,44 @@ export interface ControllerOptions {
 
 const DEFAULT_HANDSHAKE_MS = 10_000;
 
+export class PromptTransportError extends Error {
+  constructor(readonly mayHaveCrossed: boolean, cause: unknown) {
+    super(errorMessage(cause), { cause });
+    this.name = "PromptTransportError";
+  }
+}
+
+export class DispatchError extends Error {
+  constructor(
+    readonly acceptance: DispatchAcceptance,
+    message: string,
+    readonly sessionRef: string | undefined,
+    cause: unknown,
+  ) {
+    super(errorText(message), { cause });
+    this.name = "DispatchError";
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function stateData(value: unknown): { sessionFile?: string } {
-  return value && typeof value === "object" ? (value as { sessionFile?: string }) : {};
+function sessionFile(value: unknown): string {
+  const candidate = value && typeof value === "object"
+    ? (value as { sessionFile?: unknown }).sessionFile
+    : undefined;
+  if (
+    typeof candidate !== "string"
+    || candidate.length === 0
+    || candidate.length > SESSION_REFERENCE_LIMIT
+    || candidate.includes("\u0000")
+  ) {
+    throw new Error(
+      `Child did not provide a native session reference of at most ${SESSION_REFERENCE_LIMIT} characters.`,
+    );
+  }
+  return candidate;
 }
 
 function textData(value: unknown): { text?: string | null } {
@@ -183,8 +221,12 @@ export class SubagentController {
       await this.launch(record, input.prompt);
       return this.view(record);
     } catch (error) {
-      this.records.delete(record.id);
-      this.changed();
+      if (error instanceof DispatchError && error.acceptance === "unknown") {
+        this.markAcceptanceUnknown(record, error);
+      } else {
+        this.records.delete(record.id);
+        this.changed();
+      }
       throw error;
     }
   }
@@ -208,8 +250,12 @@ export class SubagentController {
       if (signal?.aborted && record.active) await this.interrupt(record.id);
       return await completion;
     } catch (error) {
-      this.records.delete(record.id);
-      this.changed();
+      if (error instanceof DispatchError && error.acceptance === "unknown") {
+        this.markAcceptanceUnknown(record, error);
+      } else {
+        this.records.delete(record.id);
+        this.changed();
+      }
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -301,17 +347,21 @@ export class SubagentController {
       await this.launch(record, input.prompt);
       return this.view(record);
     } catch (error) {
-      record.state = previous.state;
-      record.error = previous.error;
-      record.model = previous.model;
-      record.thinking = previous.thinking;
-      record.capabilities = previous.capabilities;
-      record.lineage = previous.lineage;
-      record.directResolve = previous.directResolve;
-      record.active = false;
-      record.startedAt = undefined;
-      record.child = undefined;
-      this.changed();
+      if (error instanceof DispatchError && error.acceptance === "unknown") {
+        this.markAcceptanceUnknown(record, error);
+      } else {
+        record.state = previous.state;
+        record.error = previous.error;
+        record.model = previous.model;
+        record.thinking = previous.thinking;
+        record.capabilities = previous.capabilities;
+        record.lineage = previous.lineage;
+        record.directResolve = previous.directResolve;
+        record.active = false;
+        record.startedAt = undefined;
+        record.child = undefined;
+        this.changed();
+      }
       throw error;
     }
   }
@@ -374,6 +424,7 @@ export class SubagentController {
     };
 
     let child: RpcChild | undefined;
+    let promptAttempted = false;
     try {
       await this.withHandshakeTimeout(async () => {
         child = await this.options.createChild(spec);
@@ -381,10 +432,9 @@ export class SubagentController {
         child.onEvent((event) => this.handleEvent(record, event));
         child.onExit((error) => this.handleExit(record, error));
         assertCapabilityMatch(spec.capabilities, await child.getCapabilities());
-        const state = stateData(await child.request({ type: "get_state" }));
-        if (!state.sessionFile) throw new Error("Child did not provide a native session reference.");
-        record.sessionRef = state.sessionFile;
-        await child.request({ type: "prompt", message: prompt });
+        record.sessionRef = sessionFile(await child.request({ type: "get_state" }));
+        promptAttempted = true;
+        await child.prompt(prompt);
       });
       record.accepted = true;
       record.state = "running";
@@ -401,8 +451,42 @@ export class SubagentController {
       } catch {
         // Preserve the original handshake error.
       }
-      throw new Error(`Subagent dispatch was not accepted: ${errorMessage(error)}`, { cause: error });
+      const promptMayHaveCrossed = promptAttempted
+        && (!(error instanceof PromptTransportError) || error.mayHaveCrossed);
+      if (promptMayHaveCrossed) {
+        throw new DispatchError(
+          "unknown",
+          `Subagent dispatch acceptance is unknown because the prompt may have crossed the child process boundary. Do not blindly retry; retrying could duplicate effects. Native session: ${record.sessionRef}. Cause: ${errorMessage(error)}`,
+          record.sessionRef,
+          error,
+        );
+      }
+      throw new DispatchError(
+        "rejected",
+        `Subagent dispatch was definitely rejected before the prompt crossed the child process boundary: ${errorMessage(error)}`,
+        record.sessionRef,
+        error,
+      );
     }
+  }
+
+  private markAcceptanceUnknown(record: RecordState, error: DispatchError): void {
+    record.state = "acceptance-unknown";
+    record.active = false;
+    record.startedAt = undefined;
+    record.child = undefined;
+    record.currentTool = undefined;
+    record.preview = undefined;
+    record.error = error.message;
+    record.accepted = false;
+    record.finalizing = false;
+    record.delivered = false;
+    record.pendingSettled = false;
+    record.pendingExitError = undefined;
+    record.terminalError = undefined;
+    record.ownership = [];
+    record.directResolve = undefined;
+    this.changed();
   }
 
   private handleEvent(record: RecordState, event: RpcEvent): void {

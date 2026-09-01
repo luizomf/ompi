@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { initTheme, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { BUILTIN_TOOL_PROVIDER } from "./capabilities.ts";
+import { PromptTransportError } from "./controller.ts";
 import {
   parseStandardDialogRequest,
   relayStandardDialog,
@@ -425,6 +426,49 @@ describe("RpcSubprocess ownership transport", () => {
       ownership,
     }]));
     await child.close();
+  });
+});
+
+describe("RpcSubprocess prompt transport", () => {
+  it("marks failure before a prompt can be written as not crossed", async () => {
+    const child = new RpcSubprocess({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+    await new Promise<void>((resolve) => child.onExit(() => resolve()));
+    let captured: unknown;
+
+    try {
+      await child.prompt("not sent");
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(PromptTransportError);
+    expect((captured as PromptTransportError).mayHaveCrossed).toBe(false);
+    expect((captured as Error).cause).toBeInstanceOf(Error);
+  });
+
+  it("marks process failure after a prompt write as possibly crossed", async () => {
+    const child = new RpcSubprocess({
+      command: process.execPath,
+      args: ["-e", "process.stdin.once('data', () => process.exit(2))"],
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+    let captured: unknown;
+
+    try {
+      await child.prompt("possibly sent");
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(PromptTransportError);
+    expect((captured as PromptTransportError).mayHaveCrossed).toBe(true);
+    expect((captured as Error).message).toContain("code=2");
   });
 });
 

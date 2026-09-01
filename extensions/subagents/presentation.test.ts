@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { OwnershipRuntime, SubagentView, TerminalResult } from "./controller.ts";
 import subagentsExtension, {
   buildActiveUi,
+  buildConversationList,
   buildDirectResult,
   buildOwnershipStatus,
   buildPongMessage,
@@ -103,6 +104,53 @@ describe("subagent presentation", () => {
     expect(buildActiveUi([view({ active: false, state: "completed" })], 5_000)).toEqual({});
   });
 
+  it("bounds long-lived direct-conversation inventories and marks every omission", () => {
+    const views = Array.from({ length: 75 }, (_, index) => view({
+      id: index + 1,
+      active: false,
+      state: "failed",
+      name: `worker-${index + 1}-${"n".repeat(200)}`,
+      cwd: `/repo/${"c".repeat(700)}`,
+      model: `provider/${"m".repeat(300)}`,
+      sessionRef: `/sessions/${index + 1}.jsonl`,
+      error: `failure-${"e".repeat(2_000)}`,
+      tools: Array.from({ length: 40 }, (_, tool) => `tool-${tool + 1}`),
+    }));
+
+    const list = buildConversationList(views);
+
+    expect(list.details).toMatchObject({ total: 75, omitted: 55, textTruncated: false });
+    expect(list.details.subagents).toHaveLength(20);
+    expect(list.details.subagents[0].id).toBe(56);
+    expect(list.details.subagents.at(-1)).toMatchObject({
+      id: 75,
+      sessionRef: "/sessions/75.jsonl",
+      toolsOmitted: 24,
+    });
+    expect(list.details.subagents[0].tools).toHaveLength(16);
+    expect(list.text).toContain("[55 known conversations omitted; all active entries shown]");
+    expect(list.text).toContain("characters omitted");
+    expect(list.text.length).toBeLessThanOrEqual(16_000);
+  });
+
+  it("retains old active entries while bounding a long-lived conversation inventory", () => {
+    const views = Array.from({ length: 30 }, (_, index) => view({
+      id: index + 1,
+      active: index === 0,
+      state: index === 0 ? "running" : "completed",
+    }));
+
+    const list = buildConversationList(views);
+
+    expect(list.details).toMatchObject({ total: 30, omitted: 10 });
+    expect(list.details.subagents).toHaveLength(20);
+    expect(list.details.subagents.map((item) => item.id)).toEqual([
+      1,
+      ...Array.from({ length: 19 }, (_, index) => index + 12),
+    ]);
+    expect(list.text).toContain("all active entries shown");
+  });
+
   it("builds an on-demand active ownership tree with owner-scoped runtime IDs", () => {
     const status = buildOwnershipStatus(2, [{
       path: [3],
@@ -135,6 +183,27 @@ describe("subagent presentation", () => {
     ]);
     expect(JSON.stringify(status)).not.toContain("preview");
     expect(JSON.stringify(status)).not.toContain("finalText");
+  });
+
+  it("bounds ownership snapshots and marks omitted active runtimes", () => {
+    const ownership: OwnershipRuntime[] = Array.from({ length: 40 }, (_, index) => ({
+      path: [index + 1],
+      parentPath: [],
+      id: index + 1,
+      depth: 2,
+      state: "running",
+      name: `owner-${"n".repeat(200)}`,
+      model: `provider/${"m".repeat(300)}`,
+      thinking: "medium",
+    }));
+
+    const status = buildOwnershipStatus(1, ownership);
+
+    expect(status).toMatchObject({ total: 41, omitted: 4 });
+    expect(status.nodes).toHaveLength(37);
+    expect(status.lines.at(-1)).toBe("[4 additional active runtimes omitted]");
+    expect(status.nodes[1].name).toContain("characters omitted");
+    expect(status.nodes[1].model).toContain("characters omitted");
   });
 
   it("collapses final assistant text behind Pi's native expansion state", () => {
@@ -215,7 +284,7 @@ describe("subagent presentation", () => {
         outcome,
         sessionRef: "/sessions/recover.jsonl",
         finalText: "x".repeat(8_050),
-        error: outcome === "failed" ? "provider failed" : undefined,
+        error: outcome === "failed" ? `provider failed: ${"e".repeat(8_000)}` : undefined,
       });
 
       expect(message.content).toContain(`[SUBAGENT #9] ${outcome}`);
@@ -224,7 +293,12 @@ describe("subagent presentation", () => {
         outcome,
         sessionRef: "/sessions/recover.jsonl",
         truncated: true,
+        errorTruncated: outcome === "failed",
       });
+      if (outcome === "failed") {
+        expect(message.details.error).toHaveLength(4_000);
+        expect(message.details.error).toContain("characters omitted");
+      }
     }
   });
 });

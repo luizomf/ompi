@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  PromptTransportError,
   SubagentController,
   type LaunchSpec,
   type RpcChild,
@@ -30,6 +31,7 @@ class FakeChild implements RpcChild {
   private closeGate?: Promise<void>;
   private releaseClose?: () => void;
   private readonly reportedCapabilities?: CapabilitySnapshot;
+  private readonly promptError?: Error;
 
   constructor(
     spec: LaunchSpec,
@@ -37,10 +39,12 @@ class FakeChild implements RpcChild {
     delayedPrompt = false,
     reportedCapabilities?: CapabilitySnapshot,
     delayedClose = false,
+    promptError?: Error,
   ) {
     this.spec = spec;
     this.sessionFile = sessionFile;
     this.reportedCapabilities = reportedCapabilities;
+    this.promptError = promptError;
     if (delayedPrompt) {
       this.promptGate = new Promise((resolve) => {
         this.releasePrompt = resolve;
@@ -64,9 +68,14 @@ class FakeChild implements RpcChild {
   async request(command: Record<string, unknown>): Promise<unknown> {
     this.requests.push(command);
     if (command.type === "get_state") return { sessionFile: this.sessionFile };
-    if (command.type === "prompt") await this.promptGate;
     if (command.type === "get_last_assistant_text") return { text: this.finalText };
     return undefined;
+  }
+
+  async prompt(message: string): Promise<void> {
+    this.requests.push({ type: "prompt", message });
+    if (this.promptError) throw this.promptError;
+    await this.promptGate;
   }
 
   async getCapabilities(): Promise<CapabilitySnapshot> {
@@ -107,6 +116,7 @@ function setup(options: {
   reportedCapabilities?: CapabilitySnapshot;
   lineage?: ManagedLineage;
   delayedClose?: boolean;
+  promptError?: Error;
 } = {}) {
   const children: FakeChild[] = [];
   const pongs: unknown[] = [];
@@ -120,6 +130,7 @@ function setup(options: {
         options.delayedPrompt,
         options.reportedCapabilities,
         options.delayedClose,
+        options.promptError,
       );
       children.push(child);
       return child;
@@ -445,11 +456,63 @@ describe("SubagentController", () => {
     expect(children).toHaveLength(12);
   });
 
-  it("times out pre-acceptance without a pong", async () => {
-    const { controller, children, pongs } = setup({ delayedPrompt: true, handshakeMs: 5 });
-    await expect(controller.start({ prompt: "slow", cwd: "/repo", model: "p/m", thinking: "low", capabilities: DEFAULT_CAPABILITIES })).rejects.toThrow("accept");
+  it("reports a known pre-write prompt failure as definite rejection", async () => {
+    const cause = new Error("child stdin was not writable");
+    const { controller, children, pongs } = setup({
+      promptError: new PromptTransportError(false, cause),
+    });
+    let captured: unknown;
+
+    try {
+      await controller.start({
+        prompt: "not sent",
+        cwd: "/repo",
+        model: "p/m",
+        thinking: "low",
+        capabilities: DEFAULT_CAPABILITIES,
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toContain("definitely rejected before the prompt crossed");
+    expect((captured as Error).message).toContain("child stdin was not writable");
+    expect((captured as Error).message).not.toContain("blindly retry");
     expect(children[0].closed).toBe(true);
     expect(controller.list()).toEqual([]);
+    expect(pongs).toEqual([]);
+  });
+
+  it("reports timeout after the prompt crossed as acceptance unknown without blind retry", async () => {
+    const { controller, children, pongs } = setup({ delayedPrompt: true, handshakeMs: 5 });
+    let captured: unknown;
+
+    try {
+      await controller.start({
+        prompt: "slow",
+        cwd: "/repo",
+        model: "p/m",
+        thinking: "low",
+        capabilities: DEFAULT_CAPABILITIES,
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toContain("acceptance is unknown");
+    expect((captured as Error).message).toContain("Do not blindly retry");
+    expect((captured as Error).message).toContain("/sessions/1.jsonl");
+    expect((captured as Error).cause).toBeInstanceOf(Error);
+    expect(((captured as Error).cause as Error).message).toContain("timed out after 5ms");
+    expect(children[0].closed).toBe(true);
+    expect(controller.list()).toMatchObject([{
+      id: 1,
+      active: false,
+      state: "acceptance-unknown",
+      sessionRef: "/sessions/1.jsonl",
+    }]);
     expect(pongs).toEqual([]);
   });
 
@@ -472,7 +535,10 @@ describe("SubagentController", () => {
     }
 
     expect(captured).toBeInstanceOf(Error);
-    expect((captured as Error).message).toContain("Subagent dispatch was not accepted");
+    expect((captured as Error).message).toContain(
+      "definitely rejected before the prompt crossed the child process boundary",
+    );
+    expect((captured as Error).message).not.toContain("blindly retry");
     expect((captured as Error).cause).toBeInstanceOf(Error);
     expect(((captured as Error).cause as Error).message).toContain(
       "Child capability preflight mismatch",

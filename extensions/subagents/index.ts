@@ -30,12 +30,27 @@ import {
   OWNERSHIP_STATUS_KEY,
   encodeOwnershipStatus,
 } from "./ownership.ts";
+import {
+  PARENT_ERROR_LIMIT,
+  SESSION_REFERENCE_LIMIT,
+  boundText,
+  errorText,
+  parentVisibleError,
+} from "./feedback.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
 const DELIVERY_MODES = ["async", "direct"] as const;
 type DeliveryMode = typeof DELIVERY_MODES[number];
 const TERMINAL_TEXT_LIMIT = 8_000;
+const METADATA_ERROR_LIMIT = 1_000;
+const METADATA_CWD_LIMIT = 512;
+const METADATA_MODEL_LIMIT = 200;
+const METADATA_NAME_LIMIT = 120;
+const METADATA_TOOL_LIMIT = 16;
+const INVENTORY_RECORD_LIMIT = 20;
+const INVENTORY_TEXT_LIMIT = 16_000;
+const OWNERSHIP_RUNTIME_LIMIT = 36;
 
 const ReasoningSchema = StringEnum(THINKING_LEVELS, {
   description: "Reasoning override for this dispatch; omit to inherit the parent's current level",
@@ -132,15 +147,78 @@ function selectedThinking(value: unknown, inherited: ThinkingLevel): ThinkingLev
 }
 
 function oneLine(value: string, limit: number): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
+  return boundText(value.replace(/\s+/g, " ").trim(), limit).text;
+}
+
+type ParentVisibleSubagentView = SubagentView & { toolsOmitted?: number };
+
+function parentVisibleView(view: SubagentView): ParentVisibleSubagentView {
+  const tools = view.tools?.slice(0, METADATA_TOOL_LIMIT);
+  const toolsOmitted = Math.max(0, (view.tools?.length ?? 0) - (tools?.length ?? 0));
+  return {
+    ...view,
+    name: view.name ? boundText(view.name, METADATA_NAME_LIMIT).text : undefined,
+    sessionRef: view.sessionRef
+      ? boundText(view.sessionRef, SESSION_REFERENCE_LIMIT).text
+      : undefined,
+    cwd: boundText(view.cwd, METADATA_CWD_LIMIT).text,
+    model: boundText(view.model, METADATA_MODEL_LIMIT).text,
+    currentTool: view.currentTool ? boundText(view.currentTool, 256).text : undefined,
+    preview: view.preview ? boundText(view.preview, 240).text : undefined,
+    error: view.error ? boundText(view.error, METADATA_ERROR_LIMIT).text : undefined,
+    tools,
+    ...(toolsOmitted > 0 ? { toolsOmitted } : {}),
+  };
 }
 
 function formatView(view: SubagentView): string {
-  const name = view.name ? ` (${view.name})` : "";
-  const session = view.sessionRef ? `\n  session: ${view.sessionRef}` : "";
-  const error = view.error ? `\n  error: ${view.error}` : "";
-  return `#${view.id}${name}: ${view.state} — ${view.model} · reasoning ${view.thinking} @ ${view.cwd}${session}${error}`;
+  const visible = parentVisibleView(view);
+  const name = visible.name ? ` (${oneLine(visible.name, 60)})` : "";
+  const session = visible.sessionRef ? `\n  session: ${oneLine(visible.sessionRef, 260)}` : "";
+  const error = visible.error ? `\n  error: ${oneLine(visible.error, 160)}` : "";
+  return `#${visible.id}${name}: ${visible.state} — ${oneLine(visible.model, 100)} · reasoning ${visible.thinking} @ ${oneLine(visible.cwd, 180)}${session}${error}`;
+}
+
+export function buildConversationList(views: SubagentView[]): {
+  text: string;
+  details: {
+    subagents: ParentVisibleSubagentView[];
+    total: number;
+    omitted: number;
+    textTruncated: boolean;
+  };
+} {
+  const activeViews = views.filter((view) => view.active);
+  const active = activeViews.slice(0, INVENTORY_RECORD_LIMIT);
+  const activeIds = new Set(active.map((view) => view.id));
+  const recentInactive = views
+    .filter((view) => !activeIds.has(view.id))
+    .slice(-Math.max(0, INVENTORY_RECORD_LIMIT - active.length));
+  const selected = [...active, ...recentInactive].sort((left, right) => left.id - right.id);
+  const omitted = Math.max(0, views.length - selected.length);
+  const subagents = selected.map(parentVisibleView);
+  if (subagents.length === 0) {
+    return {
+      text: "No subagents are known in this parent session.",
+      details: { subagents, total: 0, omitted: 0, textTruncated: false },
+    };
+  }
+  const omissionMarker = active.length === activeViews.length
+    ? `[${omitted} known conversations omitted; all active entries shown]`
+    : `[${omitted} known conversations omitted]`;
+  const lines = omitted > 0
+    ? [omissionMarker, ...subagents.map(formatView)]
+    : subagents.map(formatView);
+  const bounded = boundText(lines.join("\n"), INVENTORY_TEXT_LIMIT);
+  return {
+    text: bounded.text,
+    details: {
+      subagents,
+      total: views.length,
+      omitted,
+      textTruncated: bounded.truncated,
+    },
+  };
 }
 
 function parseObject<T>(args: string): T | undefined {
@@ -155,10 +233,18 @@ function parseIdMessage(args: string, usage: string): { id: number; message: str
   return { id: Number(match[1]), message: match[2].trim() };
 }
 
-function boundedTerminalText(pong: TerminalResult): { text?: string; truncated: boolean } {
-  if (!pong.finalText) return { truncated: false };
-  if (pong.finalText.length <= TERMINAL_TEXT_LIMIT) return { text: pong.finalText, truncated: false };
-  return { text: pong.finalText.slice(0, TERMINAL_TEXT_LIMIT), truncated: true };
+function boundedTerminalText(pong: TerminalResult): {
+  text?: string;
+  truncated: boolean;
+  omittedCharacters: number;
+} {
+  if (!pong.finalText) return { truncated: false, omittedCharacters: 0 };
+  const bounded = boundText(pong.finalText, TERMINAL_TEXT_LIMIT);
+  return {
+    text: bounded.text,
+    truncated: bounded.truncated,
+    omittedCharacters: bounded.omittedCharacters,
+  };
 }
 
 export function buildActiveUi(
@@ -173,7 +259,7 @@ export function buildActiveUi(
     const elapsed = view.startedAt ? Math.max(0, Math.floor((now - view.startedAt) / 1_000)) : 0;
     const name = view.name ? ` ${oneLine(view.name, 20)}` : "";
     const model = oneLine(view.model, 40);
-    const tool = view.currentTool ? ` · ${view.currentTool}` : "";
+    const tool = view.currentTool ? ` · ${oneLine(view.currentTool, 80)}` : "";
     const preview = view.preview ? ` · ${oneLine(view.preview, 72)}` : "";
     return `#${view.id}${name} · ${view.state} · ${elapsed}s · ${model} · reasoning ${view.thinking}${tool}${preview}`;
   });
@@ -197,22 +283,24 @@ interface OwnershipStatusNode {
 export function buildOwnershipStatus(
   depth: number,
   ownership: OwnershipRuntime[],
-): { lines: string[]; nodes: OwnershipStatusNode[] } {
+): { lines: string[]; nodes: OwnershipStatusNode[]; total: number; omitted: number } {
+  const visible = ownership.slice(0, OWNERSHIP_RUNTIME_LIMIT);
+  const omitted = Math.max(0, ownership.length - visible.length);
   const nodes: OwnershipStatusNode[] = [
     { runtimeId: "self", depth, state: "current" },
-    ...ownership.map((runtime) => ({
+    ...visible.map((runtime) => ({
       runtimeId: runtime.path.join("/"),
       parentRuntimeId: runtime.parentPath.length > 0 ? runtime.parentPath.join("/") : "self",
       managementId: runtime.id,
       depth: runtime.depth,
       state: runtime.state,
-      name: runtime.name,
-      model: runtime.model,
+      name: runtime.name ? oneLine(runtime.name, 80) : undefined,
+      model: oneLine(runtime.model, 160),
       thinking: runtime.thinking,
     })),
   ];
   const lines = ["self · depth " + depth + " · current owner"];
-  for (const runtime of ownership) {
+  for (const runtime of visible) {
     const runtimeId = runtime.path.join("/");
     const parentRuntimeId = runtime.parentPath.length > 0 ? runtime.parentPath.join("/") : "self";
     const name = runtime.name ? ` (${oneLine(runtime.name, 40)})` : "";
@@ -223,35 +311,63 @@ export function buildOwnershipStatus(
       + ` · ${oneLine(runtime.model, 80)} · reasoning ${runtime.thinking}`,
     );
   }
-  return { lines, nodes };
+  if (omitted > 0) lines.push(`[${omitted} additional active runtimes omitted]`);
+  return { lines, nodes, total: ownership.length + 1, omitted };
 }
+
+type ParentVisibleTerminalResult = TerminalResult & {
+  finalText?: string;
+  truncated: boolean;
+  omittedCharacters: number;
+  errorTruncated: boolean;
+};
 
 function buildTerminalMessage(
   pong: TerminalResult,
-  heading: string,
-): { content: string; details: TerminalResult & { finalText?: string; truncated: boolean } } {
+  prefix: "PONG subagent" | "SUBAGENT",
+): { content: string; details: ParentVisibleTerminalResult } {
   const final = boundedTerminalText(pong);
-  const parts = [heading, `Session: ${pong.sessionRef}`];
-  if (pong.error) parts.push(`Error: ${pong.error}`);
-  if (final.text) parts.push(`Final assistant message${final.truncated ? " (truncated to 8,000 characters)" : ""}:\n${final.text}`);
+  const name = pong.name ? oneLine(pong.name, METADATA_NAME_LIMIT) : undefined;
+  const session = boundText(pong.sessionRef, SESSION_REFERENCE_LIMIT);
+  const error = pong.error ? boundText(pong.error, PARENT_ERROR_LIMIT) : undefined;
+  const heading = `[${prefix} #${pong.id}${name ? ` ${name}` : ""}] ${pong.outcome}`;
+  const parts = [heading, `Session: ${session.text}`];
+  if (error) parts.push(`Error: ${error.text}`);
+  if (final.text) {
+    parts.push(
+      `Final assistant message${final.truncated ? ` (truncated to ${TERMINAL_TEXT_LIMIT.toLocaleString("en-US")} characters; ${final.omittedCharacters} source characters omitted)` : ""}:\n${final.text}`,
+    );
+  }
   return {
     content: parts.join("\n\n"),
-    details: { ...pong, finalText: final.text, truncated: final.truncated },
+    details: {
+      id: pong.id,
+      name,
+      outcome: pong.outcome,
+      sessionRef: session.text,
+      finalText: final.text,
+      error: error?.text,
+      truncated: final.truncated,
+      omittedCharacters: final.omittedCharacters,
+      errorTruncated: error?.truncated ?? false,
+    },
   };
 }
 
 export function buildPongMessage(pong: TerminalResult): ReturnType<typeof buildTerminalMessage> {
-  return buildTerminalMessage(
-    pong,
-    `[PONG subagent #${pong.id}${pong.name ? ` ${pong.name}` : ""}] ${pong.outcome}`,
-  );
+  return buildTerminalMessage(pong, "PONG subagent");
 }
 
 export function buildDirectResult(pong: TerminalResult): ReturnType<typeof buildTerminalMessage> {
-  return buildTerminalMessage(
-    pong,
-    `[SUBAGENT #${pong.id}${pong.name ? ` ${pong.name}` : ""}] ${pong.outcome}`,
-  );
+  return buildTerminalMessage(pong, "SUBAGENT");
+}
+
+async function withParentVisibleErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw parentVisibleError(error);
+  }
 }
 
 export default function subagentsExtension(pi: ExtensionAPI) {
@@ -391,7 +507,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_start",
     label: "Start Subagent",
-    description: 'Start a clean persistent Pi conversation with the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Normal skills and repository instructions are discovered for the child cwd. Delivery is enforced from the runtime: root TUI is async, print and managed nested lineage are direct, and root RPC defaults async while honoring explicit direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start a clean Pi conversation with the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Normal skills and repository instructions are discovered for the child cwd. Delivery is enforced from the runtime: root TUI is async, print and managed nested lineage are direct, and root RPC defaults async while honoring explicit direct. A post-boundary dispatch failure leaves acceptance unknown and must not be blindly retried. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptSnippet: "Start an independent Pi conversation with a complete prompt",
     promptGuidelines: [
       "Set each subagent_start model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the parent's active value.",
@@ -401,33 +517,36 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "Use subagent_start delivery=direct only for dependent root RPC work; root TUI ignores conflicting direct input, while managed nested and print calls remain direct even when delivery is omitted or async.",
       "In print or managed nested lineage, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "After an asynchronous root subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      "If dispatch acceptance is reported as unknown, preserve the native session reference and original cause, inspect available evidence, and do not blindly retry because the prompt may already have produced effects.",
     ],
     parameters: StartSchema,
     async execute(_id, params, signal, _onUpdate, ctx) {
-      if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
-        const pong = await controller.run(startInput(params, ctx), signal);
-        const message = buildDirectResult(pong);
-        return {
-          content: [{ type: "text", text: message.content }],
-          details: message.details,
-        };
-      }
+      return withParentVisibleErrors(async () => {
+        if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
+          const pong = await controller.run(startInput(params, ctx), signal);
+          const message = buildDirectResult(pong);
+          return {
+            content: [{ type: "text" as const, text: message.content }],
+            details: message.details,
+          };
+        }
 
-      const view = await start(params, ctx);
-      return {
-        content: [{
-          type: "text",
-          text: `Subagent #${view.id} accepted the prompt and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Start any other useful independent delegation without waiting, then continue independent work or end this response; the pong will arrive later.`,
-        }],
-        details: view,
-      };
+        const view = await start(params, ctx);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Subagent #${view.id} accepted the prompt and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Start any other useful independent delegation without waiting, then continue independent work or end this response; the pong will arrive later.`,
+          }],
+          details: parentVisibleView(view),
+        };
+      });
     },
   });
 
   pi.registerTool({
     name: "subagent_continue",
     label: "Continue Subagent",
-    description: 'Start another turn in a settled known subagent conversation with a fresh snapshot of the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Delivery is enforced from the runtime: root TUI is async, print and managed nested lineage are direct, and root RPC defaults async while honoring explicit direct. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
+    description: 'Start another turn in a settled conversation known to this parent-session registry, using a fresh snapshot of the parent\'s active tools and required extension providers. Omit tools to inherit the complete active snapshot; an explicit list can only narrow it. Delivery is enforced from the runtime: root TUI is async, print and managed nested lineage are direct, and root RPC defaults async while honoring explicit direct. A post-boundary dispatch failure leaves acceptance unknown and must not be blindly retried. Optional model or reasoning overrides apply only for an explicit user request; model overrides require "<provider>/<model>".',
     promptGuidelines: [
       "Set each subagent_continue model or reasoning override only when the user explicitly requests that value for this dispatch; explicit model overrides must use the qualified <provider>/<model> form. Omit every unrequested override so it inherits the parent's active value.",
       "Only after deciding to call subagent_continue, inspect PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL to identify the parent's active route immediately before dispatch. Do not inspect routing on ordinary turns or merely because this tool is available. Unless the user explicitly requests routing, omit model and reasoning overrides so the dispatch inherits that active route rather than forcing a global or preferred default.",
@@ -435,26 +554,29 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "Use subagent_continue delivery=direct only for dependent root RPC work; root TUI ignores conflicting direct input, while managed nested and print calls remain direct even when delivery is omitted or async.",
       "In print or managed nested lineage, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "After an asynchronous root subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      "If dispatch acceptance is reported as unknown, preserve the native session reference and original cause, inspect available evidence, and do not blindly retry because the prompt may already have produced effects.",
     ],
     parameters: ContinueSchema,
     async execute(_id, params, signal, _onUpdate, ctx) {
-      if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
-        const pong = await controller.runContinuation(continuationInput(params, ctx), signal);
-        const message = buildDirectResult(pong);
-        return {
-          content: [{ type: "text", text: message.content }],
-          details: message.details,
-        };
-      }
+      return withParentVisibleErrors(async () => {
+        if (effectiveDelivery(ctx.mode, lineage.depth, params.delivery) === "direct") {
+          const pong = await controller.runContinuation(continuationInput(params, ctx), signal);
+          const message = buildDirectResult(pong);
+          return {
+            content: [{ type: "text" as const, text: message.content }],
+            details: message.details,
+          };
+        }
 
-      const view = await continueSubagent(params, ctx);
-      return {
-        content: [{
-          type: "text",
-          text: `Subagent #${view.id} accepted the continuation and is running.\nDo not wait, sleep, or poll for completion. Continue independent work or end this response; the pong will arrive later.`,
-        }],
-        details: view,
-      };
+        const view = await continueSubagent(params, ctx);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Subagent #${view.id} accepted the continuation and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Continue independent work or end this response; the pong will arrive later.`,
+          }],
+          details: parentVisibleView(view),
+        };
+      });
     },
   });
 
@@ -464,8 +586,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     description: "Queue an instruction for an active subagent at Pi's safe steering boundary.",
     parameters: SteerSchema,
     async execute(_id, params) {
-      const view = await controller.steer(params.id, params.message);
-      return { content: [{ type: "text", text: `Steering accepted for subagent #${view.id}.` }], details: view };
+      return withParentVisibleErrors(async () => {
+        const view = await controller.steer(params.id, params.message);
+        return {
+          content: [{ type: "text" as const, text: `Steering accepted for subagent #${view.id}.` }],
+          details: parentVisibleView(view),
+        };
+      });
     },
   });
 
@@ -475,8 +602,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     description: "Abort an active subagent turn while preserving its native conversation for continuation.",
     parameters: InterruptSchema,
     async execute(_id, params) {
-      const view = await controller.interrupt(params.id);
-      return { content: [{ type: "text", text: `Interruption requested for subagent #${view.id}.` }], details: view };
+      return withParentVisibleErrors(async () => {
+        const view = await controller.interrupt(params.id);
+        return {
+          content: [{ type: "text" as const, text: `Interruption requested for subagent #${view.id}.` }],
+          details: parentVisibleView(view),
+        };
+      });
     },
   });
 
@@ -512,9 +644,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     ],
     parameters: ListSchema,
     async execute() {
-      const views = controller.list();
-      const text = views.length ? views.map(formatView).join("\n") : "No subagents are known in this parent session.";
-      return { content: [{ type: "text", text }], details: { subagents: views } };
+      const list = buildConversationList(controller.list());
+      return { content: [{ type: "text", text: list.text }], details: list.details };
     },
   });
 
@@ -533,7 +664,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           ctx.ui.notify(`Subagent #${view.id} started.`, "info");
         }
       } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        ctx.ui.notify(errorText(error), "error");
       }
     },
   });
@@ -555,7 +686,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           ctx.ui.notify(`Subagent #${view.id} continued.`, "info");
         }
       } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        ctx.ui.notify(errorText(error), "error");
       }
     },
   });
@@ -568,7 +699,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         await controller.steer(id, message);
         ctx.ui.notify(`Steering accepted for subagent #${id}.`, "info");
       } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        ctx.ui.notify(errorText(error), "error");
       }
     },
   });
@@ -582,7 +713,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         await controller.interrupt(id);
         ctx.ui.notify(`Interruption requested for subagent #${id}.`, "info");
       } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        ctx.ui.notify(errorText(error), "error");
       }
     },
   });
@@ -601,8 +732,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerCommand("sublist", {
     description: "List direct subagents known to this parent session",
     handler: async (_args, ctx) => {
-      const views = controller.list();
-      ctx.ui.notify(views.length ? views.map(formatView).join("\n") : "No known subagents.", "info");
+      ctx.ui.notify(buildConversationList(controller.list()).text, "info");
     },
   });
 
