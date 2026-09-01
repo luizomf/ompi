@@ -9,11 +9,18 @@ import {
   tightenLineage,
   type ManagedLineage,
 } from "./lineage.ts";
+import {
+  PARENT_ERROR_LIMIT,
+  SESSION_REFERENCE_LIMIT,
+  boundText,
+  errorText,
+} from "./feedback.ts";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type TerminalOutcome = "completed" | "failed" | "interrupted";
 export type ActiveSubagentState = "handshaking" | "running" | "steering" | "interrupting" | "finalizing";
-export type SubagentState = ActiveSubagentState | TerminalOutcome;
+export type SubagentState = ActiveSubagentState | TerminalOutcome | "acceptance-unknown";
+export type DispatchAcceptance = "rejected" | "unknown";
 
 export interface OwnershipRuntime {
   path: number[];
@@ -46,6 +53,7 @@ export interface RpcEvent {
 
 export interface RpcChild {
   request(command: Record<string, unknown>): Promise<unknown>;
+  prompt(message: string): Promise<void>;
   getCapabilities(): Promise<CapabilitySnapshot>;
   onEvent(listener: (event: RpcEvent) => void): () => void;
   onExit(listener: (error?: Error) => void): () => void;
@@ -120,16 +128,104 @@ export interface ControllerOptions {
 
 const DEFAULT_HANDSHAKE_MS = 10_000;
 
+export class PromptTransportError extends Error {
+  constructor(readonly mayHaveCrossed: boolean, cause: unknown) {
+    super(errorMessage(cause), { cause });
+    this.name = "PromptTransportError";
+  }
+}
+
+export class DispatchError extends Error {
+  constructor(
+    readonly acceptance: DispatchAcceptance,
+    message: string,
+    readonly sessionRef: string | undefined,
+    cause: unknown,
+  ) {
+    super(errorText(message), { cause });
+    this.name = "DispatchError";
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function stateData(value: unknown): { sessionFile?: string } {
-  return value && typeof value === "object" ? (value as { sessionFile?: string }) : {};
+function unknownAcceptanceMessage(sessionRef: string | undefined, error: unknown): string {
+  const warning = "Subagent dispatch acceptance is unknown because the prompt may have crossed the child process boundary. Do not blindly retry; retrying could duplicate effects.";
+  const session = sessionRef ? ` Native session: ${sessionRef}.` : "";
+  const causePrefix = " Cause: ";
+  const causeLimit = Math.max(
+    32,
+    PARENT_ERROR_LIMIT - warning.length - session.length - causePrefix.length,
+  );
+  const cause = boundText(errorMessage(error), causeLimit).text;
+  return `${warning}${session}${causePrefix}${cause}`;
+}
+
+function sessionFile(value: unknown): string {
+  const candidate = value && typeof value === "object"
+    ? (value as { sessionFile?: unknown }).sessionFile
+    : undefined;
+  if (
+    typeof candidate !== "string"
+    || candidate.length === 0
+    || candidate.length > SESSION_REFERENCE_LIMIT
+    || /[\u0000\r\n]/.test(candidate)
+  ) {
+    throw new Error(
+      `Child did not provide a one-line native session reference of at most ${SESSION_REFERENCE_LIMIT} characters.`,
+    );
+  }
+  return candidate;
 }
 
 function textData(value: unknown): { text?: string | null } {
-  return value && typeof value === "object" ? (value as { text?: string | null }) : {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Child returned invalid last assistant text metadata.");
+  }
+  const text = (value as { text?: unknown }).text;
+  if (text !== undefined && text !== null && typeof text !== "string") {
+    throw new Error("Child returned invalid last assistant text metadata.");
+  }
+  return { text };
+}
+
+function oneLine(value: string, limit: number): string {
+  return boundText(value.replace(/\s+/g, " ").trim(), limit).text;
+}
+
+function ownershipRuntime(value: unknown): value is OwnershipRuntime {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const runtime = value as Partial<OwnershipRuntime>;
+  const path = runtime.path;
+  const parentPath = runtime.parentPath;
+  return Array.isArray(path)
+    && path.length > 0
+    && path.length <= 2
+    && path.every((id) => Number.isSafeInteger(id) && id > 0)
+    && Array.isArray(parentPath)
+    && parentPath.length === path.length - 1
+    && parentPath.every((id, index) => id === path[index])
+    && Number.isSafeInteger(runtime.id)
+    && runtime.id === path.at(-1)
+    && Number.isInteger(runtime.depth)
+    && typeof runtime.state === "string"
+    && ["handshaking", "running", "steering", "interrupting", "finalizing"].includes(runtime.state)
+    && typeof runtime.model === "string"
+    && runtime.model.length > 0
+    && typeof runtime.thinking === "string"
+    && ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(runtime.thinking)
+    && (runtime.name === undefined || typeof runtime.name === "string");
+}
+
+function ownershipData(value: unknown): OwnershipRuntime[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(ownershipRuntime).map((runtime) => ({
+    ...runtime,
+    name: runtime.name ? oneLine(runtime.name, 80) || undefined : undefined,
+    model: oneLine(runtime.model, 160),
+  }));
 }
 
 export class SubagentController {
@@ -183,8 +279,12 @@ export class SubagentController {
       await this.launch(record, input.prompt);
       return this.view(record);
     } catch (error) {
-      this.records.delete(record.id);
-      this.changed();
+      if (error instanceof DispatchError && error.acceptance === "unknown") {
+        this.markAcceptanceUnknown(record, error);
+      } else {
+        this.records.delete(record.id);
+        this.changed();
+      }
       throw error;
     }
   }
@@ -208,8 +308,12 @@ export class SubagentController {
       if (signal?.aborted && record.active) await this.interrupt(record.id);
       return await completion;
     } catch (error) {
-      this.records.delete(record.id);
-      this.changed();
+      if (error instanceof DispatchError && error.acceptance === "unknown") {
+        this.markAcceptanceUnknown(record, error);
+      } else {
+        this.records.delete(record.id);
+        this.changed();
+      }
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -301,17 +405,21 @@ export class SubagentController {
       await this.launch(record, input.prompt);
       return this.view(record);
     } catch (error) {
-      record.state = previous.state;
-      record.error = previous.error;
-      record.model = previous.model;
-      record.thinking = previous.thinking;
-      record.capabilities = previous.capabilities;
-      record.lineage = previous.lineage;
-      record.directResolve = previous.directResolve;
-      record.active = false;
-      record.startedAt = undefined;
-      record.child = undefined;
-      this.changed();
+      if (error instanceof DispatchError && error.acceptance === "unknown") {
+        this.markAcceptanceUnknown(record, error);
+      } else {
+        record.state = previous.state;
+        record.error = previous.error;
+        record.model = previous.model;
+        record.thinking = previous.thinking;
+        record.capabilities = previous.capabilities;
+        record.lineage = previous.lineage;
+        record.directResolve = previous.directResolve;
+        record.active = false;
+        record.startedAt = undefined;
+        record.child = undefined;
+        this.changed();
+      }
       throw error;
     }
   }
@@ -374,6 +482,7 @@ export class SubagentController {
     };
 
     let child: RpcChild | undefined;
+    let promptAttempted = false;
     try {
       await this.withHandshakeTimeout(async () => {
         child = await this.options.createChild(spec);
@@ -381,10 +490,9 @@ export class SubagentController {
         child.onEvent((event) => this.handleEvent(record, event));
         child.onExit((error) => this.handleExit(record, error));
         assertCapabilityMatch(spec.capabilities, await child.getCapabilities());
-        const state = stateData(await child.request({ type: "get_state" }));
-        if (!state.sessionFile) throw new Error("Child did not provide a native session reference.");
-        record.sessionRef = state.sessionFile;
-        await child.request({ type: "prompt", message: prompt });
+        record.sessionRef = sessionFile(await child.request({ type: "get_state" }));
+        promptAttempted = true;
+        await child.prompt(prompt);
       });
       record.accepted = true;
       record.state = "running";
@@ -401,14 +509,48 @@ export class SubagentController {
       } catch {
         // Preserve the original handshake error.
       }
-      throw new Error(`Subagent dispatch was not accepted: ${errorMessage(error)}`, { cause: error });
+      const promptMayHaveCrossed = promptAttempted
+        && (!(error instanceof PromptTransportError) || error.mayHaveCrossed);
+      if (promptMayHaveCrossed) {
+        throw new DispatchError(
+          "unknown",
+          unknownAcceptanceMessage(record.sessionRef, error),
+          record.sessionRef,
+          error,
+        );
+      }
+      throw new DispatchError(
+        "rejected",
+        `Subagent dispatch was definitely rejected before the prompt crossed the child process boundary: ${errorMessage(error)}`,
+        record.sessionRef,
+        error,
+      );
     }
+  }
+
+  private markAcceptanceUnknown(record: RecordState, error: DispatchError): void {
+    record.state = "acceptance-unknown";
+    record.active = false;
+    record.startedAt = undefined;
+    record.child = undefined;
+    record.currentTool = undefined;
+    record.preview = undefined;
+    record.error = error.message;
+    record.accepted = false;
+    record.finalizing = false;
+    record.delivered = false;
+    record.pendingSettled = false;
+    record.pendingExitError = undefined;
+    record.terminalError = undefined;
+    record.ownership = [];
+    record.directResolve = undefined;
+    this.changed();
   }
 
   private handleEvent(record: RecordState, event: RpcEvent): void {
     if (!record.active || record.finalizing) return;
     if (event.type === "subagent_ownership") {
-      record.ownership = (event.ownership ?? []).filter((runtime) => (
+      record.ownership = ownershipData(event.ownership).filter((runtime) => (
         runtime.depth === record.lineage.depth + runtime.path.length
         && runtime.depth <= record.lineage.maxDepth
       ));
@@ -424,16 +566,35 @@ export class SubagentController {
       void this.finalize(record, outcome, record.terminalError);
       return;
     }
-    if (event.type === "message_end" && event.message?.role === "assistant") {
+    const message = event.message && typeof event.message === "object"
+      ? event.message
+      : undefined;
+    if (event.type === "message_end" && message?.role === "assistant") {
       record.assistantMessageEnded = true;
-      record.terminalError = event.message.stopReason === "error" || event.message.stopReason === "aborted"
-        ? event.message.errorMessage ?? `Assistant turn ended with ${event.message.stopReason}.`
+      const stopReason = typeof message.stopReason === "string" ? message.stopReason : undefined;
+      const messageError = typeof message.errorMessage === "string"
+        ? errorText(message.errorMessage)
+        : undefined;
+      record.terminalError = stopReason === "error" || stopReason === "aborted"
+        ? messageError ?? `Assistant turn ended with ${stopReason}.`
         : undefined;
     }
-    if (event.type === "tool_execution_start") record.currentTool = event.toolName;
-    if (event.type === "tool_execution_end" && record.currentTool === event.toolName) record.currentTool = undefined;
+    const toolName = typeof event.toolName === "string"
+      ? oneLine(event.toolName, 256)
+      : undefined;
+    if (event.type === "tool_execution_start" && toolName) record.currentTool = toolName;
+    if (event.type === "tool_execution_end" && toolName && record.currentTool === toolName) {
+      record.currentTool = undefined;
+    }
     const delta = event.assistantMessageEvent;
-    if (event.type === "message_update" && delta?.type === "text_delta" && delta.delta) {
+    if (
+      event.type === "message_update"
+      && delta
+      && typeof delta === "object"
+      && delta.type === "text_delta"
+      && typeof delta.delta === "string"
+      && delta.delta
+    ) {
       record.preview = `${record.preview ?? ""}${delta.delta}`.slice(-240);
     }
     this.changed();

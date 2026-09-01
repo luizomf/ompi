@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { initTheme, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { BUILTIN_TOOL_PROVIDER } from "./capabilities.ts";
+import { PromptTransportError } from "./controller.ts";
 import {
   parseStandardDialogRequest,
   relayStandardDialog,
@@ -147,6 +148,24 @@ describe("ownership status protocol", () => {
       version: 1,
       ownership: [{ ...ownership[0], path: [2, 3, 4] }],
     }))).toThrow("invalid");
+  });
+
+  it("marks bounded ownership metadata omissions before relaying status", () => {
+    const [runtime] = parseOwnershipStatus(encodeOwnershipStatus([{
+      path: [1],
+      parentPath: [],
+      id: 1,
+      depth: 3,
+      state: "running",
+      name: `leaf-${"n".repeat(200)}`,
+      model: `provider/${"m".repeat(300)}`,
+      thinking: "medium",
+    }]));
+
+    expect(runtime.name).toHaveLength(80);
+    expect(runtime.name).toContain("characters omitted");
+    expect(runtime.model).toHaveLength(160);
+    expect(runtime.model).toContain("characters omitted");
   });
 
   it("omits a whitespace-only optional name instead of rejecting active status", () => {
@@ -428,7 +447,82 @@ describe("RpcSubprocess ownership transport", () => {
   });
 });
 
+describe("RpcSubprocess prompt transport", () => {
+  it("marks failure before a prompt can be written as not crossed", async () => {
+    const child = new RpcSubprocess({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+    await new Promise<void>((resolve) => child.onExit(() => resolve()));
+    let captured: unknown;
+
+    try {
+      await child.prompt("not sent");
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(PromptTransportError);
+    expect((captured as PromptTransportError).mayHaveCrossed).toBe(false);
+    expect((captured as Error).cause).toBeInstanceOf(Error);
+  });
+
+  it("marks process failure after a prompt write as possibly crossed", async () => {
+    const child = new RpcSubprocess({
+      command: process.execPath,
+      args: ["-e", "process.stdin.once('data', () => process.exit(2))"],
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+    let captured: unknown;
+
+    try {
+      await child.prompt("possibly sent");
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(PromptTransportError);
+    expect((captured as PromptTransportError).mayHaveCrossed).toBe(true);
+    expect((captured as Error).message).toContain("code=2");
+  });
+});
+
 describe("RpcSubprocess frame transport", () => {
+  it("ignores valid JSON values that are not RPC records", async () => {
+    const script = String.raw`
+      process.stdout.write("null\n[]\n42\n");
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) return;
+        const command = JSON.parse(buffer.slice(0, newline));
+        process.stdout.write(JSON.stringify({
+          type: "response",
+          id: command.id,
+          success: true,
+          data: "pong",
+        }) + "\n");
+      });
+    `;
+    const child = new RpcSubprocess({
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+    const events: unknown[] = [];
+    child.onEvent((event) => events.push(event));
+
+    await expect(child.request({ type: "ping" })).resolves.toBe("pong");
+    expect(events).toEqual([]);
+    await child.close();
+  });
+
   it("accepts a valid model-sized frame and settles following responses", async () => {
     const child = new RpcSubprocess(frameChildInvocation(1024 * 1024));
     const followingResponse = new Promise<unknown>((resolve, reject) => {

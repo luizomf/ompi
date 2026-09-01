@@ -7,6 +7,7 @@ const rpc = vi.hoisted(() => ({
     tools: Array<{ name: string; provider: string }>;
     extensionPaths: string[];
   }>,
+  promptFailures: [] as Error[],
   children: [] as Array<{
     closed: boolean;
     requests: Array<Record<string, unknown>>;
@@ -28,6 +29,7 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
         tools: Array<{ name: string; provider: string }>;
         extensionPaths: string[];
       };
+      private readonly promptFailure: Error | undefined;
 
       readonly onDialog?: (request: any, signal: AbortSignal) => Promise<any>;
 
@@ -47,6 +49,7 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
           tools: names.map((name) => ({ name, provider: "builtin" })),
           extensionPaths: [],
         };
+        this.promptFailure = rpc.promptFailures.shift();
         rpc.children.push(this);
       }
 
@@ -55,6 +58,11 @@ vi.mock("./rpc-child.ts", async (importOriginal) => {
         if (command.type === "get_state") return { sessionFile: this.sessionFile };
         if (command.type === "get_last_assistant_text") return { text: "done" };
         return undefined;
+      }
+
+      async prompt(message: string): Promise<void> {
+        this.requests.push({ type: "prompt", message });
+        if (this.promptFailure) throw this.promptFailure;
       }
 
       async getCapabilities() {
@@ -178,6 +186,7 @@ describe("subagent routing inheritance", () => {
     delete process.env.OMPI_SUBAGENT_LINEAGE;
     rpc.invocations.length = 0;
     rpc.capabilityReports.length = 0;
+    rpc.promptFailures.length = 0;
     rpc.children.length = 0;
   });
 
@@ -443,6 +452,33 @@ describe("subagent routing inheritance", () => {
     expect(result.content[0].text).not.toContain("coordinate");
   });
 
+  it("keeps tool and command direct-conversation inventories identically bounded", async () => {
+    const { tools, commands, ctx, notifications } = setup();
+    const start = tools.get("subagent_start");
+
+    for (let index = 0; index < 25; index += 1) {
+      await start.execute(
+        `start-${index}`,
+        { prompt: `turn ${index}`, name: `worker-${index}-${"n".repeat(300)}` },
+        undefined,
+        undefined,
+        ctx,
+      );
+      await settle(index);
+    }
+
+    const toolList = await tools.get("subagent_list").execute();
+    await commands.get("sublist").handler("", ctx);
+
+    expect(toolList.details).toMatchObject({ total: 25, omitted: 5 });
+    expect(toolList.details.subagents).toHaveLength(20);
+    expect(toolList.content[0].text).toContain(
+      "[5 known conversations omitted; all active entries shown]",
+    );
+    expect(toolList.content[0].text.length).toBeLessThanOrEqual(16_000);
+    expect(notifications.at(-1)).toBe(toolList.content[0].text);
+  });
+
   it("relays a child dialog mechanically to the root TUI", async () => {
     const { tools, ctx, startSession, messages } = setup();
     const dialogs: unknown[] = [];
@@ -685,13 +721,16 @@ describe("subagent routing inheritance", () => {
       extensionPaths: [],
     });
 
-    await expect(tools.get("subagent_start").execute(
+    const rejectedStart = tools.get("subagent_start").execute(
       "start",
       { prompt: "not accepted" },
       undefined,
       undefined,
       ctx,
-    )).rejects.toThrow("bash (expected builtin, missing)");
+    );
+    await expect(rejectedStart).rejects.toThrow("definitely rejected before the prompt crossed");
+    await expect(rejectedStart).rejects.toThrow("bash (expected builtin, missing)");
+    await expect(rejectedStart).rejects.not.toThrow("blindly retry");
     expect(rpc.children[0].requests).not.toContainEqual(
       expect.objectContaining({ type: "prompt" }),
     );
@@ -714,13 +753,16 @@ describe("subagent routing inheritance", () => {
       tools: [{ name: "read", provider: "builtin" }],
       extensionPaths: [],
     });
-    await expect(tools.get("subagent_continue").execute(
+    const rejectedContinuation = tools.get("subagent_continue").execute(
       "continue",
       { id: 2, prompt: "not accepted either" },
       undefined,
       undefined,
       ctx,
-    )).rejects.toThrow("bash (expected builtin, missing)");
+    );
+    await expect(rejectedContinuation).rejects.toThrow("definitely rejected before the prompt crossed");
+    await expect(rejectedContinuation).rejects.toThrow("bash (expected builtin, missing)");
+    await expect(rejectedContinuation).rejects.not.toThrow("blindly retry");
     expect(rpc.children[2].requests).not.toContainEqual(
       expect.objectContaining({ type: "prompt" }),
     );
@@ -788,6 +830,104 @@ describe("subagent routing inheritance", () => {
       maxDepth: 3,
     }, undefined, undefined, ctx)).rejects.toThrow("cannot raise");
     expect(rpc.invocations).toHaveLength(1);
+  });
+
+  it.each([
+    ["async root TUI", "tui", undefined],
+    ["direct print", "print", "async"],
+  ] as const)("reports post-boundary clean-start failure as unknown in %s delivery", async (_label, mode, delivery) => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = mode;
+    rpc.promptFailures.push(new Error("fixture transport failed after write"));
+
+    const dispatch = tools.get("subagent_start").execute(
+      "uncertain-start",
+      { prompt: "perform one effect", ...(delivery ? { delivery } : {}) },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    await expect(dispatch).rejects.toThrow("acceptance is unknown");
+    await expect(dispatch).rejects.toThrow("Do not blindly retry");
+    await expect(dispatch).rejects.toThrow("fixture transport failed after write");
+    await expect(dispatch).rejects.toThrow("/sessions/1.jsonl");
+    const list = await tools.get("subagent_list").execute();
+    expect(list.details.subagents).toMatchObject([{
+      id: 1,
+      state: "acceptance-unknown",
+      active: false,
+      sessionRef: "/sessions/1.jsonl",
+    }]);
+    expect(messages).toEqual([]);
+  });
+
+  it("bounds unknown-acceptance errors while preserving the original cause", async () => {
+    const { tools, ctx } = setup();
+    const original = new Error(`transport detail: ${"e".repeat(8_000)}`);
+    rpc.promptFailures.push(original);
+    let captured: unknown;
+
+    try {
+      await tools.get("subagent_start").execute(
+        "bounded-uncertainty",
+        { prompt: "perform one effect" },
+        undefined,
+        undefined,
+        ctx,
+      );
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toHaveLength(4_000);
+    expect((captured as Error).message).toContain("Do not blindly retry");
+    expect((captured as Error).message).toContain("/sessions/1.jsonl");
+    expect((captured as Error).message).toContain("characters omitted");
+    expect((captured as Error).cause).toBe(original);
+  });
+
+  it.each([
+    ["async root TUI", "tui", undefined],
+    ["direct print", "print", "async"],
+  ] as const)("reports post-boundary continuation failure as unknown in %s delivery", async (_label, mode, delivery) => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = mode;
+    const start = tools.get("subagent_start");
+    const continuation = tools.get("subagent_continue");
+
+    const starting = start.execute("seed", { prompt: "seed", delivery: "direct" }, undefined, undefined, ctx);
+    if (mode === "print") {
+      await vi.waitFor(() => expect(rpc.children).toHaveLength(1));
+      await settle(0);
+      await starting;
+    } else {
+      await starting;
+      await settle(0);
+    }
+    rpc.promptFailures.push(new Error("fixture continuation transport failed after write"));
+
+    const dispatch = continuation.execute(
+      "uncertain-continuation",
+      { id: 1, prompt: "perform another effect", ...(delivery ? { delivery } : {}) },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    await expect(dispatch).rejects.toThrow("acceptance is unknown");
+    await expect(dispatch).rejects.toThrow("Do not blindly retry");
+    await expect(dispatch).rejects.toThrow("fixture continuation transport failed after write");
+    await expect(dispatch).rejects.toThrow("/sessions/1.jsonl");
+    const list = await tools.get("subagent_list").execute();
+    expect(list.details.subagents).toMatchObject([{
+      id: 1,
+      state: "acceptance-unknown",
+      active: false,
+      sessionRef: "/sessions/1.jsonl",
+    }]);
+    expect(messages).toHaveLength(mode === "tui" ? 1 : 0);
   });
 
   it("forces a conflicting direct root TUI start to return after acceptance and pong exactly once", async () => {
@@ -915,6 +1055,39 @@ describe("subagent routing inheritance", () => {
       details: { id: 2, outcome: "completed", sessionRef: "/sessions/4.jsonl" },
     });
     expect(messages).toHaveLength(2);
+  });
+
+  it("preserves root JSON default async and explicit direct delivery", async () => {
+    const { tools, ctx, messages } = setup();
+    (ctx as any).mode = "json";
+    const start = tools.get("subagent_start");
+    const continuation = tools.get("subagent_continue");
+
+    await expect(start.execute(
+      "json-async-start",
+      { prompt: "one" },
+      undefined,
+      undefined,
+      ctx,
+    )).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("accepted the prompt") }],
+    });
+    await settle(0);
+    expect(messages).toHaveLength(1);
+
+    const directContinuation = continuation.execute(
+      "json-direct-continuation",
+      { id: 1, prompt: "two", delivery: "direct" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    await vi.waitFor(() => expect(rpc.children).toHaveLength(2));
+    await settle(1);
+    await expect(directContinuation).resolves.toMatchObject({
+      details: { id: 1, outcome: "completed", sessionRef: "/sessions/1.jsonl" },
+    });
+    expect(messages).toHaveLength(1);
   });
 
   it("returns the terminal subagent result directly in print mode without a pong follow-up", async () => {

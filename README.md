@@ -424,8 +424,8 @@ or administer OMQueue.
 ## Subagents
 
 `just subagents` explicitly enables the extension in
-`extensions/subagents/`. It starts clean, persistent Pi conversations and
-derives effective delivery mechanically from the current Pi mode and managed
+`extensions/subagents/`. It starts clean native Pi conversations and derives
+effective delivery mechanically from the current Pi mode and managed
 lineage depth for both start and continuation. A root depth-1 TUI always returns
 after child RPC prompt acceptance and later queues exactly one completion,
 failure, or interruption pong, even when caller input requests `"direct"`.
@@ -435,8 +435,8 @@ caller input requests `"async"` or omits delivery. This keeps the root TUI
 responsive and retains a nested parent runtime through descendant settlement.
 A root depth-1 RPC remains async by default and honors explicit `"direct"`.
 Child transport follows Pi's strict JSONL framing without a smaller
-ompi-specific record cap; parent-visible terminal text remains bounded
-separately.
+ompi-specific record cap; parent-visible terminal text, diagnostics, metadata,
+and inventories remain bounded separately and mark omissions.
 
 The normal widget remains compact and shows only direct current activity. The
 compact footer summarizes the active ownership subtree as `direct: N • nested:
@@ -456,6 +456,16 @@ delegations are useful, it starts them in the same turn so Pi can run them
 concurrently rather than awaiting an earlier pong. It may then continue useful
 work independent of the subagent results; otherwise it must end its response so
 user input and later pongs can enter the conversation.
+
+A dispatch is definitely rejected only when failure is known before the prompt
+can cross the child process boundary. Once the prompt may have crossed, a
+timeout, transport failure, RPC-response failure, or child-process failure
+leaves acceptance unknown for clean starts and continuations in every delivery
+mode. That feedback retains a bounded useful cause and the native session
+reference when available, records the conversation as `acceptance-unknown`, and
+prohibits blind retry because the prompt may already have produced effects.
+Inspect the referenced native conversation before deciding an explicit next
+action.
 
 For daily use, link this audited extension into Pi's global extension directory:
 
@@ -489,7 +499,13 @@ dispatched. An explicit `model` override must use the qualified
 launch. Optional `model` and `reasoning` overrides apply to one dispatch only
 and must be supplied only when the user explicitly requests that routing. The
 live subagent widget and `/sublist` output show the effective routing values.
-At each start or continuation, omitted `tools` inherit the parent's full
+`subagent_list` and `/sublist` use the same bounded presentation: they return up
+to 20 direct known conversations, always retain active entries, fill the
+remaining space with the most recent inactive entries, report omissions, cap
+the rendered snapshot at 16,000 characters, and bound each metadata field and
+tool-name list with explicit truncation markers. On-demand ownership snapshots
+show at most 36 active descendant runtimes plus `self` and report any omitted
+runtimes. At each start or continuation, omitted `tools` inherit the parent's full
 then-active set, including extension tools; an explicit array can only narrow
 that snapshot, and `tools: []` selects no tools. A subagent name is descriptive
 and does not silently change capabilities or delivery. `maxDepth` and
@@ -523,9 +539,9 @@ continuation state. Continuation resumes only that child's conversation at the
 same one-based delegation depth while capturing the parent's current
 capabilities again. The root is depth 1, its coordinator is depth 2, a leaf is
 depth 3, and the default maximum is 3. The root owns at most 12 active direct
-children; each nested parent defaults to 2. Handshaking, running, finalizing,
-and direct-wait runtimes occupy the responsible parent's local slot until their
-process exits.
+children; each nested parent defaults to 2. Preflight and handshaking processes,
+plus accepted running, finalizing, and direct-wait runtimes, occupy the
+responsible parent's local slot until their process exits.
 
 A coordinator RPC process remains alive through dependent direct leaf calls and
 exits only after its enclosing Pi turn settles. Parent interruption, process
@@ -533,11 +549,18 @@ closure, and session shutdown recursively close active descendants created
 through this extension and await their process exit. Independently shell-launched
 Pi or other processes are outside that managed lineage. Caller-requested
 interruption returns the distinct `interrupted` terminal outcome rather than a
-spontaneous `failed` outcome. Every bounded terminal result retains the native
-session reference for complete inspection, including truncated, failed,
-interrupted, and missing-assistant-message cases. The registry is intentionally
-in memory; native Pi JSONL sessions remain after processes and the orchestrator
-exit.
+spontaneous `failed` outcome. Every terminal result caps final assistant text
+at 8,000 characters and errors at 4,000 characters, marks omissions, and retains
+the complete native session reference for inspection, including truncated,
+failed, interrupted, and missing-assistant-message cases.
+
+Native Pi JSONL conversation files can survive their child processes and the
+owning parent session. Separately, the numeric known-conversation registry is
+in memory only for that owning parent session and is not rebuilt from native
+files after the parent exits. An active child runtime exists only for an
+accepted turn; a temporary process may exist during preflight, and no idle
+runtime survives terminal settlement. The extension adds no durable registry,
+retry system, task store, or supervisor.
 
 Standard `select`, `confirm`, `input`, and `editor` dialogs requested by a
 headless child relay mechanically through direct owners to a root TUI. Parent

@@ -13,11 +13,11 @@ The agent conversation that directly starts a subagent. A parent may itself be a
 _Avoid_: Manager process, supervisor service
 
 **Subagent**:
-An independent headless Pi agent conversation started by its parent and owned by that parent's current session. Its native Pi JSONL conversation persists across turns, while one RPC process exists only during an accepted active turn.
+An independent headless Pi agent conversation started by its parent. Its native Pi JSONL file can survive child processes and the owning parent session; its owner-local known-conversation entry exists only in that parent's in-memory registry, and an active child runtime exists only for an accepted turn.
 _Avoid_: Worker service, task, job, daemon
 
 **Headless child runtime**:
-The live RPC process that hosts one subagent turn with its normal Pi agent loop, inherited tools and extension providers, and managed descendants but no TUI. It remains alive through every model and tool step in that turn, including direct nested delegations, then exits after terminal settlement or parent-requested closure. A later continuation starts another process over the preserved native session at the same delegation depth.
+The live RPC process that hosts one accepted subagent turn with its normal Pi agent loop, inherited tools and extension providers, and managed descendants but no TUI. A temporary child process may exist during mechanical preflight before prompt acceptance; it becomes an active runtime only after acceptance is known. An active runtime remains alive through every model and tool step in that turn, including direct nested delegations, then exits after terminal settlement or parent-requested closure. A later continuation starts another process over the preserved native session at the same delegation depth.
 _Avoid_: Detached daemon, TUI pane, persistent idle service
 
 **Direct runtime owner**:
@@ -37,7 +37,7 @@ The one-based position of an agent in one managed delegation lineage: root orche
 _Avoid_: Process count, task phase, permission role
 
 **Direct active-child ceiling**:
-The maximum number of direct child processes one parent may own concurrently. The root default is 12 and a nested parent defaults to 2. A nested ceiling may be tightened to 0, 1, or 2 but never raised above what the parent inherited. Handshaking, running, finalizing, and direct-wait runtimes hold a local slot until their owned process has exited. Each controller enforces only its direct children; this is not a global or tree-wide semaphore.
+The maximum number of direct child processes one parent may own concurrently. The root default is 12 and a nested parent defaults to 2. A nested ceiling may be tightened to 0, 1, or 2 but never raised above what the parent inherited. Preflight and handshaking processes, plus accepted running, finalizing, and direct-wait runtimes, hold a local slot until their owned process has exited. Each controller enforces only its direct children; this is not a global or tree-wide semaphore.
 _Avoid_: Global process limit, queue capacity, lifetime spawn count, known conversation count
 
 **Managed delegation lineage**:
@@ -51,6 +51,18 @@ _Avoid_: Session deletion, semantic completion, idle release
 **Clean start**:
 A new subagent conversation that receives the inherited runtime baseline and its explicit prompt but none of the parent transcript, compaction summary, hidden continuation state, or prior messages. A continuation preserves only that subagent's native Pi conversation; runtime inheritance never implies conversation sharing.
 _Avoid_: Context fork, implicit transcript inheritance, automatic conversation sharing
+
+**Definite dispatch rejection**:
+A start or continuation failure known to occur before the prompt can cross the child process boundary. No child turn was accepted, so the same prompt has not produced child effects and the failed clean-start entry need not remain in the known-conversation registry.
+_Avoid_: Every handshake failure, timeout after write, inferred non-acceptance
+
+**Unknown prompt acceptance**:
+A start or continuation failure after the prompt may have crossed the child process boundary. Timeout, transport, RPC-response, and child-process failure do not prove rejection at this point. Feedback retains a bounded useful cause and the native session reference when available, explicitly prohibits blind retry because effects could be duplicated, and records the direct conversation as `acceptance-unknown` for bounded inspection. Process closure ends extension-owned runtime activity but cannot retroactively prove whether the prompt was accepted.
+_Avoid_: Rejected, safe to retry, terminal failure, automatic retry
+
+**Known-conversation registry**:
+The owner-local, in-memory mapping used by one parent session for numeric continuation IDs and direct-conversation snapshots. It can retain settled or acceptance-unknown entries while that parent session lives, but it is not reconstructed from native Pi files and disappears when the parent session closes. A parent-visible snapshot includes at most 20 entries, always retains active entries within the direct active-child ceiling, fills remaining space with the most recent inactive entries, reports omissions, and bounds its rendered text and metadata. Native conversation files can outlive the registry; the registry does not imply a persistent child process.
+_Avoid_: Native session store, durable registry, runtime inventory, cross-session index
 
 **Subagent extension**:
 The mechanical Pi extension that connects each parent agent to direct subagents and owns their managed process lifecycle, message transport, local limits, and status for the current session. Its child transport follows Pi's strict JSONL record semantics and does not terminate valid records at a smaller extension-specific byte cap; bounded terminal results and status metadata remain separate parent-visible limits. It does not decide or interpret delegated work.
@@ -69,8 +81,8 @@ The extension-selected return contract for one dispatch, derived mechanically fr
 _Avoid_: Coordinator profile, leaf profile, hidden topology mode, model-inferred lifecycle
 
 **Terminal result**:
-The mechanically classified `completed`, `failed`, or `interrupted` outcome of one bounded subagent turn. It includes the current turn's bounded final assistant text when one exists and always retains the native session reference needed to inspect complete persisted evidence after truncation, failure, interruption, or a missing assistant message.
-_Avoid_: Workflow decision, semantic success, transcript copy
+The mechanically classified `completed`, `failed`, or `interrupted` outcome of one bounded accepted subagent turn. Its final assistant text, error, name, and other parent-visible presentation fields have deterministic limits and mark omissions. It always retains the bounded complete native session reference needed to inspect persisted evidence after truncation, failure, interruption, or a missing assistant message. Unknown prompt acceptance is dispatch feedback, not a terminal result.
+_Avoid_: Workflow decision, semantic success, transcript copy, unknown acceptance
 
 **Start confirmation**:
 The immediate response that a subagent process accepted an asynchronous prompt and began an active turn. It does not wait for that turn to finish.
@@ -81,7 +93,7 @@ The subagent extension's single deterministic asynchronous notification that an 
 _Avoid_: Direct result, model callback, polling, status check
 
 **Ownership subtree**:
-One parent agent plus every active descendant runtime reachable through that parent's direct children. An on-demand snapshot identifies the invoking parent as `self`; descendant runtime paths are relative to it, while each `#ID` remains scoped to the direct owner named on that line. A parent can inspect only its own subtree, never its parent, siblings, unrelated controllers, idle conversations, or other sessions. Existing direct-owner steering and interruption operations continue to accept their local numeric IDs; the status view adds no tree action API, and closing an ancestor retains recursive managed-lineage cleanup.
+One parent agent plus every active descendant runtime reachable through that parent's direct children. An on-demand snapshot identifies the invoking parent as `self`; descendant runtime paths are relative to it, while each `#ID` remains scoped to the direct owner named on that line. It presents at most 36 descendant runtimes and marks additional omissions. A parent can inspect only its own subtree, never its parent, siblings, unrelated controllers, idle conversations, or other sessions. Existing direct-owner steering and interruption operations continue to accept their local numeric IDs; the status view adds no tree action API, and closing an ancestor retains recursive managed-lineage cleanup.
 _Avoid_: Global agent registry, session inventory, machine process tree, globally actionable runtime ID
 
 **Live status**:

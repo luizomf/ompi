@@ -8,6 +8,7 @@ import {
   parseCapabilityProbe,
   type CapabilitySnapshot,
 } from "./capabilities.ts";
+import { PromptTransportError } from "./controller.ts";
 import type {
   LaunchSpec,
   OwnershipRuntime,
@@ -146,6 +147,25 @@ export class RpcSubprocess implements RpcChild {
   }
 
   request(command: Record<string, unknown>): Promise<unknown> {
+    return this.sendRequest(command);
+  }
+
+  async prompt(message: string): Promise<void> {
+    let mayHaveCrossed = false;
+    try {
+      await this.sendRequest(
+        { type: "prompt", message },
+        () => { mayHaveCrossed = true; },
+      );
+    } catch (error) {
+      throw new PromptTransportError(mayHaveCrossed, error);
+    }
+  }
+
+  private sendRequest(
+    command: Record<string, unknown>,
+    onBoundaryCrossed?: () => void,
+  ): Promise<unknown> {
     if (this.exited || !this.process.stdin.writable) return Promise.reject(new Error("Child RPC process is not writable."));
     const id = `subagent_${++this.requestId}`;
     return new Promise((resolve, reject) => {
@@ -154,14 +174,21 @@ export class RpcSubprocess implements RpcChild {
         reject(new Error(`Timed out waiting for RPC response to ${String(command.type)}.${this.stderr ? ` ${this.stderr}` : ""}`));
       }, 30_000);
       this.pending.set(id, { resolve, reject, timer });
-      this.process.stdin.write(`${JSON.stringify({ ...command, id })}\n`, "utf8", (error) => {
-        if (!error) return;
-        const pending = this.pending.get(id);
-        if (!pending) return;
-        clearTimeout(pending.timer);
+      try {
+        this.process.stdin.write(`${JSON.stringify({ ...command, id })}\n`, "utf8", (error) => {
+          if (!error) return;
+          const pending = this.pending.get(id);
+          if (!pending) return;
+          clearTimeout(pending.timer);
+          this.pending.delete(id);
+          pending.reject(error);
+        });
+        onBoundaryCrossed?.();
+      } catch (error) {
+        clearTimeout(timer);
         this.pending.delete(id);
-        pending.reject(error);
-      });
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -218,6 +245,14 @@ export class RpcSubprocess implements RpcChild {
     try {
       message = JSON.parse(line) as RpcResponse | RpcEvent;
     } catch {
+      return;
+    }
+    if (
+      !message
+      || typeof message !== "object"
+      || Array.isArray(message)
+      || typeof message.type !== "string"
+    ) {
       return;
     }
     if (

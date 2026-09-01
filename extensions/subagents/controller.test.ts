@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  PromptTransportError,
   SubagentController,
   type LaunchSpec,
   type RpcChild,
@@ -30,6 +31,7 @@ class FakeChild implements RpcChild {
   private closeGate?: Promise<void>;
   private releaseClose?: () => void;
   private readonly reportedCapabilities?: CapabilitySnapshot;
+  private readonly promptError?: Error;
 
   constructor(
     spec: LaunchSpec,
@@ -37,10 +39,12 @@ class FakeChild implements RpcChild {
     delayedPrompt = false,
     reportedCapabilities?: CapabilitySnapshot,
     delayedClose = false,
+    promptError?: Error,
   ) {
     this.spec = spec;
     this.sessionFile = sessionFile;
     this.reportedCapabilities = reportedCapabilities;
+    this.promptError = promptError;
     if (delayedPrompt) {
       this.promptGate = new Promise((resolve) => {
         this.releasePrompt = resolve;
@@ -64,9 +68,14 @@ class FakeChild implements RpcChild {
   async request(command: Record<string, unknown>): Promise<unknown> {
     this.requests.push(command);
     if (command.type === "get_state") return { sessionFile: this.sessionFile };
-    if (command.type === "prompt") await this.promptGate;
     if (command.type === "get_last_assistant_text") return { text: this.finalText };
     return undefined;
+  }
+
+  async prompt(message: string): Promise<void> {
+    this.requests.push({ type: "prompt", message });
+    if (this.promptError) throw this.promptError;
+    await this.promptGate;
   }
 
   async getCapabilities(): Promise<CapabilitySnapshot> {
@@ -107,6 +116,8 @@ function setup(options: {
   reportedCapabilities?: CapabilitySnapshot;
   lineage?: ManagedLineage;
   delayedClose?: boolean;
+  promptError?: Error;
+  sessionFile?: string;
 } = {}) {
   const children: FakeChild[] = [];
   const pongs: unknown[] = [];
@@ -116,10 +127,11 @@ function setup(options: {
     createChild: async (spec) => {
       const child = new FakeChild(
         spec,
-        spec.session ?? `/sessions/${children.length + 1}.jsonl`,
+        spec.session ?? options.sessionFile ?? `/sessions/${children.length + 1}.jsonl`,
         options.delayedPrompt,
         options.reportedCapabilities,
         options.delayedClose,
+        options.promptError,
       );
       children.push(child);
       return child;
@@ -445,12 +457,105 @@ describe("SubagentController", () => {
     expect(children).toHaveLength(12);
   });
 
-  it("times out pre-acceptance without a pong", async () => {
-    const { controller, children, pongs } = setup({ delayedPrompt: true, handshakeMs: 5 });
-    await expect(controller.start({ prompt: "slow", cwd: "/repo", model: "p/m", thinking: "low", capabilities: DEFAULT_CAPABILITIES })).rejects.toThrow("accept");
+  it("reports a known pre-write prompt failure as definite rejection", async () => {
+    const cause = new Error("child stdin was not writable");
+    const { controller, children, pongs } = setup({
+      promptError: new PromptTransportError(false, cause),
+    });
+    let captured: unknown;
+
+    try {
+      await controller.start({
+        prompt: "not sent",
+        cwd: "/repo",
+        model: "p/m",
+        thinking: "low",
+        capabilities: DEFAULT_CAPABILITIES,
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toContain("definitely rejected before the prompt crossed");
+    expect((captured as Error).message).toContain("child stdin was not writable");
+    expect((captured as Error).message).not.toContain("blindly retry");
     expect(children[0].closed).toBe(true);
     expect(controller.list()).toEqual([]);
     expect(pongs).toEqual([]);
+  });
+
+  it("reports timeout after the prompt crossed as acceptance unknown without blind retry", async () => {
+    const { controller, children, pongs } = setup({ delayedPrompt: true, handshakeMs: 5 });
+    let captured: unknown;
+
+    try {
+      await controller.start({
+        prompt: "slow",
+        cwd: "/repo",
+        model: "p/m",
+        thinking: "low",
+        capabilities: DEFAULT_CAPABILITIES,
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toContain("acceptance is unknown");
+    expect((captured as Error).message).toContain("Do not blindly retry");
+    expect((captured as Error).message).toContain("/sessions/1.jsonl");
+    expect((captured as Error).cause).toBeInstanceOf(Error);
+    expect(((captured as Error).cause as Error).message).toContain("timed out after 5ms");
+    expect(children[0].closed).toBe(true);
+    expect(controller.list()).toMatchObject([{
+      id: 1,
+      active: false,
+      state: "acceptance-unknown",
+      sessionRef: "/sessions/1.jsonl",
+    }]);
+    expect(pongs).toEqual([]);
+  });
+
+  it("keeps the complete bounded session reference and a useful cause in unknown feedback", async () => {
+    const sessionRef = `/sessions/${"s".repeat(1_900)}.jsonl`;
+    const cause = new Error(`transport detail: ${"e".repeat(8_000)}`);
+    const promptError = new PromptTransportError(true, cause);
+    const { controller } = setup({ promptError, sessionFile: sessionRef });
+    let captured: unknown;
+
+    try {
+      await controller.start({
+        prompt: "possibly sent",
+        cwd: "/repo",
+        model: "p/m",
+        thinking: "low",
+        capabilities: DEFAULT_CAPABILITIES,
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toHaveLength(4_000);
+    expect((captured as Error).message).toContain(sessionRef);
+    expect((captured as Error).message).toContain("Cause: transport detail:");
+    expect((captured as Error).message).toContain("characters omitted");
+    expect((captured as Error).cause).toBe(promptError);
+    expect(((captured as Error).cause as Error).cause).toBe(cause);
+  });
+
+  it("definitely rejects a multiline session reference before prompt dispatch", async () => {
+    const { controller, children } = setup({ sessionFile: "/sessions/bad\nreference.jsonl" });
+
+    await expect(controller.start({
+      prompt: "not sent",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "low",
+      capabilities: DEFAULT_CAPABILITIES,
+    })).rejects.toThrow("definitely rejected before the prompt crossed");
+    expect(children[0].requests).not.toContainEqual(expect.objectContaining({ type: "prompt" }));
   });
 
   it("preserves the original capability preflight failure as the dispatch error cause", async () => {
@@ -472,7 +577,10 @@ describe("SubagentController", () => {
     }
 
     expect(captured).toBeInstanceOf(Error);
-    expect((captured as Error).message).toContain("Subagent dispatch was not accepted");
+    expect((captured as Error).message).toContain(
+      "definitely rejected before the prompt crossed the child process boundary",
+    );
+    expect((captured as Error).message).not.toContain("blindly retry");
     expect((captured as Error).cause).toBeInstanceOf(Error);
     expect(((captured as Error).cause as Error).message).toContain(
       "Child capability preflight mismatch",
@@ -521,6 +629,48 @@ describe("SubagentController", () => {
     children[0].emit({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "provider failed" } });
     await settle(children[0]);
     expect(pongs[0]).toMatchObject({ outcome: "failed", error: "provider failed" });
+  });
+
+  it("returns a failed pong with the session reference for malformed terminal text metadata", async () => {
+    const { controller, children, pongs } = setup();
+    await controller.start({
+      prompt: "work",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "medium",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+    children[0].finalText = {} as unknown as string;
+
+    await settle(children[0]);
+
+    expect(pongs).toMatchObject([{
+      outcome: "failed",
+      sessionRef: "/sessions/1.jsonl",
+      error: "Child returned invalid last assistant text metadata.",
+    }]);
+  });
+
+  it("returns a direct failed terminal result for malformed terminal text metadata", async () => {
+    const { controller, children, pongs } = setup();
+    const running = controller.run({
+      prompt: "work",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "medium",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    children[0].finalText = [] as unknown as string;
+
+    await settle(children[0]);
+
+    await expect(running).resolves.toMatchObject({
+      outcome: "failed",
+      sessionRef: "/sessions/1.jsonl",
+      error: "Child returned invalid last assistant text metadata.",
+    });
+    expect(pongs).toEqual([]);
   });
 
   it("continues the same session with the routing values supplied for the new turn", async () => {
@@ -611,6 +761,27 @@ describe("SubagentController", () => {
     children[0].emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "visible" } });
     children[0].emit({ type: "tool_execution_start", toolName: "read" });
     expect(controller.list()[0]).toMatchObject({ preview: "visible", currentTool: "read" });
+  });
+
+  it("ignores malformed tool metadata and bounds valid tool names from untrusted frames", async () => {
+    const { controller, children } = setup();
+    await controller.start({
+      prompt: "one",
+      cwd: "/repo",
+      model: "p/m",
+      thinking: "low",
+      capabilities: DEFAULT_CAPABILITIES,
+    });
+
+    expect(() => children[0].emit({
+      type: "tool_execution_start",
+      toolName: {} as unknown as string,
+    })).not.toThrow();
+    expect(controller.list()[0].currentTool).toBeUndefined();
+
+    children[0].emit({ type: "tool_execution_start", toolName: `tool-${"x".repeat(400)}` });
+    expect(controller.list()[0].currentTool).toHaveLength(256);
+    expect(controller.list()[0].currentTool).toContain("characters omitted");
   });
 
   it("reports only the active owned subtree and removes descendants on child settlement", async () => {
