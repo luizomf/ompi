@@ -76,15 +76,16 @@ apply.
 
 For a specific user-authorized URL, the agent-facing guidance defines one
 strict fallback chain: direct HTTP/curl on the original URL, `browser_fetch` on
-the original URL, `codex_search` with the `quick` profile and an explicit
+the original URL, `codex_search` with `intent: exact_url` and an explicit
 exact-URL extraction request, then `browser_fetch` through
 `https://markdown.new/<absolute-URL>` and finally
-`https://r.jina.ai/<absolute-URL>`. Transport errors, HTTP failures, blocked or
-login pages, unreadable output, and failure to establish exact-URL access
-advance the chain. Transformed fallback URLs never restart it. Generated prose,
-snippets, and related pages are not evidence that the supplied URL was read; if every safe
-stage fails, the agent reports that it could not access or verify the page rather
-than inventing page-specific facts.
+`https://r.jina.ai/<absolute-URL>`. The Codex stage is fixed to Luna with high
+reasoning. Transport errors, HTTP failures, blocked or login pages, unreadable
+output, and failure to establish exact-URL access advance the chain. Transformed
+fallback URLs never restart it. Helper/model-produced prose, snippets, and
+related pages are not evidence that the supplied URL was read; if every safe
+stage fails, the agent reports that it could not access or verify the page
+rather than inventing page-specific facts.
 
 `markdown.new` and `r.jina.ai` are third-party hosted services that receive the
 submitted absolute URL. The guidance prohibits sending them credentials,
@@ -99,33 +100,57 @@ fresh checkout with:
 npm ci --prefix extensions/browser-fetch
 ```
 
-### Codex research and image generation
+### Codex retrieval, research, and image generation
 
 The extension in `extensions/codex-search/` provides one narrow `codex_search`
-tool for web search, exact-URL fetching, scraping and extraction, and image
-generation. It is the model-backed stage after direct HTTP and `browser_fetch`
-when retrieving a specific URL. Exact-URL work uses the default `quick` profile
-and explicitly requires Codex to say when it could not access the supplied URL;
-the `research` profile remains for independently complex source comparison or
-synthesis. Image generation is an explicit mode of the same tool, not a second
-backend. `just research` enables it alongside Browser Fetch. To enable it in
-another isolated Pi process:
+tool with three required task intents:
+
+- `exact_url` retrieves and extracts one supplied URL through Luna with high
+  reasoning;
+- `research` performs independently complex source comparison or synthesis
+  through Sol with high reasoning; and
+- `image` requests image generation through Sol with high reasoning.
+
+The caller supplies only a focused `query`, one `intent`, and an optional image
+`destination`. It cannot select a model, reasoning level, workspace mode, or
+approval behavior. The helper's `quick` and `research` profiles remain internal
+invocation details rather than agent-facing effort choices. `just research`
+enables this tool alongside Browser Fetch. To enable it in another isolated Pi
+process:
 
 ```sh
 pi --no-extensions --extension ./extensions/codex-search/index.ts
 ```
 
-It invokes `codex_search --profile <effort> --skip-git-repo-check --cd
-<pi-cwd> -` directly without a shell and sends the prompt through stdin. The
-optional `effort` is a bounded semantic choice: `quick` (the default) covers
-search, scraping, extraction, and source cleanup, while `research` delegates
-complex source comparison or synthesis. Existing research calls preserve these
-profiles. Setting `image: true` always selects `research`; Codex/ImageGen
-generates the pixels, while Pi operationally requests and delivers the final
-image artifact. The helper resolved from `PATH` owns the fixed model and reasoning
-mappings, isolating calls from machine-local Codex
-configuration. Run `codex_search --list-models` (or `codex debug models`) outside
-Pi to inspect the account's current model catalog.
+An authenticated `codex_search` helper and Codex CLI must be executable from
+`PATH`, and the account must expose `gpt-5.6-luna` and `gpt-5.6-sol` with high
+reasoning. Every invocation is direct and shell-free, uses the Pi session cwd,
+sends its request through stdin, and includes the helper's accepted unsandboxed
+mode. The extension fixes the routes explicitly instead of trusting helper or
+machine defaults:
+
+```text
+exact_url: --profile quick --yolo --model gpt-5.6-luna --config model_reasoning_effort=high
+research:  --profile research --yolo --model gpt-5.6-sol --config model_reasoning_effort=high
+image:     --profile research --yolo --model gpt-5.6-sol --config model_reasoning_effort=high
+```
+
+All routes then add `--skip-git-repo-check --cd <pi-cwd> -`. The helper ignores
+`~/.codex/config.toml` while retaining Codex authentication and ephemeral search
+execution. Run `codex_search --list-models` (or `codex debug models`) outside Pi
+to inspect the authenticated account's model catalog.
+
+A direct `image` intent authorizes creation of that requested artifact; no
+separate write-capability negotiation is required. When `destination` is
+present, the extension includes the exact location in the stdin helper request.
+Relative locations are interpreted from the Pi session cwd. Without a
+destination, the returned text is only helper output: the calling agent must
+inspect any reported artifact and place it where the task requires instead of
+claiming final placement or delivery. The user's free-form image intent is not
+rewritten into a mandatory visual template or post-processing pipeline. A
+`destination` on `exact_url` or `research` is rejected before helper execution.
+Those two intents authorize retrieval or research only, not unrelated workspace
+mutation, even though the helper is mechanically unsandboxed.
 
 In print mode the tool waits and returns its bounded result directly. In other
 modes it returns immediately after a session-scoped background operation starts,
@@ -133,42 +158,32 @@ keeps a minimal live footer count, and may later deliver exactly one collapsible
 completion or failure result while the owning Pi session remains live. After
 start confirmation outside print mode, the orchestrator must not wait or poll;
 it may continue independent work or end its response so the result can enter a
-later turn. When `write` or `yolo` is enabled,
-reading or modifying potentially overlapping workspace paths is not independent
-work and must wait for that result. Only a failure result adds an instruction
-that the orchestrator must mention the failure in its next user-facing response;
-it must not stop or abandon the task solely because of the failure and should
-continue with another appropriate tool when useful or available.
+later turn. It must not inspect, move, or modify a pending image operation's
+potential artifact paths before that live session delivers the result.
 
 The background wrapper is limited to four concurrent Codex operations.
 Independently useful Codex or other background calls can be started in the same
-turn; the orchestrator does not await one result before starting another.
-Start confirmations state that later delivery is possible only while the owning
-Pi session remains live, and delivered result wording identifies that live
-session boundary. Closing or reloading the owning Pi session aborts active
-searches and suppresses stale results; this path is intentionally not durable
-and does not use `bq` or OMQueue. The helper ignores `~/.codex/config.toml`
-while retaining Codex authentication, then explicitly enables search, ephemeral
-execution, and a read-only sandbox. This makes a fresh logged-in machine use the
-same operational defaults. The narrow trust-check bypass allows work from new
-or untrusted directories. The
-tool exposes only two permission opt-ins: `write: true` selects
-`workspace-write` with the Pi session cwd as its primary workspace, while
-`yolo: true` bypasses approvals and sandboxing entirely. Image generation
-requires explicit `image: true` and `write: true`. The agent forwards the user's
-free-form image intent without imposing a visual template, excessive rewriting,
-or mandatory post-processing. It may request candidates, inspect the saved file
-at the returned path, and iterate it; mechanical conversions remain part of the
-calling task when requested. The orchestrator must never use YOLO without the
-user's specific authorization for YOLO. Each process retains its fixed ten-minute
-timeout and bounded captured output. Model and reasoning defaults remain
-controlled by the `codex_search` executable resolved from
-`PATH`; the extension does not expose arbitrary Codex flags. Model-produced
-research is not a verified primary source, so research requests should ask for
-URLs or citations where relevant and verify those sources separately. Image
-results do not receive that research-verification reminder. The extension is
-enabled alongside Browser Fetch by `just research`; outside that explicit
-profile it is not enabled by a package manifest or unrelated launch profile.
+turn; the orchestrator does not await one result before starting another. Start
+confirmations and delivered results preserve the owning-session lifetime.
+Closing or reloading that Pi session aborts active work and suppresses stale
+results; this path is intentionally not durable and does not use `bq` or
+OMQueue.
+
+Each process has a ten-minute timeout, captures at most 48,000 stdout bytes and a
+2,000-byte stderr tail, drains both streams, and terminates its process group on
+cancellation, timeout, or leader exit. Startup, unavailable-helper, timeout,
+stdin, and nonzero-exit failures include bounded diagnostics and actionable
+invocation context. A failure must be mentioned in the next user-facing response
+without abandoning otherwise useful work. An `exact_url` failure continues only
+the remaining `markdown.new` and `r.jina.ai` stages of the strict fallback chain
+and never restarts it.
+
+Successful retrieval and research text is labeled as helper/model-produced
+output, not a verified primary source, and includes a primary-source verification
+reminder. Image output never receives that reminder and never claims more
+placement or delivery than the helper reported. The extension is enabled
+alongside Browser Fetch by `just research`; outside that explicit profile it is
+not enabled by a package manifest or unrelated launch profile.
 
 Browser Fetch and Codex Search share the single background wrapper maintained at
 `extensions/background-tool.ts`. Their extension-local aliases preserve jiti

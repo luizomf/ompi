@@ -8,12 +8,7 @@ const CODEX_SEARCH_STDOUT_BYTES = 48_000;
 const CODEX_SEARCH_STDERR_BYTES = 2_000;
 const FORCE_KILL_DELAY_MS = 500;
 
-export type CodexSearchEffort = "quick" | "research";
-
-export interface CodexSearchOptions {
-  write?: boolean;
-  yolo?: boolean;
-}
+export type CodexSearchIntent = "exact_url" | "research" | "image";
 
 export interface ProcessRequest {
   command: string;
@@ -78,15 +73,20 @@ function invocationContext(request: ProcessRequest): string {
   const command = [request.command, ...request.args]
     .map((part) => JSON.stringify(part))
     .join(" ");
+  const executable = request.command.split(/[\\/]/).at(-1);
   return [
     `Command: ${command}`,
     `Working directory: ${JSON.stringify(request.cwd)}`,
+    executable === "codex_search"
+      ? "Hint: Ensure codex_search is installed, executable, and available on PATH, and that Codex authentication is configured. For timeout or nonzero failures, inspect the bounded diagnostics, narrow the request when appropriate, and verify that the fixed route is available."
+      : "",
     "Hint: codex_search runs from the Pi session cwd. Verify directory access (existence plus traversal/read permissions), or start Pi from an accessible working directory.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
-function processError(message: string, request: ProcessRequest): Error {
-  return new Error(`${message}\n\n${invocationContext(request)}`);
+function processError(message: string, request: ProcessRequest, cause?: unknown): Error {
+  const fullMessage = `${message}\n\n${invocationContext(request)}`;
+  return cause === undefined ? new Error(fullMessage) : new Error(fullMessage, { cause });
 }
 
 function killProcessGroup(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
@@ -113,19 +113,44 @@ function truncationNotice(stream: "stdout" | "stderr", truncated: boolean, limit
 export function buildCodexSearchRequest(
   query: string,
   cwd: string,
-  effort: CodexSearchEffort,
-  options: CodexSearchOptions = {},
+  intent: CodexSearchIntent,
+  destination?: string,
   signal?: AbortSignal,
 ): ProcessRequest {
-  const args = ["--profile", effort];
-  if (options.write) args.push("--write");
-  if (options.yolo) args.push("--yolo");
+  const args = intent === "exact_url"
+    ? [
+        "--profile",
+        "quick",
+        "--yolo",
+        "--model",
+        "gpt-5.6-luna",
+        "--config",
+        "model_reasoning_effort=high",
+      ]
+    : [
+        "--profile",
+        "research",
+        "--yolo",
+        "--model",
+        "gpt-5.6-sol",
+        "--config",
+        "model_reasoning_effort=high",
+      ];
   args.push("--skip-git-repo-check", "--cd", cwd, "-");
+
+  const input = destination === undefined
+    ? query
+    : [
+        query,
+        "",
+        `Final output location (JSON string): ${JSON.stringify(destination)}`,
+        "Create the final image artifact at that location.",
+      ].join("\n");
 
   return {
     command: "codex_search",
     args,
-    input: query,
+    input,
     cwd,
     signal,
     timeoutMs: CODEX_SEARCH_TIMEOUT_MS,
@@ -137,12 +162,12 @@ export function buildCodexSearchRequest(
 export async function runCodexSearch(
   query: string,
   cwd: string,
-  effort: CodexSearchEffort,
-  options: CodexSearchOptions = {},
+  intent: CodexSearchIntent,
+  destination?: string,
   signal?: AbortSignal,
 ): Promise<ProcessResult> {
   if (!query.trim()) throw new Error("codex_search requires a non-empty query.");
-  return runProcess(buildCodexSearchRequest(query, cwd, effort, options, signal));
+  return runProcess(buildCodexSearchRequest(query, cwd, intent, destination, signal));
 }
 
 export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
@@ -185,7 +210,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (error) {
-      reject(processError(`Failed to start ${request.command}: ${errorText(error)}`, request));
+      reject(processError(`Failed to start ${request.command}: ${errorText(error)}`, request, error));
       return;
     }
 
@@ -223,7 +248,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
       };
 
       if (startupError) {
-        reject(processError(`Failed to start ${request.command}: ${startupError.message}`, request));
+        reject(processError(`Failed to start ${request.command}: ${startupError.message}`, request, startupError));
         return;
       }
       if (termination === "cancelled") {
@@ -235,7 +260,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessResult> {
         return;
       }
       if (inputError) {
-        reject(processError(`Failed to send the query to ${request.command}: ${inputError.message}`, request));
+        reject(processError(`Failed to send the query to ${request.command}: ${inputError.message}`, request, inputError));
         return;
       }
       if (code !== 0) {

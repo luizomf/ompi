@@ -83,9 +83,13 @@ imports remain loadable when those directories are themselves reached through
 Pi's global extension symlinks. Browser Fetch uses the wrapper as a read-only
 tool. It attempts valid user-authorized HTTP and HTTPS destinations through a
 fresh Chromium profile without imposing DNS or IP-range classification; it does
-not own a replacement global network boundary. Codex Search is read-only by
-default and exposes separately authorized workspace-write, image-generation,
-and unsandboxed modes; each tool's schema and guidance own those permissions.
+not own a replacement global network boundary. Codex Search requires one of
+three explicit task intents: exact-URL retrieval, complex research, or image
+generation. Every helper invocation is mechanically unsandboxed, but retrieval
+and research authorize only that requested work, not unrelated workspace
+mutation. A direct image intent specifically authorizes artifact creation and
+may include its final destination; without one, the calling agent remains
+responsible for inspection and final placement.
 
 ## Mode contract
 
