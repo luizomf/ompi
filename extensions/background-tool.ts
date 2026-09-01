@@ -67,7 +67,7 @@ export function createBackgroundToolManager(
   pi.registerMessageRenderer(customType, (message, { expanded }, theme) => {
     const details = message.details as BackgroundCompletionDetails | undefined;
     const heading = details
-      ? `[BACKGROUND #${details.id} ${details.toolName}] ${details.outcome}`
+      ? `[BACKGROUND #${details.id} ${details.toolName}] ${details.outcome}; delivered to its owning live Pi session`
       : `[BACKGROUND ${options.namespace}]`;
     const collapsed = [heading];
     if (details?.error) collapsed.push(`Error: ${details.error}`);
@@ -156,7 +156,11 @@ export function createBackgroundToolManager(
               const text = resultText(result);
               pi.sendMessage({
                 customType,
-                content: [`[BACKGROUND #${id} ${tool.name}] completed`, text].filter(Boolean).join("\n\n"),
+                content: [
+                  `[BACKGROUND #${id} ${tool.name}] completed`,
+                  "This result was delivered to its owning live Pi session.",
+                  text,
+                ].filter(Boolean).join("\n\n"),
                 display: true,
                 details: {
                   id,
@@ -172,7 +176,7 @@ export function createBackgroundToolManager(
               const message = errorMessage(error);
               pi.sendMessage({
                 customType,
-                content: `[BACKGROUND #${id} ${tool.name}] failed\n\nError: ${message}`,
+                content: `[BACKGROUND #${id} ${tool.name}] failed\n\nThis result was delivered to its owning live Pi session.\n\nError: ${message}`,
                 display: true,
                 details: { id, toolName: tool.name, outcome: "failed", error: message } satisfies BackgroundCompletionDetails,
               }, { deliverAs: "followUp", triggerTurn: true });
@@ -181,7 +185,7 @@ export function createBackgroundToolManager(
           return {
             content: [{
               type: "text",
-              text: `Background operation #${id} (${tool.name}) started. Do not wait, sleep, or poll for completion; its result will arrive later. If another independent, non-overlapping background call is useful, start it without waiting for this result.`,
+              text: `Background operation #${id} (${tool.name}) started. Its result can be delivered later only while the owning Pi session remains live; session shutdown aborts the work and suppresses delivery. Do not wait, sleep, or poll for completion. If another independent, non-overlapping background call is useful, start it without waiting for this result.`,
             }],
             details: view,
           };

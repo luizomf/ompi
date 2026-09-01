@@ -23,13 +23,15 @@ _Avoid_: Queue Job, cron run, subagent
 **Start confirmation**:
 The immediate outside-print-mode tool result stating that the wrapper accepted a
 background operation. It is not evidence that the underlying operation will
-succeed.
+succeed, and it states that later delivery is possible only while the owning Pi
+session remains live.
 _Avoid_: Completion, scheduler acceptance
 
 **Background result**:
 Outside print mode, the wrapper's single follow-up message after an accepted
-operation completes or fails. Full text remains in model context while the TUI
-collapses it by default. In print mode, the same underlying result returns
+operation completes or fails, delivered only by the owning live Pi session and
+worded to preserve that boundary. Full text remains in model context while the
+TUI collapses it by default. In print mode, the same underlying result returns
 directly from the original tool call instead.
 _Avoid_: Scheduler wake, pong, polling response
 
@@ -79,9 +81,11 @@ The canonical wrapper source is `extensions/background-tool.ts`. Eligible
 extension directories expose relative `background-tool.ts` symlink aliases so
 imports remain loadable when those directories are themselves reached through
 Pi's global extension symlinks. Browser Fetch uses the wrapper as a read-only
-tool. Codex Search is read-only by default and exposes separately authorized
-workspace-write, image-generation, and unsandboxed modes; its own schema and
-guidance own those permissions.
+tool. It attempts valid user-authorized HTTP and HTTPS destinations through a
+fresh Chromium profile without imposing DNS or IP-range classification; it does
+not own a replacement global network boundary. Codex Search is read-only by
+default and exposes separately authorized workspace-write, image-generation,
+and unsandboxed modes; each tool's schema and guidance own those permissions.
 
 ## Mode contract
 

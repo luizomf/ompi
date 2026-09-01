@@ -61,8 +61,9 @@ intent-bearing comments synchronized with an intentional behavior change.
 - `extensions/background-tool.ts` — session-scoped wrapper for explicitly
   selected finite text-result tools; each wrapped tool owns its effect and
   authorization boundary.
-- `extensions/browser-fetch/` — bounded Chromium page fetcher with public-network
-  enforcement.
+- `extensions/browser-fetch/` — bounded Chromium page fetcher for explicitly
+  authorized HTTP and HTTPS destinations, without extension-local network
+  classification.
 - `extensions/codex-search/` — bounded Codex research and image-generation
   adapter.
 - `extensions/managed-process/` — explicit session lifecycle for genuinely
