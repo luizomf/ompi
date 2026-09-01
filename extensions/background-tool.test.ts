@@ -92,7 +92,7 @@ describe("background tool wrapper", () => {
 
     expect(accepted.content[0]).toMatchObject({
       type: "text",
-      text: expect.stringMatching(/Do not wait, sleep, or poll.*start it without waiting/s),
+      text: expect.stringMatching(/owning Pi session remains live.*Do not wait, sleep, or poll.*start it without waiting/is),
     });
     expect(accepted.details).toMatchObject({ id: 1, toolName: "slow_search", active: true });
     expect(messages).toEqual([]);
@@ -118,6 +118,35 @@ describe("background tool wrapper", () => {
       },
       options: { deliverAs: "followUp", triggerTurn: true },
     });
+    expect(messages[0].message.content).toMatch(/delivered to its owning live Pi session/i);
+  });
+
+  it("qualifies a later failure result by the owning live session", async () => {
+    const { pi, messages } = setup();
+    const failure = deferred<AgentToolResult<undefined>>();
+    const original: ToolDefinition<typeof Params, undefined> = {
+      name: "slow_search",
+      label: "Slow Search",
+      description: "Search slowly",
+      parameters: Params,
+      async execute() {
+        return failure.promise;
+      },
+    };
+    const wrapped = createBackgroundToolManager(pi, { namespace: "test" }).wrapTool(original);
+
+    await wrapped.execute(
+      "call-1",
+      { query: "bash" },
+      undefined,
+      undefined,
+      { cwd: "/repo" } as ExtensionContext,
+    );
+    failure.reject(new Error("provider unavailable"));
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+
+    expect(messages[0].message.content).toMatch(/failed.*delivered to its owning live Pi session.*provider unavailable/is);
+    expect(messages[0].message.details).toMatchObject({ outcome: "failed", error: "provider unavailable" });
   });
 
   it("waits for the original result in print mode without sending a background completion", async () => {
@@ -218,6 +247,7 @@ describe("background tool wrapper", () => {
     const expanded = renderer(message, { expanded: true }, theme as never)?.render(120).join("\n");
 
     expect(collapsed).toContain("[BACKGROUND #1 slow_search] completed");
+    expect(collapsed).toMatch(/delivered to its owning live Pi session/i);
     expect(collapsed).toContain("to expand");
     expect(collapsed).not.toContain("FULL RESULT");
     expect(expanded).toContain("FULL RESULT");

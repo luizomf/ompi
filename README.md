@@ -38,7 +38,7 @@ current task:
 ```sh
 just bare         # Only the /exit alias extension
 just core         # AGENTS.md and the /exit alias extension
-just research     # Core plus research skill and browser extension
+just research     # Core plus research skill, Browser Fetch, and Codex Search
 just orchestrate  # Core plus handoff, tmux-worker, and wormhole skills
 just scheduler          # Core plus the OMQueue background runner and scheduler
 just managed-processes  # Core plus session-scoped long-running processes
@@ -54,29 +54,34 @@ agent context.
 
 The extension in `extensions/browser-fetch/` provides the read-only
 `browser_fetch` tool used by `just research`. It launches a fresh headless
-Chromium profile for each request. In print mode it waits and returns the
-rendered result directly. In other modes it returns immediately after a
-session-scoped background operation starts and later delivers one collapsible
-rendered-text result. At most four Browser Fetch operations run concurrently. Output remains
-bounded, Chromium is closed on completion or cancellation, and login, CAPTCHA,
-anti-bot, and unreadable-page responses are reported rather than bypassed.
-When multiple rendered-page or other background research calls are independently
-useful, the orchestrator starts them in the same turn so Pi can run them
-concurrently; it does not await one result before starting another. An ephemeral
-loopback proxy resolves every navigation, redirect, HTTP subresource, and
-WebSocket destination, rejects any non-public result, and connects to the exact
-validated IP so Chromium cannot re-resolve it. The proxy
-preserves the original hostname and TLS verification. Service workers are
-disabled so they cannot bypass this network boundary.
+Chromium profile and browser context for each request. In print mode it waits
+and returns the rendered result directly. In other modes it returns immediately
+after a session-scoped background operation starts and may later deliver one
+collapsible rendered-text result only while the owning Pi session remains live.
+At most four Browser Fetch operations run concurrently. Output remains bounded,
+Chromium is closed on completion or cancellation, and transport errors, HTTP
+failures, login, CAPTCHA, anti-bot, and unreadable-page responses report what
+happened and the next exact-URL stage rather than bypassing or hiding the
+failure. When multiple rendered-page or other background research calls are
+independently useful, the orchestrator starts them in the same turn so Pi can run
+them concurrently; it does not await one result before starting another.
 
-For a specific public URL, the agent-facing guidance defines one strict fallback
-chain: direct HTTP/curl on the original URL, `browser_fetch` on the original URL,
-`codex_search` with the `quick` profile and an explicit exact-URL extraction
-request, then `browser_fetch` through `https://markdown.new/<absolute-URL>` and
-finally `https://r.jina.ai/<absolute-URL>`. Transport errors, blocked or login
-pages, unreadable output, and failure to establish exact-URL access advance the
-chain. Transformed fallback URLs never restart it. Generated prose, snippets,
-and related pages are not evidence that the supplied URL was read; if every safe
+Browser Fetch attempts every valid user-authorized HTTP or HTTPS destination
+through Chromium's ordinary networking. It does not classify or reject DNS
+answers, IP ranges, loopback, private networks, or metadata addresses, and ompi
+adds no replacement global network gate. The user remains responsible for
+authorizing the destination; normal host, browser, and network controls still
+apply.
+
+For a specific user-authorized URL, the agent-facing guidance defines one
+strict fallback chain: direct HTTP/curl on the original URL, `browser_fetch` on
+the original URL, `codex_search` with the `quick` profile and an explicit
+exact-URL extraction request, then `browser_fetch` through
+`https://markdown.new/<absolute-URL>` and finally
+`https://r.jina.ai/<absolute-URL>`. Transport errors, HTTP failures, blocked or
+login pages, unreadable output, and failure to establish exact-URL access
+advance the chain. Transformed fallback URLs never restart it. Generated prose,
+snippets, and related pages are not evidence that the supplied URL was read; if every safe
 stage fails, the agent reports that it could not access or verify the page rather
 than inventing page-specific facts.
 
@@ -84,7 +89,7 @@ than inventing page-specific facts.
 submitted absolute URL. The guidance prohibits sending them credentials,
 signed or private query parameters, or confidential identifiers without
 explicit user authorization. Neither service is an ompi component or a trusted
-extension of the local public-network boundary.
+local extension; each remains an external disclosure boundary.
 
 The extension keeps its `playwright-core` dependency local. Install it after a
 fresh checkout with:
@@ -102,7 +107,8 @@ when retrieving a specific URL. Exact-URL work uses the default `quick` profile
 and explicitly requires Codex to say when it could not access the supplied URL;
 the `research` profile remains for independently complex source comparison or
 synthesis. Image generation is an explicit mode of the same tool, not a second
-backend. Enable it explicitly for one Pi process:
+backend. `just research` enables it alongside Browser Fetch. To enable it in
+another isolated Pi process:
 
 ```sh
 pi --no-extensions --extension ./extensions/codex-search/index.ts
@@ -122,10 +128,11 @@ Pi to inspect the account's current model catalog.
 
 In print mode the tool waits and returns its bounded result directly. In other
 modes it returns immediately after a session-scoped background operation starts,
-keeps a minimal live footer count, and later delivers exactly one collapsible
-completion or failure result. After start confirmation outside print mode, the
-orchestrator must not wait or poll; it may continue independent work or end its
-response so the result can enter a later turn. When `write` or `yolo` is enabled,
+keeps a minimal live footer count, and may later deliver exactly one collapsible
+completion or failure result while the owning Pi session remains live. After
+start confirmation outside print mode, the orchestrator must not wait or poll;
+it may continue independent work or end its response so the result can enter a
+later turn. When `write` or `yolo` is enabled,
 reading or modifying potentially overlapping workspace paths is not independent
 work and must wait for that result. Only a failure result adds an instruction
 that the orchestrator must mention the failure in its next user-facing response;
@@ -135,12 +142,15 @@ continue with another appropriate tool when useful or available.
 The background wrapper is limited to four concurrent Codex operations.
 Independently useful Codex or other background calls can be started in the same
 turn; the orchestrator does not await one result before starting another.
-Closing or reloading the owning Pi session aborts active searches and suppresses stale
-results; this path is intentionally not durable and does not use `bq` or
-OMQueue. The helper ignores `~/.codex/config.toml` while retaining Codex authentication,
-then explicitly enables search, ephemeral execution, and a read-only sandbox.
-This makes a fresh logged-in machine use the same operational defaults. The
-narrow trust-check bypass allows work from new or untrusted directories. The
+Start confirmations state that later delivery is possible only while the owning
+Pi session remains live, and delivered result wording identifies that live
+session boundary. Closing or reloading the owning Pi session aborts active
+searches and suppresses stale results; this path is intentionally not durable
+and does not use `bq` or OMQueue. The helper ignores `~/.codex/config.toml`
+while retaining Codex authentication, then explicitly enables search, ephemeral
+execution, and a read-only sandbox. This makes a fresh logged-in machine use the
+same operational defaults. The narrow trust-check bypass allows work from new
+or untrusted directories. The
 tool exposes only two permission opt-ins: `write: true` selects
 `workspace-write` with the Pi session cwd as its primary workspace, while
 `yolo: true` bypasses approvals and sandboxing entirely. Image generation
@@ -156,7 +166,8 @@ controlled by the `codex_search` executable resolved from
 research is not a verified primary source, so research requests should ask for
 URLs or citations where relevant and verify those sources separately. Image
 results do not receive that research-verification reminder. The extension is
-not enabled by any launch profile or package manifest.
+enabled alongside Browser Fetch by `just research`; outside that explicit
+profile it is not enabled by a package manifest or unrelated launch profile.
 
 Browser Fetch and Codex Search share the single background wrapper maintained at
 `extensions/background-tool.ts`. Their extension-local aliases preserve jiti

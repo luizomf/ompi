@@ -3,11 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   launch: vi.fn(),
-  proxyClose: vi.fn(),
-  startProxy: vi.fn(),
 }));
 
-vi.mock("./public-proxy.ts", () => ({ startPublicProxy: mocks.startProxy }));
 vi.mock("playwright-core", () => ({
   chromium: { launch: mocks.launch },
 }));
@@ -40,16 +37,29 @@ function setup() {
   return { tools, messages, handlers };
 }
 
-function fakeBrowser() {
+interface FakePageOptions {
+  status?: number | null;
+  finalUrl?: string;
+  title?: string;
+  text?: string;
+  gotoError?: Error;
+}
+
+function fakeBrowser(options: FakePageOptions = {}) {
   const close = vi.fn().mockResolvedValue(undefined);
+  const goto = options.gotoError
+    ? vi.fn().mockRejectedValue(options.gotoError)
+    : vi.fn().mockResolvedValue(options.status === null
+      ? null
+      : { status: () => options.status ?? 200 });
   const page = {
     setDefaultTimeout: vi.fn(),
-    goto: vi.fn().mockResolvedValue({ status: () => 200 }),
+    goto,
     waitForLoadState: vi.fn().mockResolvedValue(undefined),
     evaluate: vi.fn().mockResolvedValue({
-      finalUrl: "https://example.com/final",
-      title: "Example",
-      text: "Readable rendered content. ".repeat(10),
+      finalUrl: options.finalUrl ?? "https://example.com/final",
+      title: options.title ?? "Example",
+      text: options.text ?? "Readable rendered content. ".repeat(10),
       links: [{ text: "Documentation", url: "https://example.com/docs" }],
     }),
   };
@@ -59,22 +69,30 @@ function fakeBrowser() {
       newPage: vi.fn().mockResolvedValue(page),
     }),
   };
-  return { browser, close };
+  return { browser, close, page };
+}
+
+async function executeFetch(url: string, options: FakePageOptions = {}) {
+  const fake = fakeBrowser(options);
+  mocks.launch.mockResolvedValue(fake.browser);
+  const { tools, messages } = setup();
+  const accepted = await tools.get("browser_fetch").execute(
+    "fetch",
+    { url },
+    undefined,
+    undefined,
+    { cwd: "/repo" } as ExtensionContext,
+  );
+  await vi.waitFor(() => expect(messages).toHaveLength(1));
+  return { accepted, message: messages[0].message, ...fake };
 }
 
 describe("browser_fetch background delivery", () => {
   beforeEach(() => {
     mocks.launch.mockReset();
-    mocks.proxyClose.mockReset();
-    mocks.proxyClose.mockResolvedValue(undefined);
-    mocks.startProxy.mockReset();
-    mocks.startProxy.mockResolvedValue({
-      url: "http://127.0.0.1:43210",
-      close: mocks.proxyClose,
-    });
   });
 
-  it("releases the tool call before Chromium finishes and delivers rendered content later", async () => {
+  it("releases the tool call before fresh Chromium rendering finishes and delivers bounded content later", async () => {
     const launch = deferred<ReturnType<typeof fakeBrowser>["browser"]>();
     mocks.launch.mockReturnValue(launch.promise);
     const { tools, messages } = setup();
@@ -89,8 +107,10 @@ describe("browser_fetch background delivery", () => {
     );
 
     expect(accepted.content[0].text).toContain("Background operation #1");
+    expect(accepted.content[0].text).toMatch(/owning Pi session remains live/i);
     expect(messages).toEqual([]);
     expect(tool.description).toContain("asynchronously");
+    expect(tool.description).toMatch(/user-authorized HTTP or HTTPS/i);
     const guidance = tool.promptGuidelines.join(" ");
     expect(guidance).toContain("never wait");
     expect(guidance).toMatch(/independently useful.*same turn.*concurrently.*do not wait/s);
@@ -112,21 +132,40 @@ describe("browser_fetch background delivery", () => {
           resultDetails: {
             finalUrl: "https://example.com/final",
             status: 200,
+            retrievalOutcome: "retrieved",
           },
         },
       },
       options: { deliverAs: "followUp", triggerTurn: true },
     });
+    expect(messages[0].message.content).toMatch(/delivered to its owning live Pi session/i);
     expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({
-      args: expect.arrayContaining([
-        "--disable-quic",
-        "--proxy-server=http://127.0.0.1:43210",
-        "--proxy-bypass-list=<-loopback>",
-      ]),
+      args: ["--disable-dev-shm-usage", "--disable-extensions"],
     }));
-    expect(browser.newContext).toHaveBeenCalledWith({ serviceWorkers: "block" });
+    expect(browser.newContext).toHaveBeenCalledWith();
     expect(close).toHaveBeenCalled();
-    expect(mocks.proxyClose).toHaveBeenCalled();
+  });
+
+  it.each([
+    "http://127.0.0.1/admin",
+    "http://10.0.0.8/private",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://[::1]/status",
+    "https://internal.example/",
+  ])("attempts the authorized valid destination without local network classification: %s", async (url) => {
+    const { message } = await executeFetch(url);
+
+    expect(mocks.launch).toHaveBeenCalledOnce();
+    expect(message.details).toMatchObject({
+      outcome: "completed",
+      resultDetails: {
+        url: new URL(url).href,
+        retrievalOutcome: "retrieved",
+      },
+    });
+    const launchArgs = mocks.launch.mock.calls[0][0].args as string[];
+    expect(launchArgs.some((argument) => argument.startsWith("--proxy-server"))).toBe(false);
+    expect(launchArgs).not.toContain("--proxy-bypass-list=<-loopback>");
   });
 
   it("reports URL validation failures as the single background result", async () => {
@@ -153,6 +192,105 @@ describe("browser_fetch background delivery", () => {
     expect(mocks.launch).not.toHaveBeenCalled();
   });
 
+  it("reports transport failures and advances to exact-URL Codex retrieval", async () => {
+    const { message } = await executeFetch("https://example.com/article", {
+      gotoError: new Error("net::ERR_CONNECTION_RESET"),
+    });
+
+    expect(message.details).toMatchObject({
+      toolName: "browser_fetch",
+      outcome: "failed",
+    });
+    expect(message.content).toMatch(/transport or navigation failed.*ERR_CONNECTION_RESET/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick.*exact URL/is);
+    expect(message.content).toMatch(/related prose.*not proof of access/i);
+  });
+
+  it("reports a missing navigation response without treating page text as access proof", async () => {
+    const { message } = await executeFetch("https://example.com/no-response", { status: null });
+
+    expect(message.details.resultDetails).toMatchObject({
+      status: null,
+      retrievalOutcome: "no_http_response",
+    });
+    expect(message.content).toMatch(/no HTTP response.*exact-target access could not be established/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+  });
+
+  it("reports HTTP failures with the next exact-URL stage", async () => {
+    const { message } = await executeFetch("https://example.com/missing", { status: 503 });
+
+    expect(message.details.resultDetails).toMatchObject({
+      status: 503,
+      retrievalOutcome: "http_failure",
+    });
+    expect(message.content).toMatch(/HTTP failure.*503/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+  });
+
+  it("does not infer a login or CAPTCHA response from an HTTP status alone", async () => {
+    const { message } = await executeFetch("https://example.com/forbidden", { status: 403 });
+
+    expect(message.details.resultDetails).toMatchObject({
+      status: 403,
+      retrievalOutcome: "http_failure",
+    });
+    expect(message.content).toMatch(/HTTP failure.*403/is);
+    expect(message.content).not.toMatch(/CAPTCHA|anti-bot/i);
+  });
+
+  it("reports login or CAPTCHA responses with the next exact-URL stage", async () => {
+    const { message } = await executeFetch("https://example.com/private", {
+      status: 403,
+      title: "Sign in to continue",
+    });
+
+    expect(message.details.resultDetails).toMatchObject({
+      status: 403,
+      retrievalOutcome: "access_block",
+    });
+    expect(message.content).toMatch(/login, CAPTCHA, anti-bot, or other access-block response.*HTTP 403/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+  });
+
+  it("reports unreadable rendered content with the next exact-URL stage", async () => {
+    const { message } = await executeFetch("https://example.com/empty", { text: "Loading" });
+
+    expect(message.details.resultDetails).toMatchObject({
+      retrievalOutcome: "no_readable_content",
+    });
+    expect(message.content).toMatch(/unreadable.*7 characters/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*codex_search.*quick/is);
+  });
+
+  it("advances a failed markdown.new request only to the final hosted fallback", async () => {
+    const { message } = await executeFetch(
+      "https://markdown.new/https://example.com/article?view=full",
+      { status: 502 },
+    );
+
+    expect(message.content).toMatch(/HTTP failure.*502/is);
+    expect(message.content).toMatch(/Next exact-URL stage.*third-party disclosure is authorized/is);
+    expect(message.content).toContain("https://r.jina.ai/https://example.com/article?view=full");
+    expect(message.content).toMatch(/Do not restart the fallback chain/i);
+    expect(message.content).not.toMatch(/Next exact-URL stage.*codex_search/is);
+  });
+
+  it("reports honest exhaustion when the final hosted fallback is unreadable", async () => {
+    const { message } = await executeFetch(
+      "https://r.jina.ai/https://example.com/article",
+      { text: "No content" },
+    );
+
+    expect(message.details.resultDetails).toMatchObject({
+      retrievalOutcome: "no_readable_content",
+    });
+    expect(message.content).toMatch(/exact-URL fallback chain is exhausted/i);
+    expect(message.content).toMatch(/could not be accessed or verified/i);
+    expect(message.content).toMatch(/do not invent page-specific facts/i);
+    expect(message.content).not.toMatch(/Next exact-URL stage/i);
+  });
+
   it("closes a browser that resolves after session cancellation without using it", async () => {
     const launch = deferred<ReturnType<typeof fakeBrowser>["browser"]>();
     mocks.launch.mockReturnValue(launch.promise);
@@ -172,7 +310,6 @@ describe("browser_fetch background delivery", () => {
 
     await vi.waitFor(() => expect(close).toHaveBeenCalled());
     expect(browser.newContext).not.toHaveBeenCalled();
-    expect(mocks.proxyClose).toHaveBeenCalled();
     expect(messages).toEqual([]);
   });
 });

@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "ipaddr.js": "^2.4.0",
     "playwright-core": "^1.55.0"
   }
 }

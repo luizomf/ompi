@@ -9,9 +9,9 @@ bare:
 core:
     pi --no-skills --no-extensions --extension ./extensions/exit-alias.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
 
-# Start Pi with the research skill, browser extension, and exit alias
+# Start Pi with the research skill, exact-URL retrieval extensions, and exit alias
 research:
-    pi --no-skills --skill "${HOME}/.pi/agent/skills/research" --no-extensions --extension "${HOME}/.pi/agent/extensions/browser-fetch/index.ts" --extension ./extensions/exit-alias.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
+    pi --no-skills --skill "${HOME}/.pi/agent/skills/research" --no-extensions --extension "${HOME}/.pi/agent/extensions/browser-fetch/index.ts" --extension "${HOME}/.pi/agent/extensions/codex-search/index.ts" --extension ./extensions/exit-alias.ts --no-prompt-templates --no-context-files --append-system-prompt ./AGENTS.md
 
 # Start Pi with orchestration skills and the exit alias
 orchestrate:
