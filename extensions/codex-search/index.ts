@@ -15,7 +15,7 @@ const QuerySchema = Type.Object({
     Type.Literal("research"),
     Type.Literal("image"),
   ], {
-    description: "Required task intent. exact_url uses Luna with high reasoning; research and image use Sol with high reasoning.",
+    description: "Required task intent. exact_url, research, and image use GPT-6 Astra with high reasoning.",
   }),
   destination: Type.Optional(Type.String({
     minLength: 1,
@@ -36,7 +36,7 @@ export default function codexSearchExtension(pi: ExtensionAPI) {
   pi.registerTool(background.wrapTool({
     name: "codex_search",
     label: "Codex Retrieval + Research + Image",
-    description: "Run the codex_search helper for one required task intent. Exact-URL retrieval uses Luna with high reasoning; complex research uses Sol with high reasoning; image generation uses Sol with high reasoning. Every invocation runs in the accepted unsandboxed mode, while callers select neither models, reasoning, nor execution capabilities. A direct image intent authorizes artifact creation and may include a final destination; without one, helper output does not establish final placement or delivery. Retrieval and research results are helper/model-produced output that requires primary-source verification; image output does not receive that reminder. In print mode, the tool waits and returns the result directly. In other modes, it runs asynchronously: the call returns immediately after starting bounded background work and completion may arrive later as one background result only while the owning Pi session remains live. The prompt is sent through stdin without a shell; captured stdout is limited to 48,000 bytes and diagnostics are bounded.",
+    description: "Run the codex_search helper for one required task intent. Exact-URL retrieval uses GPT-6 Astra with high reasoning; complex research uses GPT-6 Astra with high reasoning; image generation uses GPT-6 Astra with high reasoning. Every invocation runs in the accepted unsandboxed mode, while callers select neither models, reasoning, nor execution capabilities. A direct image intent authorizes artifact creation and may include a final destination; without one, helper output does not establish final placement or delivery. Retrieval and research results are helper/model-produced output that requires primary-source verification; image output does not receive that reminder. In print mode, the tool waits and returns the result directly. In other modes, it runs asynchronously: the call returns immediately after starting bounded background work and completion may arrive later as one background result only while the owning Pi session remains live. The prompt is sent through stdin without a shell; captured stdout is limited to 48,000 bytes and diagnostics are bounded.",
     promptSnippet: "Run exact-URL retrieval, complex Codex research, or image generation by explicit intent",
     promptGuidelines: [
       "Set exactly one task intent: intent: exact_url for retrieval of one supplied URL, intent: research for complex multi-source comparison or synthesis, or intent: image for image generation. Do not use research merely for simple exact-URL retrieval.",

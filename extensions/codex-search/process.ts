@@ -123,7 +123,7 @@ export function buildCodexSearchRequest(
         "quick",
         "--yolo",
         "--model",
-        "gpt-5.6-luna",
+        "gpt-6-astra",
         "--config",
         "model_reasoning_effort=high",
       ]
@@ -132,7 +132,7 @@ export function buildCodexSearchRequest(
         "research",
         "--yolo",
         "--model",
-        "gpt-5.6-sol",
+        "gpt-6-astra",
         "--config",
         "model_reasoning_effort=high",
       ];

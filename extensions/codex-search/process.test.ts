@@ -72,7 +72,7 @@ async function runParentLeavingDescendant(
 }
 
 describe("codex_search process wrapper", () => {
-  it("routes exact-URL retrieval through unsandboxed Luna with high reasoning", () => {
+  it("routes exact-URL retrieval through unsandboxed GPT-6 Astra with high reasoning", () => {
     const signal = new AbortController().signal;
     const request = buildCodexSearchRequest(
       "fetch and extract https://example.com/source",
@@ -88,7 +88,7 @@ describe("codex_search process wrapper", () => {
       "quick",
       "--yolo",
       "--model",
-      "gpt-5.6-luna",
+      "gpt-6-astra",
       "--config",
       "model_reasoning_effort=high",
       "--skip-git-repo-check",
@@ -107,7 +107,7 @@ describe("codex_search process wrapper", () => {
     expect(request).not.toHaveProperty("shell");
   });
 
-  it("routes complex research through unsandboxed Sol with high reasoning", () => {
+  it("routes complex research through unsandboxed GPT-6 Astra with high reasoning", () => {
     const request = buildCodexSearchRequest(
       "compare the primary sources",
       "/repo",
@@ -120,7 +120,7 @@ describe("codex_search process wrapper", () => {
       "research",
       "--yolo",
       "--model",
-      "gpt-5.6-sol",
+      "gpt-6-astra",
       "--config",
       "model_reasoning_effort=high",
       "--skip-git-repo-check",
@@ -131,7 +131,7 @@ describe("codex_search process wrapper", () => {
     expect(request.input).toBe("compare the primary sources");
   });
 
-  it("routes image generation through unsandboxed Sol and passes its destination on stdin", () => {
+  it("routes image generation through unsandboxed GPT-6 Astra and passes its destination on stdin", () => {
     const request = buildCodexSearchRequest(
       "Generate a cinematic mountain landscape",
       "/repo",
@@ -145,7 +145,7 @@ describe("codex_search process wrapper", () => {
       "research",
       "--yolo",
       "--model",
-      "gpt-5.6-sol",
+      "gpt-6-astra",
       "--config",
       "model_reasoning_effort=high",
       "--skip-git-repo-check",

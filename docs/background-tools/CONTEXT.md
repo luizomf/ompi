@@ -85,7 +85,10 @@ tool. It attempts valid user-authorized HTTP and HTTPS destinations through a
 fresh Chromium profile without imposing DNS or IP-range classification; it does
 not own a replacement global network boundary. Codex Search requires one of
 three explicit task intents: exact-URL retrieval, complex research, or image
-generation. Every helper invocation is mechanically unsandboxed, but retrieval
+generation. All three intents use the fixed `gpt-6-astra` model with high
+reasoning; callers cannot select model or effort. Exact-URL retrieval retains
+the helper's `quick` profile, while research and image retain `research`.
+Every helper invocation is mechanically unsandboxed, but retrieval
 and research authorize only that requested work, not unrelated workspace
 mutation. A direct image intent specifically authorizes artifact creation and
 may include its final destination; without one, the calling agent remains

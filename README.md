@@ -18,7 +18,7 @@ browsers, authenticate accounts, configure OMQueue, or load `.env` files.
 | [just](https://github.com/casey/just) | No semver range is declared. The installed CLI version and successful parsing/dry-runs of this checkout's [`justfile`](justfile) are the compatibility evidence. |
 | [Git](https://git-scm.com/) and [GitHub CLI](https://cli.github.com/) | No semver ranges are declared. Use each installed CLI's version output; `gh auth status` separately verifies authentication needed by GitHub-backed workflows. |
 | [Chromium-based browser](https://www.chromium.org/getting-involved/download-chromium/) | Browser Fetch requires an external Chromium, Chrome, or Edge executable; it does not download one. Its local manifest declares `playwright-core ^1.55.0`, its lock currently resolves `1.61.1`, and the stricter Pi Node baseline above controls the checkout. The repository declares no universal browser release range, so verify the actual executable and run the smoke check below. |
-| Codex retrieval helper or compatible direct [Codex CLI](https://github.com/openai/codex) | The extension invokes an executable named `codex_search`, not bare `codex`. That name must provide the documented helper interface, authenticated Codex access, and `gpt-5.6-luna` and `gpt-5.6-sol` at high reasoning. The repository-tested helper delegates authentication and execution to a separate `codex` CLI; an all-in-one compatible CLI may instead expose the same contract directly as `codex_search`. No semantic version range is declared; local version, authentication, interface, and model-catalog checks are authoritative. A bare incompatible Codex CLI is not a substitute. |
+| Codex retrieval helper or compatible direct [Codex CLI](https://github.com/openai/codex) | The extension invokes an executable named `codex_search`, not bare `codex`. That name must provide the documented helper interface, authenticated Codex access, and `gpt-6-astra` at high reasoning. The repository-tested helper delegates authentication and execution to a separate `codex` CLI; an all-in-one compatible CLI may instead expose the same contract directly as `codex_search`. No semantic version range is declared; local version, authentication, interface, and model-catalog checks are authoritative. A bare incompatible Codex CLI is not a substitute. |
 | `bq` and OMQueue | Scheduler requires the `bq` interface shown by `bq --help` and a configured, healthy OMQueue service. Neither has a repository semver range, and `bq` has no `--version`; `bq --help`, `omqueue status`, and `omqueue check` are the local compatibility and health sources. `bq`'s non-durable local fallback does not satisfy the Scheduler prerequisite. |
 | [omskills](https://github.com/luizomf/omskills) | Required only by skill-enabled profiles: `research` for `just research`, and `handoff`, `tmux-worker`, and `wormhole` for `just orchestrate`. Its README owns installation and compatibility guidance. |
 | [tmux](https://github.com/tmux/tmux) and optional `osalert` | tmux and an active tmux session are required by `just orchestrate` when using `tmux-worker` or `wormhole`, and by the optional globally installed tmux-status integration. No version range is declared; use the installed tmux interface as the compatibility source. Missing tmux makes tmux-status inert but makes those two orchestration skills unavailable. `osalert` is optional and affects only tmux-status sound. |
@@ -126,12 +126,12 @@ codex --version
 codex login status
 ```
 
-The model-catalog command must list both fixed routes and high reasoning. An
+The model-catalog command must list `gpt-6-astra` and high reasoning. An
 absent `codex_search` is an installation failure. For the tested helper, an
 absent `codex` is another installation failure and a failed `codex login status`
 is an authentication failure. An all-in-one compatible `codex_search` must
-provide its own non-secret authentication/readiness check instead. Missing Luna
-or Sol after authentication is model availability or interface compatibility,
+provide its own non-secret authentication/readiness check instead. Missing GPT-6 Astra
+after authentication is model availability or interface compatibility,
 not a launch-profile problem.
 
 Check Scheduler without submitting a Job or reading Queue records:
@@ -282,7 +282,7 @@ strict fallback chain: direct HTTP/curl on the original URL, `browser_fetch` on
 the original URL, `codex_search` with `intent: exact_url` and an explicit
 exact-URL extraction request, then `browser_fetch` through
 `https://markdown.new/<absolute-URL>` and finally
-`https://r.jina.ai/<absolute-URL>`. The Codex stage is fixed to Luna with high
+`https://r.jina.ai/<absolute-URL>`. The Codex stage is fixed to GPT-6 Astra with high
 reasoning. Transport errors, HTTP failures, blocked or login pages, unreadable
 output, and failure to establish exact-URL access advance the chain. Transformed
 fallback URLs never restart it. Helper/model-produced prose, snippets, and
@@ -305,11 +305,11 @@ the selected browser executable.
 The extension in `extensions/codex-search/` provides one narrow `codex_search`
 tool with three required task intents:
 
-- `exact_url` retrieves and extracts one supplied URL through Luna with high
+- `exact_url` retrieves and extracts one supplied URL through GPT-6 Astra with high
   reasoning;
 - `research` performs independently complex source comparison or synthesis
-  through Sol with high reasoning; and
-- `image` requests image generation through Sol with high reasoning.
+  through GPT-6 Astra with high reasoning; and
+- `image` requests image generation through GPT-6 Astra with high reasoning.
 
 The caller supplies only a focused `query`, one `intent`, and an optional image
 `destination`. It cannot select a model, reasoning level, workspace mode, or
@@ -326,7 +326,7 @@ Other resource types retain Pi's defaults unless their own discovery flags are
 also disabled; this standalone command is not one of the isolated recipes.
 
 An authenticated compatible `codex_search` executable must be available from
-`PATH`, and its account must expose `gpt-5.6-luna` and `gpt-5.6-sol` with high
+`PATH`, and its account must expose `gpt-6-astra` with high
 reasoning. The repository-tested helper also requires its authenticated `codex`
 CLI backend; an all-in-one compatible executable may own that authentication
 and execution itself. Every invocation is direct and shell-free, uses the Pi session cwd,
@@ -335,9 +335,9 @@ mode. The extension fixes the routes explicitly instead of trusting helper or
 machine defaults:
 
 ```text
-exact_url: --profile quick --yolo --model gpt-5.6-luna --config model_reasoning_effort=high
-research:  --profile research --yolo --model gpt-5.6-sol --config model_reasoning_effort=high
-image:     --profile research --yolo --model gpt-5.6-sol --config model_reasoning_effort=high
+exact_url: --profile quick --yolo --model gpt-6-astra --config model_reasoning_effort=high
+research:  --profile research --yolo --model gpt-6-astra --config model_reasoning_effort=high
+image:     --profile research --yolo --model gpt-6-astra --config model_reasoning_effort=high
 ```
 
 All routes then add `--skip-git-repo-check --cd <pi-cwd> -`. The helper ignores
