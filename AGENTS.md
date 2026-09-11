@@ -110,6 +110,11 @@ asynchronously. Read the selected context document before changing one.
 5. Review the exact diff and leave the working tree understandable. Do not mix
    unrelated changes.
 
+Before reviewing, updating, or commenting on a pull request, verify its current
+state. Treat merged or closed pull requests as read-only historical records: do
+not modify or comment on them unless explicitly requested; put follow-up work in
+an issue or a new pull request.
+
 Specs and issues live in GitHub Issues. Follow
 `docs/agents/issue-tracker.md`; use the mappings in
 `docs/agents/triage-labels.md` rather than inventing labels.
