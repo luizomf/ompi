@@ -609,8 +609,13 @@ while retaining only 4,000-byte previews for the wake. The required reentry
 prompt is limited to 8,000 UTF-8 bytes. The tool response preserves bounded `bq`
 stdout (16,000 bytes), stderr (8,000 bytes), and exit status. No shell command
 strings or custom payload environment are accepted. `bq` receives an explicit
-allowlist of normal process settings; payloads receive only `HOME`, locale,
-user/shell, `PATH`, `PROJECTS_DIR`, temporary-directory, and time-zone settings.
+allowlist of normal process settings. Payloads receive `HOME`, locale,
+user/shell, `PATH`, `PROJECTS_DIR`, temporary-directory, and time-zone settings,
+plus `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`, and
+`DBUS_SESSION_BUS_ADDRESS` when present in the callback runner's execution-time
+host environment. This preserves Queue root selection and the Linux runtime and
+session bus that `bq` discovers for desktop services; the callback runner does
+not discover sessions, invent defaults, or snapshot the submitting desktop.
 The callback runner prepends the captured Pi Node runtime directory to payload
 `PATH`, so child commands that invoke `node` use the same runtime as the runner.
 Credentials and arbitrary submitting-shell variables are not forwarded.

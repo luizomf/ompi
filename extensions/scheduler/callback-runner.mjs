@@ -17,7 +17,10 @@ const MAX_ARGUMENT_BYTES = 8_000;
 const MAX_TOTAL_ARGUMENT_BYTES = 64_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+// Preserve bq's execution-time host roots and discovered session bus, not the
+// submitting shell's credentials. Runtime discovery/validation remains bq-owned.
 const PAYLOAD_ENVIRONMENT_KEYS = [
+  "DBUS_SESSION_BUS_ADDRESS",
   "HOME",
   "LANG",
   "LC_ALL",
@@ -29,6 +32,9 @@ const PAYLOAD_ENVIRONMENT_KEYS = [
   "TMPDIR",
   "TZ",
   "USER",
+  "XDG_CONFIG_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
 ];
 
 function fail(message) {

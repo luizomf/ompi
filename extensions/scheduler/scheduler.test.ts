@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { lstat, mkdtemp, rm } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   SchedulerSession,
@@ -49,7 +49,10 @@ async function sendRawCallback(socketPath: string, frame: unknown): Promise<stri
   return sendCallbackChunks(socketPath, [`${JSON.stringify(frame)}\n`]);
 }
 
-async function runQueuedInvocation(invocation: BqInvocation): Promise<{
+async function runQueuedInvocation(
+  invocation: BqInvocation,
+  environment = invocation.env,
+): Promise<{
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
@@ -64,7 +67,7 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<{
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
       cwd,
-      env: invocation.env,
+      env: environment,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -330,6 +333,133 @@ describe("scheduler submission", () => {
       await session.close();
     }
   });
+
+  it("lets a queued payload reach its host Queue runtime socket instead of the state fallback", async () => {
+    const cwd = await temporaryDirectory();
+    const runtime = join(cwd, "runtime");
+    await mkdir(join(runtime, "omqueue"), { recursive: true });
+    const queue = createServer((socket) => socket.end("fixture Queue reached\n"));
+    let invocation: BqInvocation | undefined;
+    const wakes: SchedulerWake[] = [];
+    const session = await SchedulerSession.start({
+      onWake: (wake) => wakes.push(wake),
+      environment: {},
+      runBq: async (candidate) => {
+        invocation = candidate;
+        return {
+          code: 0, signal: null, stdout: "accepted\n", stderr: "",
+          stdoutTruncated: false, stderrTruncated: false, cancelled: false,
+        };
+      },
+    });
+
+    try {
+      await new Promise<void>((resolveListen, reject) => {
+        queue.once("error", reject);
+        queue.listen(join(runtime, "omqueue", "queue.sock"), resolveListen);
+      });
+      await session.submit({
+        reentryPrompt: "Inspect the fixture outcome only; do not retry or operate a real Queue.",
+        payload: {
+          executable: process.execPath,
+          args: ["--input-type=module", "--eval", `
+            import { createConnection } from 'node:net';
+            import { join } from 'node:path';
+            const root = process.env.XDG_RUNTIME_DIR
+              ? join(process.env.XDG_RUNTIME_DIR, 'omqueue')
+              : join(process.env.XDG_STATE_HOME || join(process.env.HOME, '.local/state'), 'omqueue/run');
+            const socket = createConnection(join(root, 'queue.sock'));
+            socket.setTimeout(1000, () => socket.destroy(new Error('fixture timeout')));
+            socket.on('data', chunk => process.stdout.write(chunk));
+            socket.on('error', error => {
+              process.stderr.write(error.code || error.message);
+              process.exitCode = 3;
+            });
+          `],
+        },
+      }, cwd);
+      if (!invocation) throw new Error("bq invocation was not captured");
+
+      // bq prepares the runtime at execution time, not from the submitting shell.
+      const runner = await runQueuedInvocation(invocation, {
+        HOME: cwd,
+        XDG_RUNTIME_DIR: runtime,
+      });
+
+      expect(runner).toEqual({
+        code: 0, signal: null, stdout: "fixture Queue reached\n", stderr: "",
+      });
+      expect(wakes).toHaveLength(1);
+      expect(wakes[0]).toMatchObject({
+        outcome: { kind: "exit", code: 0 },
+        stdout: { preview: "fixture Queue reached\n", truncated: false },
+      });
+    } finally {
+      await session.close();
+      await new Promise<void>((resolveClose) => queue.close(() => resolveClose()));
+    }
+  });
+
+  it.each([true, false])(
+    "preserves available host runtime settings without credentials or invented defaults (configured: %s)",
+    async (configured) => {
+      const cwd = await temporaryDirectory();
+      const hostSettings = configured ? {
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_STATE_HOME: join(cwd, "state"),
+        XDG_RUNTIME_DIR: join(cwd, "runtime"),
+        DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(cwd, "runtime", "bus")}`,
+      } : {};
+      const nodeDirectory = dirname(process.execPath);
+      const hostPath = join(cwd, "host-bin");
+      let invocation: BqInvocation | undefined;
+      const session = await SchedulerSession.start({
+        onWake: () => undefined,
+        environment: {},
+        runBq: async (candidate) => {
+          invocation = candidate;
+          return {
+            code: 0, signal: null, stdout: "accepted\n", stderr: "",
+            stdoutTruncated: false, stderrTruncated: false, cancelled: false,
+          };
+        },
+      });
+
+      try {
+        await session.submit({
+          reentryPrompt: "Inspect the synthetic environment result only; do not retry.",
+          payload: {
+            executable: process.execPath,
+            args: ["--eval", "process.stdout.write(JSON.stringify(process.env))"],
+          },
+        }, cwd);
+        if (!invocation) throw new Error("bq invocation was not captured");
+
+        const runner = await runQueuedInvocation(invocation, {
+          HOME: cwd,
+          PROJECTS_DIR: join(cwd, "projects"),
+          PATH: [hostPath, nodeDirectory, nodeDirectory].join(delimiter),
+          ...hostSettings,
+          OPENAI_API_KEY: "synthetic-secret",
+          AWS_SECRET_ACCESS_KEY: "synthetic-secret",
+          SSH_AUTH_SOCK: join(cwd, "private-agent.sock"),
+          PI_SESSION_FILE: join(cwd, "private-session.jsonl"),
+          NODE_OPTIONS: "--no-warnings",
+          UNRELATED_SETTING: "not-forwarded",
+        });
+
+        expect(runner).toMatchObject({ code: 0, signal: null, stderr: "" });
+        expect(JSON.parse(runner.stdout)).toEqual({
+          HOME: cwd,
+          PROJECTS_DIR: join(cwd, "projects"),
+          PATH: [nodeDirectory, hostPath].join(delimiter),
+          ...hostSettings,
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   it("forwards payload streams while waking with bounded previews after success", async () => {
     const cwd = await temporaryDirectory();

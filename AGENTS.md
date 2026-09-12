@@ -162,6 +162,13 @@ authorization.
 
 ## Safety boundaries
 
+- Assume host `ompi` runs in the user's own environment. Preserve normal user
+  runtime, session, and tool behavior, including required environment
+  propagation; do not invent a separate sanitized/headless environment or
+  silently change that contract in the name of safety. Honor actual container
+  and remote boundaries without assuming host secrets or authority cross them.
+  Do not use wholesale credential inheritance as a shortcut; document necessary
+  constraints and test intentional environment differences explicitly.
 - Keep powerful capabilities narrow, explicit, and opt-in. Pi extensions run
   with the user's full permissions and may inherit credentials and SSH-agent
   access.

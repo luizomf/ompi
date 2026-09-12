@@ -86,6 +86,16 @@ _Avoid_: Queue completion event, watcher result, durable notification
   the callback runner's absolute script path because Queue Jobs do not inherit
   the submitting shell or NVM environment. Long-lived schedules depend on both
   captured paths remaining executable.
+- The callback runner preserves the execution-time host environment selected by
+  its payload allowlist, including `XDG_CONFIG_HOME`, `XDG_STATE_HOME`,
+  `XDG_RUNTIME_DIR`, and `DBUS_SESSION_BUS_ADDRESS` when present. Nested Queue
+  clients must not silently fall back to another installation, and host tools
+  must retain access to the runtime and session bus that `bq` prepares. Linux
+  runtime discovery and ownership/permission validation remain `bq`-owned; the
+  runner neither invents defaults nor captures the submitting desktop session.
+  This does not forward arbitrary environment variables, provider credentials,
+  SSH-agent authority, or Pi session metadata. Payloads needing additional
+  configuration still require explicit executable/helper preflight.
 - The callback runner prepends the captured Pi Node runtime directory to the
   allowlisted payload `PATH`, so payload child commands that invoke `node` use
   the same runtime as the runner without depending on the Queue service's Node
