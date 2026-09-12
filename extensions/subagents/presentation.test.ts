@@ -104,6 +104,17 @@ describe("subagent presentation", () => {
     expect(buildActiveUi([view({ active: false, state: "completed" })], 5_000)).toEqual({});
   });
 
+  it.each(["completed", "failed", "interrupted"] as const)("distinguishes %s child state from result receipt in snapshots", (state) => {
+    const list = buildConversationList([view({ active: false, state })]);
+
+    expect(list.text).toContain(`#1: ${state}`);
+    expect(list.text).toMatch(/terminal child state does not confirm.*received the result/s);
+    expect(list.text).toMatch(/follow-up.*current turn/s);
+    expect(list.text).toContain("end this response");
+    expect(list.text).toContain("do not poll or read the session file merely to bypass pending delivery");
+    expect(list.details.subagents[0]).toMatchObject({ state, active: false });
+  });
+
   it("bounds long-lived direct-conversation inventories and marks every omission", () => {
     const views = Array.from({ length: 75 }, (_, index) => view({
       id: index + 1,

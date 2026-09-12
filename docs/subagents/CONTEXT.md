@@ -89,7 +89,7 @@ The immediate response that a subagent process accepted an asynchronous prompt a
 _Avoid_: Pong, completion
 
 **Pong**:
-The subagent extension's single deterministic asynchronous notification that an accepted subagent turn completed, failed, or was interrupted. It carries the bounded terminal result and its native session reference; delivery never depends on the subagent producing an assistant message. Direct delivery never emits a pong.
+The subagent extension's single deterministic asynchronous notification that an accepted subagent turn completed, failed, or was interrupted. It carries the bounded terminal result and its native session reference; delivery never depends on the subagent producing an assistant message. A pong is queued as a Pi follow-up while the parent is working and enters its conversation after the current turn ends; an idle parent is triggered immediately. Child settlement and pong emission do not acknowledge parent receipt or interpretation. Direct delivery never emits a pong.
 _Avoid_: Direct result, model callback, polling, status check
 
 **Ownership subtree**:
@@ -121,6 +121,20 @@ continuations.
 For both start and continuation, the extension derives effective delivery from `ExtensionContext.mode` and the managed lineage depth before dispatch. A depth-1 TUI always returns after acceptance and later emits exactly one pong, even when the caller supplies `delivery: "direct"`. Print always remains pending through terminal settlement and returns one bounded direct result without a pong, even with `delivery: "async"`. A managed nested parent at depth greater than one is likewise always direct, with omitted or conflicting delivery, so its headless runtime remains alive through descendant settlement. A depth-1 root RPC remains async by default and honors explicit direct delivery. The tool schemas and `/sub` and `/subcont` JSON options retain `delivery`, but caller input, skill guidance, role names, and model inference do not override these lifecycle cases.
 
 After an asynchronous root start or continuation confirmation, the parent must never keep its current turn alive merely to await the pong. It must not use sleeps, shell wait loops, or repeated status snapshots. When multiple independent delegations are useful, it starts their subagent calls without awaiting earlier pongs so Pi can run sibling calls concurrently. It may then continue useful work that does not depend on the subagents' results; otherwise it ends its response immediately. Ending the response returns control to the caller and lets queued pongs enter the parent conversation in later turns. Cancelling a later root TUI turn does not close already accepted asynchronous siblings.
+
+A `completed`, `failed`, or `interrupted` snapshot describes the child's turn,
+not whether its parent has consumed the result. A late steer or interruption
+against an inactive child is rejected with its current state and confirmation
+that this new request was not sent. For terminal states, feedback explains the
+async follow-up boundary without claiming that a particular pong is still
+pending. If the parent needs the result, it ends its response rather than
+polling or reading the native session merely to bypass queued delivery.
+`subagent_continue` starts a new turn; it does not retrieve the prior result.
+The parent reviews that result before dispatching new work. Evidence recovery
+through native sessions remains valid after truncation, failure, interruption,
+a missing assistant message, or unknown prompt acceptance. An inactive
+`acceptance-unknown` entry retains its original recovery guidance and warning
+against blind retry instead of suggesting a terminal pong or automatic continuation.
 
 A depth-2 parent remains alive while its mechanically direct depth-3 tool calls run and exits only after its enclosing Pi turn settles. Its native session persists for later inspection or continuation; the extension adds no persistent idle runtime or workflow store. Matching direct-call cancellation remains `interrupted` with its native session reference. Runtime closure and session shutdown recursively clean only the active managed lineage.
 

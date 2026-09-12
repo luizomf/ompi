@@ -1,6 +1,8 @@
 export const PARENT_ERROR_LIMIT = 4_000;
 export const SESSION_REFERENCE_LIMIT = 2_048;
 
+export const ASYNC_RESULT_GUIDANCE = "Async completion pongs are follow-up messages: while the parent is working, they remain queued until its current turn ends. A terminal child state does not confirm that the parent has received the result. If you need that result, end this response; do not poll or read the session file merely to bypass pending delivery.";
+
 export interface BoundedText {
   text: string;
   truncated: boolean;

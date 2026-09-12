@@ -10,6 +10,7 @@ import {
   type ManagedLineage,
 } from "./lineage.ts";
 import {
+  ASYNC_RESULT_GUIDANCE,
   PARENT_ERROR_LIMIT,
   SESSION_REFERENCE_LIMIT,
   boundText,
@@ -715,7 +716,12 @@ export class SubagentController {
 
   private requireActive(id: number): RecordState {
     const record = this.requireRecord(id);
-    if (!record.active) throw new Error(`Subagent ${id} is not active.`);
+    if (!record.active) {
+      const guidance = record.state === "acceptance-unknown"
+        ? record.error
+        : `${ASYNC_RESULT_GUIDANCE} Use subagent_continue only for a new turn, after reviewing the prior result; it does not retrieve that result.`;
+      throw new Error(`Subagent ${id} is not active (state: ${record.state}); this request was not sent to the child. ${guidance}`);
+    }
     return record;
   }
 

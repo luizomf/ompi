@@ -751,7 +751,37 @@ describe("SubagentController", () => {
     await controller.steer(1, "change course");
     expect(children[0].requests).toContainEqual({ type: "steer", message: "change course" });
     await settle(children[0]);
-    await expect(controller.steer(1, "late")).rejects.toThrow("not active");
+    const error = await controller.steer(1, "late").then(() => undefined, (cause: Error) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect(error?.message).toContain("not active (state: completed)");
+    expect(error?.message).toContain("request was not sent");
+    expect(error?.message).toMatch(/follow-up.*current turn/s);
+    expect(error?.message).toContain("end this response");
+    expect(error?.message).toContain("subagent_continue");
+    expect(children[0].requests).not.toContainEqual({ type: "steer", message: "late" });
+    expect(controller.list()[0]).toMatchObject({ state: "completed", active: false });
+  });
+
+  it.each(["steer", "interrupt"] as const)("keeps unknown acceptance recovery explicit when %s rejects an inactive child", async (operation) => {
+    const { controller, children, pongs } = setup({
+      promptError: new PromptTransportError(true, new Error("transport lost after write")),
+    });
+    await expect(controller.start({
+      prompt: "one", cwd: "/repo", model: "p/m", thinking: "low", capabilities: DEFAULT_CAPABILITIES,
+    })).rejects.toThrow("acceptance is unknown");
+
+    const request = operation === "steer" ? controller.steer(1, "late") : controller.interrupt(1);
+    const error = await request.then(() => undefined, (cause: Error) => cause);
+    expect(error?.message).toContain("state: acceptance-unknown");
+    expect(error?.message).toContain("request was not sent");
+    expect(error?.message).toContain("transport lost after write");
+    expect(error?.message).toContain("/sessions/1.jsonl");
+    expect(error?.message).toContain("Do not blindly retry");
+    expect(error?.message).not.toContain("follow-up");
+    expect(error?.message).not.toContain("Use subagent_continue");
+    expect(children[0].requests).not.toContainEqual({ type: "steer", message: "late" });
+    expect(children[0].requests).not.toContainEqual({ type: "abort" });
+    expect(pongs).toEqual([]);
   });
 
   it("tracks tool activity and visible text without thinking", async () => {

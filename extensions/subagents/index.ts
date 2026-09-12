@@ -31,6 +31,7 @@ import {
   encodeOwnershipStatus,
 } from "./ownership.ts";
 import {
+  ASYNC_RESULT_GUIDANCE,
   PARENT_ERROR_LIMIT,
   SESSION_REFERENCE_LIMIT,
   boundText,
@@ -209,6 +210,9 @@ export function buildConversationList(views: SubagentView[]): {
   const lines = omitted > 0
     ? [omissionMarker, ...subagents.map(formatView)]
     : subagents.map(formatView);
+  if (subagents.some((view) => ["completed", "failed", "interrupted"].includes(view.state))) {
+    lines.unshift(ASYNC_RESULT_GUIDANCE);
+  }
   const bounded = boundText(lines.join("\n"), INVENTORY_TEXT_LIMIT);
   return {
     text: bounded.text,
@@ -517,6 +521,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "Use subagent_start delivery=direct only for dependent root RPC work; root TUI ignores conflicting direct input, while managed nested and print calls remain direct even when delivery is omitted or async.",
       "In print or managed nested lineage, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "After an asynchronous root subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      ASYNC_RESULT_GUIDANCE,
       "If dispatch acceptance is reported as unknown, preserve the native session reference and original cause, inspect available evidence, and do not blindly retry because the prompt may already have produced effects.",
     ],
     parameters: StartSchema,
@@ -535,7 +540,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         return {
           content: [{
             type: "text" as const,
-            text: `Subagent #${view.id} accepted the prompt and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Start any other useful independent delegation without waiting, then continue independent work or end this response; the pong will arrive later.`,
+            text: `Subagent #${view.id} accepted the prompt for an asynchronous turn. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Start any other useful independent delegation without waiting, then continue only independent work or end this response.\n${ASYNC_RESULT_GUIDANCE}`,
           }],
           details: parentVisibleView(view),
         };
@@ -554,6 +559,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "Use subagent_continue delivery=direct only for dependent root RPC work; root TUI ignores conflicting direct input, while managed nested and print calls remain direct even when delivery is omitted or async.",
       "In print or managed nested lineage, subagent_continue returns only after the continuation reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "After an asynchronous root subagent_continue accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
+      ASYNC_RESULT_GUIDANCE,
+      "subagent_continue starts a new turn; it does not retrieve a prior result. Review the prior result before dispatching new work. Native session inspection remains available for evidence recovery after truncation, failure, interruption, a missing assistant message, or unknown acceptance; it is not a substitute for releasing a turn with pending async delivery.",
       "If dispatch acceptance is reported as unknown, preserve the native session reference and original cause, inspect available evidence, and do not blindly retry because the prompt may already have produced effects.",
     ],
     parameters: ContinueSchema,
@@ -572,7 +579,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         return {
           content: [{
             type: "text" as const,
-            text: `Subagent #${view.id} accepted the continuation and is running. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Continue independent work or end this response; the pong will arrive later.`,
+            text: `Subagent #${view.id} accepted the continuation for an asynchronous turn. Session: ${view.sessionRef}\nDo not wait, sleep, or poll for completion. Continue only independent work or end this response.\n${ASYNC_RESULT_GUIDANCE}`,
           }],
           details: parentVisibleView(view),
         };
@@ -583,7 +590,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_steer",
     label: "Steer Subagent",
-    description: "Queue an instruction for an active subagent at Pi's safe steering boundary.",
+    description: "Queue an instruction for an active subagent at Pi's safe steering boundary. An inactive-state rejection means this instruction was not sent; it does not establish whether a prior result has reached the parent.",
+    promptGuidelines: [
+      "A subagent may finish before subagent_steer arrives. On an inactive-state rejection, do not retry steering or automatically continue it. If awaiting an async result, end this response so the queued follow-up can enter the conversation; use subagent_continue only for new work after reviewing the prior result. Unknown acceptance instead requires evidence inspection, not blind retry.",
+    ],
     parameters: SteerSchema,
     async execute(_id, params) {
       return withParentVisibleErrors(async () => {
@@ -638,7 +648,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_list",
     label: "List Subagents",
-    description: "Take one snapshot of direct subagent conversations known to this parent session. This is not a completion wait or polling mechanism.",
+    description: "Take one snapshot of direct subagent conversations known to this parent session. Child state is not a result-delivery receipt. This is not a completion wait or polling mechanism.",
     promptGuidelines: [
       "Use subagent_list only for a status snapshot needed for a user request or an orchestration decision; never call it repeatedly to poll for completion.",
     ],

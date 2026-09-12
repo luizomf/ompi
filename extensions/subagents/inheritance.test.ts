@@ -125,7 +125,7 @@ function setup() {
     getThinkingLevel: () => thinking,
     getActiveTools: () => [...activeTools],
     getAllTools: () => configuredTools.map((tool) => ({ ...tool })),
-    sendMessage: (message: unknown) => messages.push(message),
+    sendMessage: vi.fn((message: unknown) => messages.push(message)),
     events: {
       emit: (channel: string, data: unknown) => activityEvents.push({ channel, data }),
     },
@@ -151,6 +151,7 @@ function setup() {
     commands,
     ctx,
     messages,
+    sendMessage: pi.sendMessage,
     notifications,
     statuses,
     widgets,
@@ -928,6 +929,27 @@ describe("subagent routing inheritance", () => {
       sessionRef: "/sessions/1.jsonl",
     }]);
     expect(messages).toHaveLength(mode === "tui" ? 1 : 0);
+  });
+
+  it("explains async result receipt at acceptance without changing follow-up delivery", async () => {
+    const { tools, ctx, sendMessage } = setup();
+    for (const [index, name, params] of [
+      [0, "subagent_start", { prompt: "one" }],
+      [1, "subagent_continue", { id: 1, prompt: "two" }],
+    ] as const) {
+      const tool = tools.get(name);
+      const result = await tool.execute(name, params, undefined, undefined, ctx);
+      expect(result.content[0].text).toMatch(/follow-up.*current turn/s);
+      expect(result.content[0].text).toContain("end this response");
+      expect(result.content[0].text).toContain("do not poll or read the session file merely to bypass pending delivery");
+      expect(tool.promptGuidelines.join(" ")).toMatch(/terminal child state does not confirm.*received the result/s);
+
+      await settle(index);
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ customType: "subagent-pong" }),
+        { deliverAs: "followUp", triggerTurn: true },
+      );
+    }
   });
 
   it("forces a conflicting direct root TUI start to return after acceptance and pong exactly once", async () => {

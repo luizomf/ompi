@@ -677,6 +677,17 @@ concurrently rather than awaiting an earlier pong. It may then continue useful
 work independent of the subagent results; otherwise it must end its response so
 user input and later pongs can enter the conversation.
 
+Pongs are Pi follow-up messages: while the parent is working, they remain
+queued until its current turn ends. A `completed`, `failed`, or `interrupted`
+entry in `subagent_list` describes the child, not whether the parent has received
+its result. A late `subagent_steer` or `subagent_interrupt` rejection reports the
+inactive state and confirms that the new request was not sent. If the parent
+needs the async result, it should end its response—not poll or read the session
+file merely to bypass pending delivery. `subagent_continue` starts new work
+after review of the prior result; it is not a result-retrieval operation. Native
+session inspection remains available for evidence recovery after truncation,
+failure, interruption, a missing assistant message, or unknown acceptance.
+
 A dispatch is definitely rejected only when failure is known before the prompt
 can cross the child process boundary. Once the prompt may have crossed, a
 timeout, transport failure, RPC-response failure, or child-process failure
