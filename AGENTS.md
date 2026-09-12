@@ -125,11 +125,27 @@ authorization.
 
 ## Implementation defaults
 
-- Prefer simple, explicit, readable code over cleverness, pattern purity, and
-  premature abstraction.
+- Prefer solving the accepted requirement by removing or simplifying existing
+  code before adding structures. Reduce what must be understood and maintained,
+  not just line count; preserve required behavior, security, and applicable checks.
+- Prefer the shorter solution when both are equally clear and reliable. Add lines
+  for concrete readability or isolation gains, not pattern purity; do not hide
+  behavior in dense expressions or compressed formatting.
 - Prefer flat control flow and cohesive responsibilities over deep nesting,
   large conditional trees, high cyclomatic complexity, and god modules. Split
   by responsibility, not arbitrary line counts.
+- Each new layer should remove a present difficulty in use or maintenance.
+  Prefer direct code over wrappers that only forward calls or rename concepts
+  without simplifying a real boundary. Avoid parallel implementations and
+  extension points for hypothetical features.
+- Keep behavior and lifecycle decisions independent of command execution,
+  transport, and storage mechanics. Connect them through small explicit
+  interfaces at real change boundaries; a function or concrete module may be
+  enough. Do not introduce an interface for every class or move ownership across
+  the documented lifecycle seams.
+- When a small feature touches unrelated layers, identify the coupling and fix
+  the narrow boundary when practical within the accepted scope. Record larger
+  cleanup separately rather than turning feature delivery into a rewrite.
 - Preserve bounded model-visible output, literal argument vectors, direct
   shell-free subprocess invocation, explicit cleanup, and the lifecycle
   contract documented for each extension.
@@ -180,8 +196,11 @@ not authority to redefine intent or a target for implementation-shaped code.
   call counts unless they are the specified behavior.
 - Cover relevant rejection, error, cancellation, cleanup, limit, and shutdown
   paths—not only success.
-- Test process and lifecycle behavior through deterministic fakes. Keep
-  provider-backed and external-service checks optional.
+- Test process and lifecycle behavior through deterministic fakes and synthetic
+  data and configuration. Verify external-service and persistence contracts at
+  their boundaries; ordinary decision tests should not require live infrastructure
+  or mirror production configuration. Keep provider-backed and external-service
+  checks optional.
 - Do not weaken a valid test merely to make an implementation pass. Resolve the
   intended behavior first.
 
