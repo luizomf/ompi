@@ -8,13 +8,13 @@ import {
   type ExtensionContext,
   type MessageRenderer,
 } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   formatSchedulerSubmission,
   formatSchedulerWake,
   registerSchedulerExtension,
 } from "./index.ts";
-import type { BqInvocation } from "./scheduler.ts";
+import { SchedulerSession, type BqInvocation } from "./scheduler.ts";
 
 interface RegisteredTool {
   name: string;
@@ -62,13 +62,44 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
 }
 
 describe("scheduler extension", () => {
+  it("handles /schedule literally without sending a message or triggering a model turn", async () => {
+    let handler: ((prompt: string, ctx: ExtensionContext) => Promise<void>) | undefined;
+    const events = new Map<string, () => Promise<void>>();
+    const notify = vi.fn();
+    const sendMessage = vi.fn();
+    const schedule = vi.spyOn(SchedulerSession.prototype, "scheduleReminders")
+      .mockResolvedValue({ id: "group", accepted: 24, complete: true });
+    const pi = {
+      registerFlag: () => {}, getFlag: () => false, registerTool: () => {},
+      registerMessageRenderer: () => {}, sendMessage,
+      registerCommand: (name: string, command: { handler: typeof handler }) => {
+        expect(name).toBe("schedule"); handler = command.handler;
+      },
+      on: (name: string, callback: () => Promise<void>) => events.set(name, callback),
+    } as unknown as ExtensionAPI;
+    registerSchedulerExtension(pi);
+    try {
+      await events.get("session_start")?.();
+      const prompt = "  literal prompt\nwith newlines  ";
+      await handler?.(prompt, { cwd: "/tmp", ui: { notify } } as unknown as ExtensionContext);
+      expect(schedule).toHaveBeenCalledWith(prompt, "/tmp");
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("24 hourly"), "info");
+      expect(sendMessage).not.toHaveBeenCalled();
+    } finally {
+      schedule.mockRestore();
+      await events.get("session_shutdown")?.();
+    }
+  });
   it("disables the callback endpoint and tool with --no-scheduler", async () => {
     const tools: RegisteredTool[] = [];
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const flags: Array<{ name: string; options: Record<string, unknown> }> = [];
-    let activeTools = ["read", "scheduler_submit"];
+    let activeTools = ["read", "scheduler_submit", "scheduler_cancel"];
+    let schedule: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
+    const notify = vi.fn();
     const pi = {
       registerFlag: (name: string, options: Record<string, unknown>) => flags.push({ name, options }),
+      registerCommand: (_name: string, command: { handler: typeof schedule }) => { schedule = command.handler; },
       getFlag: (name: string) => name === "no-scheduler",
       getActiveTools: () => activeTools,
       setActiveTools: (names: string[]) => { activeTools = names; },
@@ -88,8 +119,11 @@ describe("scheduler extension", () => {
         default: false,
       },
     }]);
-    expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel"]);
     expect(activeTools).toEqual(["read"]);
+    await schedule?.("check", { ui: { notify } } as unknown as ExtensionContext);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("disabled"), "error");
+    await expect(tools[1].execute("cancel", { id: "foreign" }, undefined, undefined, {} as ExtensionContext)).rejects.toThrow("unavailable");
   });
 
   it("discovers Queue-backed finite work by completion lifecycle instead of command duration", () => {
@@ -99,12 +133,13 @@ describe("scheduler extension", () => {
       getFlag: () => false,
       registerTool: (tool: RegisteredTool) => tools.push(tool),
       registerMessageRenderer: () => {},
+      registerCommand: () => {},
       on: () => {},
     } as unknown as ExtensionAPI;
 
     registerSchedulerExtension(pi);
 
-    expect(tools).toHaveLength(1);
+    expect(tools).toHaveLength(2);
     const tool = tools[0];
     const discovery = [
       tool.label,
@@ -214,6 +249,7 @@ describe("scheduler extension", () => {
       registerFlag: () => {},
       getFlag: () => false,
       registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerCommand: () => {},
       registerMessageRenderer: (customType: string, renderer: MessageRenderer) => renderers.set(customType, renderer),
       on: () => {},
     } as unknown as ExtensionAPI;
@@ -290,6 +326,7 @@ describe("scheduler extension", () => {
       registerTool: (tool: RegisteredTool) => tools.push(tool),
       registerMessageRenderer: () => {},
       on: (event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler),
+      registerCommand: () => {},
       sendMessage: (message: Record<string, unknown>, options: Record<string, unknown>) => {
         messages.push({ message, options });
       },
@@ -312,7 +349,7 @@ describe("scheduler extension", () => {
     });
 
     try {
-      expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit"]);
+      expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel"]);
       const discovery = [
         tools[0].description,
         tools[0].promptSnippet ?? "",

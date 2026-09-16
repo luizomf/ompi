@@ -210,7 +210,7 @@ tools; this map lists the additional repository resources and extension tools.
 | `just core` | `bare` plus [`AGENTS.md`](AGENTS.md) as an appended system prompt | No repository tool |
 | `just research` | `core`-like instructions plus the `research` skill, Browser Fetch, and Codex Search | `browser_fetch` for rendered HTTP(S) retrieval; `codex_search` for exact-URL Codex retrieval, complex research, and image generation |
 | `just orchestrate` | `core`-like instructions plus `handoff`, `tmux-worker`, and `wormhole` skills; the latter two require an active tmux session | No repository tool beyond the `/exit` command |
-| `just scheduler` | `core`-like instructions plus Scheduler | `scheduler_submit` for immediate or timed finite OMQueue work and heartbeats |
+| `just scheduler` | `core`-like instructions plus Scheduler | `scheduler_submit`, `/schedule` reminders, and `scheduler_cancel` |
 | `just managed-processes` | `core`-like instructions plus Managed Processes | `managed_process_start`, `managed_process_list`, `managed_process_output`, and `managed_process_stop` |
 | `just subagents` | `core`-like instructions plus Subagents | `subagent_start`, `subagent_continue`, `subagent_steer`, `subagent_interrupt`, `subagent_status`, and `subagent_list` |
 
@@ -237,8 +237,8 @@ is not named by any isolated recipe. The linked theme remains a presentation
 resource that Pi may discover, but no recipe selects it. Likewise, a standalone
 `pi --no-extensions --extension ...` command affects that Pi process only and is
 not another profile capability. If globally discovered Scheduler alone must be
-suppressed, `--no-scheduler` removes only `scheduler_submit` and its callback
-endpoint for that Pi process; it does not disable unrelated extensions.
+suppressed, `--no-scheduler` disables `scheduler_submit`, `scheduler_cancel`,
+`/schedule`, and the callback endpoint; it does not disable unrelated extensions.
 
 ### Lifetime summary
 
@@ -513,12 +513,46 @@ canonical lifecycle and security contract.
 Its `scheduler_submit` tool is Pi's unified OMQueue-backed background runner and
 scheduler. When the extension is globally discovered but a process must not
 open its callback endpoint—for example, when Pi itself runs inside OMQueue—pass
-`--no-scheduler`. The flag removes `scheduler_submit` from that process's active
-tools and skips callback endpoint startup:
+`--no-scheduler`. The flag removes `scheduler_submit` and `scheduler_cancel` from
+that process's active tools, disables `/schedule`, and skips callback endpoint
+startup:
 
 ```sh
 pi --no-scheduler -p "Só teste. Responda OK"
 ```
+
+### Human reminders and cancellation
+
+`/schedule PROMPT` creates exactly 24 hourly reminders, first after one hour
+(rounded up to a whole minute), without an LLM turn on creation. It uses the
+existing configured `bq`/OMQueue backend, not local timers. Each native follow-up
+wake carries the literal prompt and this suffix, with its actual ordinal and
+stable cancellation ID:
+
+```text
+[Reminder 1/24] If you think the task is complete, cancel this schedule using scheduler_cancel({ id: "ACTUAL_ID" }). If cancellation is unavailable or fails, reply only OK.
+```
+
+`scheduler_cancel({ id })` disables all known remaining occurrences in that
+live session-owned group. Timed `scheduler_submit` results also return a
+cancellation handle, including for finite repeats and cron. Cancellation uses
+direct Schedule IDs, never Queue searches or status polling. It affects future
+occurrences only, not existing Jobs or messages already delivered or queued in
+Pi. Successful disables are remembered; failures and unknown coverage are
+reported explicitly, with bounded diagnostics and no automatic retry.
+
+The command submits 24 individually numbered occurrences on one anchored hourly
+timeline. Partial creation stops and reports the handle and confirmed acceptance
+count; earlier occurrences may still fire. Missing or truncated `bq` receipts
+mean cancellation coverage cannot be guaranteed. Do not blindly repeat creation.
+The complete prompt plus suffix must fit 8,000 UTF-8 bytes. `/schedule` requires
+`~/.config/bq/config.json`; it refuses `bq`'s uncancellable local fallback.
+
+Handles live only until shutdown, reload, or session replacement. Durable
+schedules are not automatically disabled when Pi closes; later administration
+requires an explicitly authorized external Queue command.
+
+### Finite work and heartbeats
 
 A fixed, non-interactive payload runs immediately through the Queue when timing
 is omitted, or after a delay, at an absolute time, as a finite
@@ -543,8 +577,9 @@ because finite submission may already have created durable work; do not blindly
 retry an unknown result. Independently requested submissions can be issued in
 the same turn so Pi handles their bounded acceptance requests concurrently; the
 orchestrator never waits for one wake before submitting another. The tool call
-never watches OMQueue, polls Job state, or exposes Queue administration. The
-callback runner later waits for the heartbeat or payload outcome and attempts a
+never watches OMQueue or polls Job state. Beyond direct session-owned Schedule
+disabling, it exposes no Queue administration. The callback runner later waits
+for the heartbeat or payload outcome and attempts a
 required best-effort wake into the live owning Pi session.
 
 Every submission requires a complete, self-contained `reentryPrompt` delivered
@@ -639,8 +674,8 @@ must remain executable at those locations for long-lived schedules. Scheduler
 submissions inherit the user's command authority and are not sandboxed. This
 extension is not enabled by any unrelated launch profile or by package discovery
 in this repository. When loaded through global discovery, `--no-scheduler`
-disables its tool and callback endpoint for the current Pi process without
-disabling other extensions. Equivalent `bq` syntax supplied as an example does
+disables its tools, slash command, and callback endpoint for the current Pi
+process without disabling other extensions. Equivalent `bq` syntax supplied as an example does
 not by itself select ordinary bash; route by whether the requested work should run
 through the Queue and wake Pi. For `bq`-related requests, use ordinary bash only
 when the user explicitly asks to invoke, test, debug, or inspect the raw `bq` CLI

@@ -152,6 +152,9 @@ export function formatSchedulerSubmission(result: SchedulerSubmissionResult): st
     : `Scheduler submission acceptance is unknown (${bqStatus(result.bq)}).`;
   return [
     heading,
+    ...(result.cancellation ? [
+      `Cancel future occurrences: scheduler_cancel({ id: "${result.cancellation.id}" }). Known schedules: ${result.cancellation.knownSchedules}; cancellation coverage ${result.cancellation.complete ? "complete" : "incomplete or unknown"}. Existing Jobs and delivered messages are unaffected.`,
+    ] : []),
     streamSection("stdout", result.bq.stdout, result.bq.stdoutTruncated),
     streamSection("stderr", result.bq.stderr, result.bq.stderrTruncated),
     confirmed
@@ -223,13 +226,54 @@ export function registerSchedulerExtension(
     },
   });
 
+  pi.registerTool({
+    name: "scheduler_cancel",
+    label: "Cancel Scheduled Occurrences",
+    description: "Disable future OMQueue occurrences using a cancellation ID returned by scheduler_submit or /schedule in this live session. Direct ID-based cancellation only: no Queue search or status polling. Does not cancel existing Jobs or retract delivered messages. Reports partial failures and unknown coverage; never retries automatically.",
+    promptSnippet: "Cancel remaining session-owned scheduled occurrences directly by ID",
+    parameters: Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: false }),
+    async execute(_toolCallId, { id }, signal, _onUpdate, ctx) {
+      if (!session) throw new Error("Scheduler is unavailable for this session.");
+      const result = await session.cancel(id, ctx.cwd, signal);
+      return {
+        content: [{ type: "text", text: [
+          result.confirmed ? "Future occurrences disabled." : "Cancellation incomplete or unconfirmed.",
+          `ID: ${id}; disabled now: ${result.disabled}; known remaining: ${result.remaining}; coverage complete: ${result.coverageComplete}.`,
+          "Existing Jobs and delivered messages are unaffected. No Queue search, polling, or automatic retry was performed.",
+          ...result.errors,
+        ].join("\n") }],
+        details: result,
+      };
+    },
+  });
+
+  pi.registerCommand("schedule", {
+    description: "Schedule PROMPT hourly for 24 reminders, first after one hour",
+    async handler(prompt, ctx) {
+      if (pi.getFlag("no-scheduler") === true || !session) {
+        ctx.ui.notify("Scheduler is disabled or unavailable for this session.", "error");
+        return;
+      }
+      try {
+        const result = await session.scheduleReminders(prompt, ctx.cwd);
+        ctx.ui.notify([
+          result.complete ? "Scheduled 24 hourly reminders, first after one hour." : `Schedule creation incomplete: ${result.accepted}/24 acceptances confirmed. Do not blindly retry.`,
+          `Cancellation ID: ${result.id}.`,
+          result.error ?? "",
+        ].filter(Boolean).join("\n"), result.complete ? "info" : "warning");
+      } catch (error) {
+        ctx.ui.notify(String(error), "error");
+      }
+    },
+  });
+
   pi.on("session_start", async () => {
     const previous = session;
     session = undefined;
     await previous?.close();
 
     if (pi.getFlag("no-scheduler") === true) {
-      pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "scheduler_submit"));
+      pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "scheduler_submit" && name !== "scheduler_cancel"));
       return;
     }
 
