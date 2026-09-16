@@ -60,6 +60,21 @@ outcome so they cannot create another section. The wake and its mechanical
 outcome are not an official terminal OMQueue Job state.
 _Avoid_: Queue completion event, watcher result, durable notification
 
+**Human reminder schedule**:
+`/schedule PROMPT` creates 24 hourly, payload-free occurrences with the first
+one after one hour (rounded up to a whole minute). The command handler submits
+directly, without an LLM turn. Each occurrence preserves the literal command
+argument and appends the numbered cancellation instruction from issue #54.
+The 24 one-time submissions share one cancellation handle and an anchored hourly
+timeline. Separate submissions keep ordinals explicit without runner counters,
+completion detection, or another timing mechanism.
+
+**Cancellation handle**:
+An opaque ID owned only by the live scheduler session, mapping to directly
+returned OMQueue Schedule IDs. A timed `scheduler_submit` uses its submission ID;
+a human reminder schedule groups its 24 submissions under one ID. It is not a
+Queue label, Job ID, or persistent cross-session capability.
+
 ## Boundary Contract
 
 - `bq` owns timing syntax, timing validation, durable Job or Schedule
@@ -74,7 +89,9 @@ _Avoid_: Queue completion event, watcher result, durable notification
   bash. It is useful when Queue-backed background execution and an automatic
   best-effort completion wake matter; a trivial current-turn command is normally
   simpler through ordinary bash.
-- OMQueue remains opaque to the scheduler extension.
+- OMQueue execution remains opaque to the scheduler extension. The only direct
+  Queue mutation is session-owned `schedule disable <schedule-id> --json`, through
+  `BQ_OMQUEUE` (default `omqueue`), using the same selected environment as `bq`.
 - A scheduler submission invokes `bq` directly with a literal argument vector
   and assigns the presentation label `pi_scheduler_<submission-id>`. The label
   identifies and correlates the submission without imposing a Queue concurrency
@@ -114,9 +131,25 @@ _Avoid_: Queue completion event, watcher result, durable notification
 - A finite-repeat or cron reentry prompt directs the reentered agent to inspect
   the occurrence that already ran. It never authorizes executing the recurring
   payload a second time, retrying it, or administering OMQueue.
+- `scheduler_cancel({ id })` disables known Schedule IDs directly, without label
+  lookup, Queue search, status polling, or automatic retry. It prevents future
+  occurrences only: existing Jobs and delivered or queued Pi messages remain.
+  Successful disables are retained in session memory; partial failures retain
+  the remaining IDs and report incomplete cancellation. Diagnostics are bounded
+  to ten 300-character error previews plus an omission count.
+- Scheduled acceptance IDs are parsed from `bq`'s single, repeat, and cron receipt
+  lines, including its created-but-not-enabled diagnostic. Missing or truncated
+  receipts and nonzero acceptance leave cancellation coverage unknown; disabling
+  every known ID must not be reported as complete cancellation in that case.
+- `/schedule` requires the existing `~/.config/bq/config.json` before submission
+  because unconfigured `bq` falls back to local timers, which this extension
+  cannot cancel. Creation stops on the first unknown receipt or error, reports
+  confirmed acceptances and the group handle, and never retries or rolls back
+  automatically. Already-created occurrences may still fire. The full prompt,
+  including the numbered suffix, must fit the existing 8,000-byte bound.
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
-  database, or exposes cancellation, retry, history, output retrieval, or other
-  Queue administration.
+  database, or exposes Job cancellation, retry, history, output retrieval, or
+  other Queue administration.
 - Equivalent `bq` syntax supplied as an example does not by itself select
   ordinary bash. Use `scheduler_submit` when the requested lifecycle is Queue
   background execution, scheduling, repetition, heartbeat, reminder, or deferred
@@ -125,8 +158,9 @@ _Avoid_: Queue completion event, watcher result, durable notification
 - Scheduler wakes are best effort and session-scoped. Closing Pi, host loss,
   forced runner termination, or failure before the runner starts can prevent a
   wake. Durable schedules and payloads may continue after the owning Pi session
-  closes.
-- `--no-scheduler` disables `scheduler_submit` and prevents callback endpoint
-  startup for the current Pi process. Use it when the extension is discovered
-  globally but the process must not host scheduler callbacks, including Pi
+  closes. Cancellation handles are discarded on shutdown, reload, or session
+  replacement; this does not disable durable schedules automatically.
+- `--no-scheduler` disables `scheduler_submit`, `scheduler_cancel`, and `/schedule`,
+  and prevents callback endpoint startup for the current Pi process. Use it when
+  the extension is discovered globally but the process must not host scheduler callbacks, including Pi
   payloads already running inside OMQueue.

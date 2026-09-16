@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { access, chmod, lstat, mkdtemp, rmdir, stat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBqProcess } from "./process.ts";
@@ -80,6 +80,46 @@ export interface SchedulerSubmissionResult {
   acceptance: "confirmed" | "unknown";
   submissionId: string;
   bq: BqProcessResult;
+  cancellation?: { id: string; knownSchedules: number; complete: boolean };
+}
+
+interface ScheduleGroup {
+  pending: Set<string>;
+  complete: boolean;
+  creating: boolean;
+}
+
+export interface SchedulerCancellationResult {
+  id: string;
+  confirmed: boolean;
+  disabled: number;
+  remaining: number;
+  coverageComplete: boolean;
+  errors: string[];
+}
+
+export interface ReminderResult {
+  id: string;
+  accepted: number;
+  complete: boolean;
+  error?: string;
+}
+
+function succeeded(result: BqProcessResult): boolean {
+  return result.code === 0 && result.signal === null && !result.cancelled;
+}
+
+// bq has no JSON scheduled-acceptance mode. Parse only its explicit receipt
+// lines, including the ID printed when apply succeeded but enable failed.
+function scheduleIds(result: BqProcessResult): string[] {
+  const ids = new Set<string>();
+  for (const line of `${result.stdout}\n${result.stderr}`.split("\n")) {
+    const match = /^bq: scheduled ([A-Za-z0-9_-]{1,200}) (?:at|cron)=/.exec(line)
+      ?? /^bq: scheduled \d+\/\d+ at=\S+ ([A-Za-z0-9_-]{1,200})$/.exec(line)
+      ?? /^bq: Schedule ([A-Za-z0-9_-]{1,200}) was created but could not be enabled$/.exec(line);
+    if (match) ids.add(match[1]);
+  }
+  return [...ids];
 }
 
 export interface SchedulerStreamPreview {
@@ -318,6 +358,7 @@ export class SchedulerSession {
   private readonly onWake: (wake: SchedulerWake) => void;
   private readonly submissions = new Map<string, string>();
   private readonly deliveredWakeIds = new Set<string>();
+  private readonly scheduleGroups = new Map<string, ScheduleGroup>();
   private closed = false;
 
   private constructor(
@@ -377,6 +418,15 @@ export class SchedulerSession {
     sessionCwd: string,
     signal?: AbortSignal,
   ): Promise<SchedulerSubmissionResult> {
+    return this.submitOccurrence(input, sessionCwd, signal);
+  }
+
+  private async submitOccurrence(
+    input: SchedulerSubmitInput,
+    sessionCwd: string,
+    signal?: AbortSignal,
+    groupId?: string,
+  ): Promise<SchedulerSubmissionResult> {
     if (this.closed || !this.server.listening) {
       throw new Error("Scheduler callback endpoint is unavailable for this session.");
     }
@@ -391,6 +441,7 @@ export class SchedulerSession {
       throw new Error(`Scheduler callback endpoint is unavailable: ${this.socketPath}.`);
     }
 
+    if (this.closed) throw new Error("Scheduler session closed before submission.");
     const submissionId = randomUUID();
     this.submissions.set(submissionId, input.reentryPrompt);
     const runnerArguments = [
@@ -425,6 +476,19 @@ export class SchedulerSession {
       throw error;
     }
 
+    let cancellation: SchedulerSubmissionResult["cancellation"];
+    if (input.timing) {
+      const id = groupId ?? submissionId;
+      const group = this.scheduleGroups.get(id) ?? { pending: new Set<string>(), complete: true, creating: false };
+      const ids = scheduleIds(bq);
+      for (const queueId of ids.slice(0, 100)) group.pending.add(queueId);
+      const expected = input.timing.count ?? 1;
+      group.complete &&= succeeded(bq) && !bq.stdoutTruncated && !bq.stderrTruncated
+        && ids.length <= 100 && ids.length === expected;
+      if (!this.closed) this.scheduleGroups.set(id, group);
+      cancellation = { id, knownSchedules: group.pending.size, complete: group.complete };
+    }
+
     // A nonzero finite-repeat submission may have accepted earlier occurrences
     // before a later one failed, so retain callback correlation once bq started.
     return {
@@ -433,6 +497,83 @@ export class SchedulerSession {
         : "unknown",
       submissionId,
       bq,
+      ...(cancellation ? { cancellation } : {}),
+    };
+  }
+
+  async scheduleReminders(prompt: string, cwd: string): Promise<ReminderResult> {
+    if (this.closed) throw new Error("Scheduler session is closed.");
+    if (!prompt.trim()) throw new Error("Usage: /schedule PROMPT");
+    const id = randomUUID();
+    const prompts = Array.from({ length: 24 }, (_, index) =>
+      `${prompt}\n\n[Reminder ${index + 1}/24] If you think the task is complete, cancel this schedule using scheduler_cancel({ id: "${id}" }). If cancellation is unavailable or fails, reply only OK.`);
+    for (const reentryPrompt of prompts) assertBoundedSubmitInput({ reentryPrompt });
+    // The real bq otherwise starts non-durable local timers, which cannot be
+    // disabled through OMQueue. Do not silently change this command's backend.
+    await access(join(this.environment.HOME ?? homedir(), ".config/bq/config.json"))
+      .catch(() => { throw new Error("/schedule requires configured OMQueue (bq --setup); local fallback is not supported."); });
+    if (this.closed) throw new Error("Scheduler session is closed.");
+    const group: ScheduleGroup = { pending: new Set(), complete: true, creating: true };
+    this.scheduleGroups.set(id, group);
+    const first = Math.ceil((Date.now() + 3_600_000) / 60_000) * 60_000;
+    let accepted = 0;
+    try {
+      for (let index = 0; index < 24; index++) {
+        const result = await this.submitOccurrence({
+          reentryPrompt: prompts[index],
+          timing: { at: new Date(first + index * 3_600_000).toISOString().replace(".000Z", "Z") },
+        }, cwd, undefined, id);
+        if (result.acceptance === "confirmed") accepted++;
+        if (!result.cancellation?.complete) {
+          return { id, accepted, complete: false, error: `Stopped at reminder ${index + 1}: acceptance or cancellation coverage is unknown. ${result.bq.stderr.slice(0, 1000)}` };
+        }
+      }
+      return { id, accepted, complete: true };
+    } catch (error) {
+      group.complete = false;
+      return { id, accepted, complete: false, error: String(error).slice(0, 1000) };
+    } finally {
+      group.creating = false;
+    }
+  }
+
+  async cancel(id: string, cwd: string, signal?: AbortSignal): Promise<SchedulerCancellationResult> {
+    if (this.closed) throw new Error("Scheduler session is closed.");
+    const group = this.scheduleGroups.get(id);
+    if (!group) throw new Error("Unknown cancellation ID for this live session; no Queue lookup was performed.");
+    if (group.creating) throw new Error("Schedule creation is still in progress; cancellation is unavailable until it finishes.");
+    let disabled = 0;
+    const errors: string[] = [];
+    let errorCount = 0;
+    const recordError = (message: string) => {
+      errorCount++;
+      if (errors.length < 10) errors.push(message.slice(0, 300));
+    };
+    for (const queueId of group.pending) {
+      if (this.closed || signal?.aborted) {
+        recordError("Cancellation interrupted; unprocessed schedules remain.");
+        break;
+      }
+      try {
+        const result = await this.runBq({
+          command: this.environment.BQ_OMQUEUE ?? "omqueue",
+          args: ["schedule", "disable", queueId, "--json"],
+          cwd: resolve(cwd), env: { ...this.environment }, signal,
+        });
+        if (succeeded(result)) {
+          group.pending.delete(queueId);
+          disabled++;
+        } else {
+          recordError(`${queueId}: disable unconfirmed (code=${result.code}, signal=${result.signal}, cancelled=${result.cancelled}). ${result.stderr}`);
+        }
+      } catch (error) {
+        recordError(`${queueId}: ${String(error)}`);
+      }
+    }
+    if (errorCount > errors.length) errors.push(`${errorCount - errors.length} additional errors omitted.`);
+    return {
+      id, disabled, remaining: group.pending.size, coverageComplete: group.complete,
+      confirmed: group.complete && group.pending.size === 0, errors,
     };
   }
 
@@ -494,6 +635,7 @@ export class SchedulerSession {
     if (this.closed) return;
     this.closed = true;
     this.submissions.clear();
+    this.scheduleGroups.clear();
     this.deliveredWakeIds.clear();
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
