@@ -138,6 +138,10 @@ authorization.
   Prefer direct code over wrappers that only forward calls or rename concepts
   without simplifying a real boundary. Avoid parallel implementations and
   extension points for hypothetical features.
+- Keep values already configurable by users or operators in the existing
+  configuration boundary rather than scattering them through implementation
+  constants. Do not make every literal configurable; preserve validation,
+  authorization, and identity checks.
 - Keep behavior and lifecycle decisions independent of command execution,
   transport, and storage mechanics. Connect them through small explicit
   interfaces at real change boundaries; a function or concrete module may be
@@ -200,7 +204,9 @@ not authority to redefine intent or a target for implementation-shaped code.
   test that would fail without the fix.
 - Assert stable public behavior and lifecycle contracts. Avoid volatile prose,
   timestamps, generated IDs, incidental versions, private call shapes, and mock
-  call counts unless they are the specified behavior.
+  call counts unless they are the specified behavior. Fixed synthetic inputs
+  and expected values are useful when they prove a contract; do not replace
+  precise behavioral assertions with checks that accept any result.
 - Cover relevant rejection, error, cancellation, cleanup, limit, and shutdown
   paths—not only success.
 - Test process and lifecycle behavior through deterministic fakes and synthetic
@@ -238,7 +244,14 @@ links, inspect the rendered text where useful, and run `git diff --check`.
 
 The repository currently has no CI workflow or root lint, formatter, build, or
 documentation-check script. Describe that absence accurately; do not claim an
-unrun or nonexistent check passed.
+unrun or nonexistent check passed. This gap does not authorize installing tools
+during unrelated work. Match new tooling to the experiment's lifetime and risk,
+and use the established toolchain before adding another command path.
+
+When quality-tooling adoption is explicitly authorized, preserve passing gates
+and isolate pre-existing violations with the narrowest practical baseline rather
+than weakening checks or absorbing broad cleanup into the task. Record remaining
+cleanup separately and tighten temporary exceptions as the affected code changes.
 
 ## Documentation and handoff
 
