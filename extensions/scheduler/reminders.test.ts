@@ -155,6 +155,7 @@ describe("human reminders and session-owned cancellation", () => {
     const { session, home } = await setup(async (call) => { calls.push(call); return ok(stdout); });
     const result = await session.submit({ reentryPrompt: "Check", timing }, home);
     expect(result.cancellation).toMatchObject({ id: result.submissionId, complete: true });
+    expect(session.list()[0].timing).toEqual(timing);
     calls.length = 0;
     expect(await session.cancel(result.submissionId, home)).toMatchObject({ confirmed: true, disabled: ids.length });
     expect(calls.map((call) => call.args[2])).toEqual(ids);

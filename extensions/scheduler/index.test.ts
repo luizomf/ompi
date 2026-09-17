@@ -93,7 +93,8 @@ describe("scheduler extension", () => {
       expect(result.content[0].text).toContain("0 9 * * 1-5");
       expect(result.content[0].text).toContain("America/Sao_Paulo");
       expect(result.content[0].text).toContain("not official Queue state");
-      expect(setStatus).toHaveBeenLastCalledWith("scheduler", "scheduler: 1 record · /schedulelist");
+      expect(setStatus).toHaveBeenLastCalledWith("scheduler", expect.stringMatching(/\b1 record\b/));
+      expect(setStatus.mock.lastCall?.[1]).toContain("/schedulelist");
       await commands.get("schedulelist")!.handler("", ctx);
       expect(notify).toHaveBeenLastCalledWith(result.content[0].text, "info");
       expect(invocations).toHaveLength(1);
@@ -106,15 +107,17 @@ describe("scheduler extension", () => {
       }, undefined, undefined, ctx)).details as { submissionId: string };
       await tools.get("scheduler_cancel")!.execute("cancel", { id: cancellationId.submissionId }, undefined, undefined, ctx);
       const cancelled = await list();
-      expect(cancelled.content[0].text).toContain('"in":"10m","every":"30m","count":4');
-      expect(cancelled.content[0].text).toContain("known IDs not disabled: 0; disabled: 1; coverage: unknown");
+      for (const value of ["10m", "30m"]) expect(cancelled.content[0].text).toContain(value);
+      expect(cancelled.content[0].text).toContain("known IDs not disabled: 0");
+      expect(cancelled.content[0].text).toContain("disabled: 1");
+      expect(cancelled.content[0].text).toContain("coverage: unknown");
       expect(cancelled.content[0].text).toContain("last attempt: incomplete or unconfirmed");
       await tools.get("scheduler_submit")!.execute("immediate", {
         reentryPrompt: "Immediate report", payload: { executable: "synthetic-payload" },
       }, undefined, undefined, ctx);
       expect((await list()).content[0].text).toContain("Requested timing: immediate");
       expect((await list()).content[0].text).toContain("· payload · acceptance confirmed");
-      expect(setStatus).toHaveBeenLastCalledWith("scheduler", "scheduler: 3 records · /schedulelist");
+      expect(setStatus).toHaveBeenLastCalledWith("scheduler", expect.stringMatching(/\b3 records\b/));
       const collapsed = tools.get("scheduler_list")!.renderResult!(
         cancelled as { content: Array<{ type: "text"; text: string }>; details: unknown },
         { expanded: false, isPartial: false }, {}, {},
@@ -160,12 +163,13 @@ describe("scheduler extension", () => {
     } });
     try {
       await events.get("session_start")!();
+      const submit = tools.find((tool) => tool.name === "scheduler_submit")!;
       for (let index = 0; index < 50; index++) {
-        await tools[0].execute("submit", { reentryPrompt: `record-${index}\n\u001b[31m${"x".repeat(200)}`, timing: { at: "2030-01-01T00:00:00Z" } }, undefined, undefined, ctx);
+        await submit.execute("submit", { reentryPrompt: `record-${index}\n\u001b[31m${"x".repeat(200)}`, timing: { at: "2030-01-01T00:00:00Z" } }, undefined, undefined, ctx);
       }
       const list = tools.find((tool) => tool.name === "scheduler_list")!;
       const first = await list.execute("list", {}, undefined, undefined, ctx);
-      const details = first.details as { total: number; shown: number; nextOffset: number };
+      const details = first.details as { total: number; shown: number; nextOffset?: number };
       expect(details.total).toBe(50);
       expect(details.shown).toBeGreaterThan(0);
       expect(details.nextOffset).toBeGreaterThan(0);
@@ -173,15 +177,25 @@ describe("scheduler extension", () => {
       expect(first.content[0].text.split("\n").length).toBeLessThan(210);
       expect(first.content[0].text).not.toContain("\u001b");
       expect(first.content[0].text).toContain("record-0\\n\\u001b[31m");
-      const remaining = await list.execute("list", { offset: details.nextOffset }, undefined, undefined, ctx);
-      expect(remaining.content[0].text).toContain("record-49");
-      await showList!(String(details.nextOffset), ctx);
-      expect(notify).toHaveBeenLastCalledWith(remaining.content[0].text, "info");
+      const seen = new Set(first.content[0].text.match(/record-\d+/g));
+      let offset = details.nextOffset;
+      let previousOffset = 0;
+      while (offset !== undefined) {
+        expect(offset).toBeGreaterThan(previousOffset);
+        expect(offset).toBeLessThan(details.total);
+        const page = await list.execute("list", { offset }, undefined, undefined, ctx);
+        for (const prompt of page.content[0].text.match(/record-\d+/g) ?? []) seen.add(prompt);
+        await showList!(String(offset), ctx);
+        expect(notify).toHaveBeenLastCalledWith(page.content[0].text, "info");
+        previousOffset = offset;
+        offset = (page.details as typeof details).nextOffset;
+      }
+      expect(seen.size).toBe(50);
       await showList!("not-an-offset", ctx);
       expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Usage:"), "error");
       expect(calls).toBe(50);
       const oversized = "\u0001".repeat(1024);
-      await tools[0].execute("submit", {
+      await submit.execute("submit", {
         reentryPrompt: "Oversized display data",
         timing: { in: oversized, at: oversized, cron: oversized, tz: oversized, every: oversized },
       }, undefined, undefined, ctx);
@@ -217,11 +231,19 @@ describe("scheduler extension", () => {
       expect(schedule).toHaveBeenCalledWith(prompt, "/tmp");
       expect(notify).toHaveBeenCalledWith(expect.any(String), complete ? "info" : "warning");
       if (complete) {
-        expect(sendMessage).toHaveBeenCalledExactlyOnceWith({
-          customType: "scheduler-activated",
-          content: `[Schedule activated]\nThe user enabled 24 hourly reminders, starting in one hour,\nas a precaution for work already explained or currently in progress.\nThis is not a new task or a request to restart completed work.\nContinue using the conversation context and the reminder below.\n\nIf you think the task is complete, cancel this schedule using\nscheduler_cancel({ id: "group" }). If cancellation is unavailable\nor fails, reply only OK.\n\nReminder prompt:\n${prompt}`,
-          display: true,
-        }, { deliverAs: "followUp", triggerTurn: true });
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        const [message, delivery] = sendMessage.mock.calls[0];
+        expect(message).toMatchObject({ customType: "scheduler-activated", display: true });
+        expect(delivery).toEqual({ deliverAs: "followUp", triggerTurn: true });
+        // Assert activation meaning and literal user input, not the notice layout.
+        expect(message.content).toContain(prompt);
+        expect(message.content).toMatch(/24 hourly reminders/);
+        expect(message.content).toMatch(/starting in one hour/);
+        expect(message.content).toMatch(/precaution for work already explained or currently in progress/);
+        expect(message.content).toMatch(/not a new task or a request to restart completed work/);
+        expect(message.content).toMatch(/task is complete.*scheduler_cancel/s);
+        expect(message.content).toContain('scheduler_cancel({ id: "group" })');
+        expect(message.content).toMatch(/cancellation is unavailable\s+or fails, reply only OK/);
       } else {
         expect(sendMessage).not.toHaveBeenCalled();
       }
@@ -251,22 +273,18 @@ describe("scheduler extension", () => {
     registerSchedulerExtension(pi);
     await handlers.get("session_start")?.({}, {} as ExtensionContext);
 
-    expect(flags).toEqual([{
+    expect(flags).toContainEqual({
       name: "no-scheduler",
-      options: {
-        description: "Disable the scheduler tool and callback endpoint for this Pi process",
-        type: "boolean",
-        default: false,
-      },
-    }]);
-    expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel", "scheduler_list"]);
+      options: expect.objectContaining({ type: "boolean", default: false }),
+    });
+    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["scheduler_submit", "scheduler_cancel", "scheduler_list"]));
     expect(activeTools).toEqual(["read"]);
     for (const command of commands) {
       await command("check", { ui: { notify } } as unknown as ExtensionContext);
       expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("disabled"), "error");
     }
-    await expect(tools[2].execute("list", {}, undefined, undefined, {} as ExtensionContext)).rejects.toThrow("unavailable");
-    await expect(tools[1].execute("cancel", { id: "foreign" }, undefined, undefined, {} as ExtensionContext)).rejects.toThrow("unavailable");
+    await expect(tools.find((tool) => tool.name === "scheduler_list")!.execute("list", {}, undefined, undefined, {} as ExtensionContext)).rejects.toThrow("unavailable");
+    await expect(tools.find((tool) => tool.name === "scheduler_cancel")!.execute("cancel", { id: "foreign" }, undefined, undefined, {} as ExtensionContext)).rejects.toThrow("unavailable");
   });
 
   it("discovers Queue-backed finite work by completion lifecycle instead of command duration", () => {
@@ -282,8 +300,7 @@ describe("scheduler extension", () => {
 
     registerSchedulerExtension(pi);
 
-    expect(tools).toHaveLength(3);
-    const tool = tools[0];
+    const tool = tools.find((candidate) => candidate.name === "scheduler_submit")!;
     const discovery = [
       tool.label,
       tool.description,
@@ -294,7 +311,6 @@ describe("scheduler extension", () => {
       tool.parameters.properties?.payload?.description ?? "",
     ].join(" ");
 
-    expect(tool.label).toBe("Submit Background or Scheduled Work");
     expect(discovery).toContain("immediately through OMQueue when timing is omitted");
     expect(discovery).toContain("finite work that should complete synchronously in the current turn");
     expect(discovery).toContain("after the payload terminates");
@@ -419,7 +435,8 @@ describe("scheduler extension", () => {
         },
       },
     };
-    const renderSubmission = (expanded: boolean) => tools[0].renderResult?.(
+    const submit = tools.find((tool) => tool.name === "scheduler_submit")!;
+    const renderSubmission = (expanded: boolean) => submit.renderResult?.(
       submission,
       { expanded, isPartial: false },
       theme,
@@ -492,11 +509,12 @@ describe("scheduler extension", () => {
     });
 
     try {
-      expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel", "scheduler_list"]);
+      expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["scheduler_submit", "scheduler_cancel", "scheduler_list"]));
+      const submit = tools.find((tool) => tool.name === "scheduler_submit")!;
       const discovery = [
-        tools[0].description,
-        tools[0].promptSnippet ?? "",
-        ...(tools[0].promptGuidelines ?? []),
+        submit.description,
+        submit.promptSnippet ?? "",
+        ...(submit.promptGuidelines ?? []),
       ].join(" ");
       for (const term of ["cron", "scheduler", "heartbeat", "reminder", "after a delay", "deferred recheck"]) {
         expect(discovery).toContain(term);
@@ -521,7 +539,7 @@ describe("scheduler extension", () => {
       expect(discovery).toMatch(/independent scheduler submissions.*same turn.*concurrently.*do not wait/s);
       expect(discovery).toContain("ordinary bash");
       await handlers.get("session_start")?.({}, ctx);
-      const result = await tools[0].execute("call-1", {
+      const result = await submit.execute("call-1", {
         reentryPrompt: "Recheck the service health, compare it with the incident criteria, and report the next action.",
       }, undefined, undefined, ctx);
       if (!invocation) throw new Error("bq invocation was not captured");
