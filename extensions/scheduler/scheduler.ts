@@ -83,10 +83,32 @@ export interface SchedulerSubmissionResult {
   cancellation?: { id: string; knownSchedules: number; complete: boolean };
 }
 
+export interface SchedulerRecord {
+  id: string;
+  kind: "heartbeat" | "payload" | "reminders";
+  promptPreview: string;
+  createdAt: string;
+  timing?: SchedulerTiming;
+  acceptance: "submitting" | "confirmed" | "unknown";
+  acceptedSubmissions: number;
+  callbacks: number;
+  lastCallbackAt?: string;
+  lastOutcome?: SchedulerPayloadOutcome;
+  cancellation?: {
+    knownNotDisabled: number;
+    disabled: number;
+    coverageComplete: boolean;
+    creating: boolean;
+    lastAttemptConfirmed?: boolean;
+  };
+}
+
 interface ScheduleGroup {
   pending: Set<string>;
   complete: boolean;
   creating: boolean;
+  disabled: number;
+  lastAttemptConfirmed?: boolean;
 }
 
 export interface SchedulerCancellationResult {
@@ -149,6 +171,7 @@ interface CallbackFrame extends SchedulerWake {
 
 interface SchedulerSessionOptions {
   onWake(wake: SchedulerWake): void;
+  onChange?(): void;
   runBq?: (invocation: BqInvocation) => Promise<BqProcessResult>;
   nodeRuntimePath?: string;
   callbackRunnerPath?: string;
@@ -356,7 +379,9 @@ export class SchedulerSession {
   private readonly callbackRunnerPath: string;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly onWake: (wake: SchedulerWake) => void;
-  private readonly submissions = new Map<string, string>();
+  private readonly onChange: () => void;
+  private readonly submissions = new Map<string, { prompt: string; record: SchedulerRecord }>();
+  private readonly records = new Map<string, SchedulerRecord>();
   private readonly deliveredWakeIds = new Set<string>();
   private readonly scheduleGroups = new Map<string, ScheduleGroup>();
   private closed = false;
@@ -377,6 +402,7 @@ export class SchedulerSession {
     this.callbackRunnerPath = options.callbackRunnerPath ?? CALLBACK_RUNNER;
     this.environment = selectedEnvironment(options.environment ?? process.env);
     this.onWake = options.onWake;
+    this.onChange = options.onChange ?? (() => {});
   }
 
   static async start(options: SchedulerSessionOptions): Promise<SchedulerSession> {
@@ -413,6 +439,23 @@ export class SchedulerSession {
     }
   }
 
+  list(): SchedulerRecord[] {
+    return [...this.records.values()].map((record) => {
+      const view = structuredClone(record);
+      const group = this.scheduleGroups.get(record.id);
+      if (group) {
+        view.cancellation = {
+          knownNotDisabled: group.pending.size,
+          disabled: group.disabled,
+          coverageComplete: group.complete,
+          creating: group.creating,
+          ...(group.lastAttemptConfirmed !== undefined ? { lastAttemptConfirmed: group.lastAttemptConfirmed } : {}),
+        };
+      }
+      return view;
+    });
+  }
+
   async submit(
     input: SchedulerSubmitInput,
     sessionCwd: string,
@@ -443,7 +486,19 @@ export class SchedulerSession {
 
     if (this.closed) throw new Error("Scheduler session closed before submission.");
     const submissionId = randomUUID();
-    this.submissions.set(submissionId, input.reentryPrompt);
+    const record: SchedulerRecord = (groupId ? this.records.get(groupId) : undefined) ?? {
+      id: submissionId,
+      kind: input.payload ? "payload" : "heartbeat",
+      promptPreview: input.reentryPrompt.slice(0, 160),
+      createdAt: new Date().toISOString(),
+      ...(input.timing ? { timing: { ...input.timing } } : {}),
+      acceptance: "submitting",
+      acceptedSubmissions: 0,
+      callbacks: 0,
+    };
+    this.submissions.set(submissionId, { prompt: input.reentryPrompt, record });
+    if (!groupId) this.records.set(submissionId, record);
+    this.onChange();
     const runnerArguments = [
       this.callbackRunnerPath,
       "--socket", this.socketPath,
@@ -473,13 +528,17 @@ export class SchedulerSession {
       });
     } catch (error) {
       this.submissions.delete(submissionId);
+      record.acceptance = "unknown";
+      this.onChange();
       throw error;
     }
 
+    if (!groupId) record.acceptance = succeeded(bq) ? "confirmed" : "unknown";
+    if (succeeded(bq)) record.acceptedSubmissions++;
     let cancellation: SchedulerSubmissionResult["cancellation"];
     if (input.timing) {
       const id = groupId ?? submissionId;
-      const group = this.scheduleGroups.get(id) ?? { pending: new Set<string>(), complete: true, creating: false };
+      const group = this.scheduleGroups.get(id) ?? { pending: new Set<string>(), complete: true, creating: false, disabled: 0 };
       const ids = scheduleIds(bq);
       for (const queueId of ids.slice(0, 100)) group.pending.add(queueId);
       const expected = input.timing.count ?? 1;
@@ -489,6 +548,7 @@ export class SchedulerSession {
       cancellation = { id, knownSchedules: group.pending.size, complete: group.complete };
     }
 
+    this.onChange();
     // A nonzero finite-repeat submission may have accepted earlier occurrences
     // before a later one failed, so retain callback correlation once bq started.
     return {
@@ -513,9 +573,16 @@ export class SchedulerSession {
     await access(join(this.environment.HOME ?? homedir(), ".config/bq/config.json"))
       .catch(() => { throw new Error("/schedule requires configured OMQueue (bq --setup); local fallback is not supported."); });
     if (this.closed) throw new Error("Scheduler session is closed.");
-    const group: ScheduleGroup = { pending: new Set(), complete: true, creating: true };
+    const group: ScheduleGroup = { pending: new Set(), complete: true, creating: true, disabled: 0 };
     this.scheduleGroups.set(id, group);
     const first = Math.ceil((Date.now() + 3_600_000) / 60_000) * 60_000;
+    const record: SchedulerRecord = {
+      id, kind: "reminders", promptPreview: prompt.slice(0, 160),
+      createdAt: new Date().toISOString(),
+      timing: { at: new Date(first).toISOString().replace(".000Z", "Z"), every: "1h", count: 24 },
+      acceptance: "submitting", acceptedSubmissions: 0, callbacks: 0,
+    };
+    this.records.set(id, record);
     let accepted = 0;
     try {
       for (let index = 0; index < 24; index++) {
@@ -534,6 +601,8 @@ export class SchedulerSession {
       return { id, accepted, complete: false, error: String(error).slice(0, 1000) };
     } finally {
       group.creating = false;
+      record.acceptance = accepted === 24 ? "confirmed" : "unknown";
+      this.onChange();
     }
   }
 
@@ -562,6 +631,7 @@ export class SchedulerSession {
         });
         if (succeeded(result)) {
           group.pending.delete(queueId);
+          group.disabled++;
           disabled++;
         } else {
           recordError(`${queueId}: disable unconfirmed (code=${result.code}, signal=${result.signal}, cancelled=${result.cancelled}). ${result.stderr}`);
@@ -571,6 +641,8 @@ export class SchedulerSession {
       }
     }
     if (errorCount > errors.length) errors.push(`${errorCount - errors.length} additional errors omitted.`);
+    group.lastAttemptConfirmed = group.complete && group.pending.size === 0;
+    this.onChange();
     return {
       id, disabled, remaining: group.pending.size, coverageComplete: group.complete,
       confirmed: group.complete && group.pending.size === 0, errors,
@@ -607,11 +679,11 @@ export class SchedulerSession {
       }
 
       const frame = parseCallbackFrame(buffer.subarray(0, newline).toString("utf8"));
-      const expectedPrompt = frame ? this.submissions.get(frame.submissionId) : undefined;
+      const submission = frame ? this.submissions.get(frame.submissionId) : undefined;
       if (!frame
         || !capabilitiesMatch(frame.capability, this.capability)
-        || expectedPrompt === undefined
-        || frame.reentryPrompt !== expectedPrompt
+        || submission === undefined
+        || frame.reentryPrompt !== submission.prompt
         || this.deliveredWakeIds.has(frame.wakeId)) {
         reject();
         return;
@@ -622,11 +694,15 @@ export class SchedulerSession {
       const { version: _version, capability: _capability, ...wake } = frame;
       try {
         this.onWake(wake);
+        submission.record.callbacks++;
+        submission.record.lastCallbackAt = new Date().toISOString();
+        submission.record.lastOutcome = structuredClone(wake.outcome);
         socket.end(`${JSON.stringify({ version: CALLBACK_PROTOCOL_VERSION, ok: true })}\n`);
       } catch {
         this.deliveredWakeIds.delete(frame.wakeId);
         socket.end(`${JSON.stringify({ version: CALLBACK_PROTOCOL_VERSION, ok: false })}\n`);
       }
+      this.onChange();
     });
     socket.once("error", () => socket.destroy());
   }
@@ -635,6 +711,7 @@ export class SchedulerSession {
     if (this.closed) return;
     this.closed = true;
     this.submissions.clear();
+    this.records.clear();
     this.scheduleGroups.clear();
     this.deliveredWakeIds.clear();
     for (const socket of this.sockets) socket.destroy();
