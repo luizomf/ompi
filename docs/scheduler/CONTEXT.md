@@ -81,6 +81,14 @@ returned OMQueue Schedule IDs. A timed `scheduler_submit` uses its submission ID
 a human reminder schedule groups its 24 submissions under one ID. It is not a
 Queue label, Job ID, or persistent cross-session capability.
 
+**Scheduler record**:
+A read-only presentation of one session-owned submission or one `/schedule`
+reminder group, including partial creation. It retains requested timing,
+acceptance, a bounded prompt preview, and observed callback facts. Cancellation
+facts are projected from the existing session-owned handles, not reconciled
+against OMQueue. Known Schedule IDs may include past occurrences.
+_Avoid_: Pending Job, active Schedule, Queue history, official Queue state
+
 ## Boundary Contract
 
 - `bq` owns timing syntax, timing validation, durable Job or Schedule
@@ -153,6 +161,19 @@ Queue label, Job ID, or persistent cross-session capability.
   confirmed acceptances and the group handle, and never retries or rolls back
   automatically. Already-created occurrences may still fire. The full prompt,
   including the numbered suffix, must fit the existing 8,000-byte bound.
+- `scheduler_list` and `/schedulelist` expose the same bounded, read-only local
+  snapshot, with record offsets for additional pages. Requested timing and
+  recurrence remain literal data; there is no cron parser or next-run prediction.
+  Each `/schedule` remains one record with its anchored start and 24 hourly
+  occurrences. Confirmed submission counts describe `bq` acceptances, not payload
+  completion. Callback counts describe correlated callbacks whose wake handler
+  returned successfully, not agent receipt or official Queue outcomes.
+- The native footer counts known session records, never pending Jobs. Records
+  remain after callbacks and cancellation. Cancellation details distinguish
+  known IDs not disabled, successful disables, coverage, creation in progress,
+  and the last cancellation attempt. Past occurrences may still have retained
+  IDs; no view infers whether a Schedule is currently active. Presentation neither
+  restores records across sessions nor changes execution or cancellation.
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
   database, or exposes Job cancellation, retry, history, output retrieval, or
   other Queue administration.
@@ -166,7 +187,8 @@ Queue label, Job ID, or persistent cross-session capability.
   wake. Durable schedules and payloads may continue after the owning Pi session
   closes. Cancellation handles are discarded on shutdown, reload, or session
   replacement; this does not disable durable schedules automatically.
-- `--no-scheduler` disables `scheduler_submit`, `scheduler_cancel`, and `/schedule`,
-  and prevents callback endpoint startup for the current Pi process. Use it when
+- `--no-scheduler` disables `scheduler_submit`, `scheduler_cancel`, `scheduler_list`,
+  `/schedule`, and `/schedulelist`, hides the footer, and prevents callback endpoint
+  startup for the current Pi process. Use it when
   the extension is discovered globally but the process must not host scheduler callbacks, including Pi
   payloads already running inside OMQueue.

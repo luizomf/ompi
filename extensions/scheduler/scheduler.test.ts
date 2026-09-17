@@ -847,6 +847,7 @@ describe("scheduler submission", () => {
       expect(JSON.parse(malformed)).toEqual({ version: 1, ok: false });
       expect(JSON.parse(extraFrame)).toEqual({ version: 1, ok: false });
       expect(wakes).toEqual([]);
+      expect(session.list()[0].callbacks).toBe(0);
     } finally {
       await session.close();
     }
@@ -857,8 +858,12 @@ describe("scheduler submission", () => {
     const wakes: SchedulerWake[] = [];
     const prompt = "Continue this one scheduler occurrence exactly once.";
     let invocation: BqInvocation | undefined;
+    let rejectWake = true;
     const session = await SchedulerSession.start({
-      onWake: (wake) => wakes.push(wake),
+      onWake: (wake) => {
+        if (rejectWake) throw new Error("synthetic delivery failure");
+        wakes.push(wake);
+      },
       runBq: async (candidate) => {
         invocation = candidate;
         return {
@@ -888,9 +893,15 @@ describe("scheduler submission", () => {
         stderr: { preview: "", truncated: false },
       };
 
+      expect(JSON.parse(await sendRawCallback(socketPath, frame))).toEqual({ version: 1, ok: false });
+      expect(session.list()[0].callbacks).toBe(0);
+      rejectWake = false;
       expect(JSON.parse(await sendRawCallback(socketPath, frame))).toEqual({ version: 1, ok: true });
       expect(JSON.parse(await sendRawCallback(socketPath, frame))).toEqual({ version: 1, ok: false });
       expect(wakes).toHaveLength(1);
+      expect(session.list()[0]).toMatchObject({
+        callbacks: 1, lastCallbackAt: expect.any(String), lastOutcome: { kind: "heartbeat" },
+      });
     } finally {
       await session.close();
     }

@@ -62,6 +62,138 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
 }
 
 describe("scheduler extension", () => {
+  it("shows session-local records in the agent list, human command, and footer without Queue reads", async () => {
+    initTheme(undefined, false);
+    const tools = new Map<string, RegisteredTool>();
+    const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
+    const events = new Map<string, (event: unknown, ctx: ExtensionContext) => Promise<void>>();
+    const notify = vi.fn();
+    const setStatus = vi.fn();
+    const sendMessage = vi.fn();
+    const ctx = { cwd: tmpdir(), hasUI: true, ui: { notify, setStatus, theme: { fg: (_: string, text: string) => text } } } as unknown as ExtensionContext;
+    const invocations: BqInvocation[] = [];
+    const pi = {
+      registerFlag: () => {}, getFlag: () => false, registerMessageRenderer: () => {}, sendMessage,
+      registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
+      registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => commands.set(name, command),
+      on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => Promise<void>) => events.set(name, handler),
+    } as unknown as ExtensionAPI;
+    registerSchedulerExtension(pi, { runBq: async (call) => {
+      invocations.push(call);
+      return { code: 0, signal: null, cancelled: false, stdout: "bq: scheduled cron-id cron='0 9 * * 1-5'\n", stderr: "", stdoutTruncated: false, stderrTruncated: false };
+    } });
+    try {
+      await events.get("session_start")!({}, ctx);
+      const list = () => tools.get("scheduler_list")!.execute("list", {}, undefined, undefined, ctx);
+      expect((await list()).content[0].text).toContain("No scheduler records");
+      await tools.get("scheduler_submit")!.execute("submit", {
+        reentryPrompt: "Review report", timing: { cron: "0 9 * * 1-5", tz: "America/Sao_Paulo" },
+      }, undefined, undefined, ctx);
+      const result = await list();
+      expect(result.content[0].text).toContain("0 9 * * 1-5");
+      expect(result.content[0].text).toContain("America/Sao_Paulo");
+      expect(result.content[0].text).toContain("not official Queue state");
+      expect(setStatus).toHaveBeenLastCalledWith("scheduler", "scheduler: 1 record · /schedulelist");
+      await commands.get("schedulelist")!.handler("", ctx);
+      expect(notify).toHaveBeenLastCalledWith(result.content[0].text, "info");
+      expect(invocations).toHaveLength(1);
+      expect(sendMessage).not.toHaveBeenCalled();
+      await runQueuedInvocation(invocations[0]);
+      expect((await list()).content[0].text).toContain("Callbacks: 1");
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      const cancellationId = (await tools.get("scheduler_submit")!.execute("repeat", {
+        reentryPrompt: "Finite report", timing: { in: "10m", every: "30m", count: 4 },
+      }, undefined, undefined, ctx)).details as { submissionId: string };
+      await tools.get("scheduler_cancel")!.execute("cancel", { id: cancellationId.submissionId }, undefined, undefined, ctx);
+      const cancelled = await list();
+      expect(cancelled.content[0].text).toContain('"in":"10m","every":"30m","count":4');
+      expect(cancelled.content[0].text).toContain("known IDs not disabled: 0; disabled: 1; coverage: unknown");
+      expect(cancelled.content[0].text).toContain("last attempt: incomplete or unconfirmed");
+      await tools.get("scheduler_submit")!.execute("immediate", {
+        reentryPrompt: "Immediate report", payload: { executable: "synthetic-payload" },
+      }, undefined, undefined, ctx);
+      expect((await list()).content[0].text).toContain("Requested timing: immediate");
+      expect((await list()).content[0].text).toContain("· payload · acceptance confirmed");
+      expect(setStatus).toHaveBeenLastCalledWith("scheduler", "scheduler: 3 records · /schedulelist");
+      const collapsed = tools.get("scheduler_list")!.renderResult!(
+        cancelled as { content: Array<{ type: "text"; text: string }>; details: unknown },
+        { expanded: false, isPartial: false }, {}, {},
+      ).render(100).join("\n");
+      expect(collapsed).toContain("2 session-local scheduler records");
+      expect(collapsed).not.toContain("Finite report");
+      const expanded = tools.get("scheduler_list")!.renderResult!(
+        cancelled as { content: Array<{ type: "text"; text: string }>; details: unknown },
+        { expanded: true, isPartial: false }, {}, {},
+      ).render(100).join("\n");
+      expect(expanded).toContain("Finite report");
+    } finally {
+      await events.get("session_shutdown")!({}, ctx);
+    }
+    expect(setStatus).toHaveBeenLastCalledWith("scheduler", undefined);
+    await events.get("session_start")!({}, ctx);
+    try {
+      const fresh = await tools.get("scheduler_list")!.execute("list", {}, undefined, undefined, ctx);
+      expect(fresh.content[0].text).toContain("No scheduler records");
+      expect(setStatus).toHaveBeenLastCalledWith("scheduler", undefined);
+      expect(invocations).toHaveLength(4);
+    } finally {
+      await events.get("session_shutdown")!({}, ctx);
+    }
+  });
+
+  it("bounds list output and lets humans and agents reach remaining records without Queue reads", async () => {
+    const tools: RegisteredTool[] = [];
+    const events = new Map<string, () => Promise<void>>();
+    let showList: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
+    const notify = vi.fn();
+    const ctx = { cwd: tmpdir(), ui: { notify }, hasUI: false } as unknown as ExtensionContext;
+    let calls = 0;
+    const pi = {
+      registerFlag: () => {}, getFlag: () => false, registerMessageRenderer: () => {},
+      registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerCommand: (name: string, command: { handler: typeof showList }) => { if (name === "schedulelist") showList = command.handler; },
+      on: (name: string, handler: () => Promise<void>) => events.set(name, handler),
+    } as unknown as ExtensionAPI;
+    registerSchedulerExtension(pi, { runBq: async () => {
+      calls++;
+      return { code: 0, signal: null, cancelled: false, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false };
+    } });
+    try {
+      await events.get("session_start")!();
+      for (let index = 0; index < 50; index++) {
+        await tools[0].execute("submit", { reentryPrompt: `record-${index}\n\u001b[31m${"x".repeat(200)}`, timing: { at: "2030-01-01T00:00:00Z" } }, undefined, undefined, ctx);
+      }
+      const list = tools.find((tool) => tool.name === "scheduler_list")!;
+      const first = await list.execute("list", {}, undefined, undefined, ctx);
+      const details = first.details as { total: number; shown: number; nextOffset: number };
+      expect(details.total).toBe(50);
+      expect(details.shown).toBeGreaterThan(0);
+      expect(details.nextOffset).toBeGreaterThan(0);
+      expect(Buffer.byteLength(first.content[0].text)).toBeLessThan(25_000);
+      expect(first.content[0].text.split("\n").length).toBeLessThan(210);
+      expect(first.content[0].text).not.toContain("\u001b");
+      expect(first.content[0].text).toContain("record-0\\n\\u001b[31m");
+      const remaining = await list.execute("list", { offset: details.nextOffset }, undefined, undefined, ctx);
+      expect(remaining.content[0].text).toContain("record-49");
+      await showList!(String(details.nextOffset), ctx);
+      expect(notify).toHaveBeenLastCalledWith(remaining.content[0].text, "info");
+      await showList!("not-an-offset", ctx);
+      expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Usage:"), "error");
+      expect(calls).toBe(50);
+      const oversized = "\u0001".repeat(1024);
+      await tools[0].execute("submit", {
+        reentryPrompt: "Oversized display data",
+        timing: { in: oversized, at: oversized, cron: oversized, tz: oversized, every: oversized },
+      }, undefined, undefined, ctx);
+      const bounded = await list.execute("list", { offset: 50 }, undefined, undefined, ctx);
+      expect(bounded.content[0].text).toContain("[Record display truncated.]");
+      expect(Buffer.byteLength(bounded.content[0].text)).toBeLessThan(25_000);
+      expect(bounded.details).toMatchObject({ total: 51, shown: 1, nextOffset: undefined });
+    } finally {
+      await events.get("session_shutdown")!();
+    }
+  });
+
   it.each([true, false])("announces /schedule activation only after complete creation (%s)", async (complete) => {
     let handler: ((prompt: string, ctx: ExtensionContext) => Promise<void>) | undefined;
     const events = new Map<string, () => Promise<void>>();
@@ -73,7 +205,7 @@ describe("scheduler extension", () => {
       registerFlag: () => {}, getFlag: () => false, registerTool: () => {},
       registerMessageRenderer: () => {}, sendMessage,
       registerCommand: (name: string, command: { handler: typeof handler }) => {
-        expect(name).toBe("schedule"); handler = command.handler;
+        if (name === "schedule") handler = command.handler;
       },
       on: (name: string, callback: () => Promise<void>) => events.set(name, callback),
     } as unknown as ExtensionAPI;
@@ -102,12 +234,12 @@ describe("scheduler extension", () => {
     const tools: RegisteredTool[] = [];
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const flags: Array<{ name: string; options: Record<string, unknown> }> = [];
-    let activeTools = ["read", "scheduler_submit", "scheduler_cancel"];
-    let schedule: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
+    let activeTools = ["read", "scheduler_submit", "scheduler_cancel", "scheduler_list"];
+    const commands: Array<(args: string, ctx: ExtensionContext) => Promise<void>> = [];
     const notify = vi.fn();
     const pi = {
       registerFlag: (name: string, options: Record<string, unknown>) => flags.push({ name, options }),
-      registerCommand: (_name: string, command: { handler: typeof schedule }) => { schedule = command.handler; },
+      registerCommand: (_name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => { commands.push(command.handler); },
       getFlag: (name: string) => name === "no-scheduler",
       getActiveTools: () => activeTools,
       setActiveTools: (names: string[]) => { activeTools = names; },
@@ -127,10 +259,13 @@ describe("scheduler extension", () => {
         default: false,
       },
     }]);
-    expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel", "scheduler_list"]);
     expect(activeTools).toEqual(["read"]);
-    await schedule?.("check", { ui: { notify } } as unknown as ExtensionContext);
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("disabled"), "error");
+    for (const command of commands) {
+      await command("check", { ui: { notify } } as unknown as ExtensionContext);
+      expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("disabled"), "error");
+    }
+    await expect(tools[2].execute("list", {}, undefined, undefined, {} as ExtensionContext)).rejects.toThrow("unavailable");
     await expect(tools[1].execute("cancel", { id: "foreign" }, undefined, undefined, {} as ExtensionContext)).rejects.toThrow("unavailable");
   });
 
@@ -147,7 +282,7 @@ describe("scheduler extension", () => {
 
     registerSchedulerExtension(pi);
 
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(3);
     const tool = tools[0];
     const discovery = [
       tool.label,
@@ -357,7 +492,7 @@ describe("scheduler extension", () => {
     });
 
     try {
-      expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel"]);
+      expect(tools.map((tool) => tool.name)).toEqual(["scheduler_submit", "scheduler_cancel", "scheduler_list"]);
       const discovery = [
         tools[0].description,
         tools[0].promptSnippet ?? "",

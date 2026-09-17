@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +56,10 @@ describe("human reminders and session-owned cancellation", () => {
     calls.length = 0;
     expect(await session.cancel(result.id, home)).toMatchObject({ confirmed: true, disabled: 24, remaining: 0 });
     expect(calls).toHaveLength(24);
+    expect(session.list()).toEqual([expect.objectContaining({
+      id: result.id,
+      cancellation: { knownNotDisabled: 0, disabled: 24, coverageComplete: true, creating: false, lastAttemptConfirmed: true },
+    })]);
     calls.forEach((call, index) => {
       expect(call.command).toBe("/synthetic/omqueue");
       expect(call.args).toEqual(["schedule", "disable", `schedule-${index + 1}`, "--json"]);
@@ -62,6 +68,82 @@ describe("human reminders and session-owned cancellation", () => {
     calls.length = 0;
     expect(await session.cancel(result.id, home)).toMatchObject({ confirmed: true, disabled: 0 });
     expect(calls).toEqual([]);
+  });
+
+  it("lists local submission facts without consulting Queue or exposing callback credentials", async () => {
+    let calls = 0;
+    const { session, home } = await setup(async () => {
+      calls++;
+      return ok("bq: scheduled cron-id cron='0 9 * * 1-5'\n");
+    });
+    expect(session.list()).toEqual([]);
+    const timing = { cron: "0 9 * * 1-5", tz: "America/Sao_Paulo" };
+    const result = await session.submit({ reentryPrompt: "Check the report", timing }, home);
+    timing.cron = "changed";
+    expect(session.list()).toEqual([expect.objectContaining({
+      id: result.submissionId, kind: "heartbeat", promptPreview: "Check the report",
+      timing: { cron: "0 9 * * 1-5", tz: "America/Sao_Paulo" },
+      acceptance: "confirmed", acceptedSubmissions: 1,
+    })]);
+    session.list()[0].timing!.cron = "mutated snapshot";
+    expect(session.list()[0].timing?.cron).toBe("0 9 * * 1-5");
+    expect(JSON.stringify(session.list())).not.toMatch(/capability|wake.sock|prompt-base64/);
+    expect(calls).toBe(1);
+    await session.close();
+    expect(session.list()).toEqual([]);
+  });
+
+  it("shows in-flight and unknown acceptance without inventing cancellation coverage", async () => {
+    let release!: (result: BqProcessResult) => void;
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    const { session, home } = await setup(async () => {
+      started();
+      return new Promise<BqProcessResult>((resolve) => { release = resolve; });
+    });
+    const submission = session.submit({ reentryPrompt: "Check later", timing: { in: "2h" } }, home);
+    await running;
+    expect(session.list()[0]).toMatchObject({ acceptance: "submitting", acceptedSubmissions: 0, callbacks: 0 });
+    release(ok("", { code: 1 }));
+    await submission;
+    expect(session.list()[0]).toMatchObject({
+      acceptance: "unknown", acceptedSubmissions: 0,
+      cancellation: { knownNotDisabled: 0, coverageComplete: false },
+    });
+    const failed = await setup(async () => { throw new Error("synthetic start error"); });
+    await expect(failed.session.submit({ reentryPrompt: "Check" }, failed.home)).rejects.toThrow("synthetic start error");
+    expect(failed.session.list()[0]).toMatchObject({ acceptance: "unknown", acceptedSubmissions: 0 });
+    expect(failed.session.list()[0].cancellation).toBeUndefined();
+  });
+
+  it("keeps reminders grouped with anchored recurrence and partial cancellation facts", async () => {
+    let submitted = 0;
+    let commands = 0;
+    let first: BqInvocation | undefined;
+    const { session, home } = await setup(async (call) => {
+      commands++;
+      if (call.command !== "bq") return call.args[2] === "schedule-2" ? ok("", { code: 1 }) : ok();
+      first ??= call;
+      return ok(`bq: scheduled schedule-${++submitted} at=...\n`);
+    });
+    const result = await session.scheduleReminders("Review progress", home);
+    expect(session.list()).toEqual([expect.objectContaining({
+      id: result.id, kind: "reminders", acceptance: "confirmed", acceptedSubmissions: 24,
+      timing: { at: expect.any(String), every: "1h", count: 24 },
+      cancellation: { knownNotDisabled: 24, disabled: 0, coverageComplete: true, creating: false },
+    })]);
+    const separator = first!.args.indexOf("--");
+    await promisify(execFile)(first!.args[separator + 1], first!.args.slice(separator + 2), { env: first!.env });
+    expect(session.list()).toEqual([expect.objectContaining({
+      id: result.id, callbacks: 1, lastOutcome: { kind: "heartbeat" },
+      cancellation: expect.objectContaining({ knownNotDisabled: 24 }),
+    })]);
+    await session.cancel(result.id, home);
+    expect(session.list()[0].cancellation).toEqual({
+      knownNotDisabled: 1, disabled: 23, coverageComplete: true, creating: false,
+      lastAttemptConfirmed: false,
+    });
+    expect(commands).toBe(48);
   });
 
   it.each([
@@ -90,6 +172,10 @@ describe("human reminders and session-owned cancellation", () => {
     });
     const result = await session.scheduleReminders("check", home);
     expect(result).toMatchObject({ complete: false, accepted: 1 });
+    expect(session.list()).toEqual([expect.objectContaining({
+      id: result.id, kind: "reminders", acceptance: "unknown", acceptedSubmissions: 1,
+      cancellation: { knownNotDisabled: 2, disabled: 0, coverageComplete: false, creating: false },
+    })]);
     expect(created).toBe(2);
     expect(await session.cancel(result.id, home)).toMatchObject({ confirmed: false, disabled: 2, coverageComplete: false });
     expect(disabled).toEqual(["first", "second"]);
@@ -107,6 +193,7 @@ describe("human reminders and session-owned cancellation", () => {
     expect(cancellation).toMatchObject({ confirmed: false, disabled: 1, remaining: 1 });
     expect(cancellation.errors.join()).toContain("disable rejected");
     expect(calls).toEqual(["one", "two"]);
+    expect(session.list()[0].cancellation).toMatchObject({ disabled: 1, knownNotDisabled: 1, lastAttemptConfirmed: false });
   });
 
   it("rejects foreign IDs and closed sessions without Queue operations", async () => {
@@ -138,6 +225,9 @@ describe("human reminders and session-owned cancellation", () => {
     const result = await session.scheduleReminders("check", home);
     expect(result).toMatchObject({ accepted: 1, complete: false });
     expect(result.error).toContain("synthetic spawn failure");
+    expect(session.list()).toEqual([expect.objectContaining({
+      id: result.id, acceptance: "unknown", acceptedSubmissions: 1,
+    })]);
     await session.cancel(result.id, home);
     expect(disabled).toEqual(["first"]);
     expect(attempts).toBe(2);
@@ -154,6 +244,7 @@ describe("human reminders and session-owned cancellation", () => {
     expect(result).toMatchObject({ accepted: 1, complete: false });
     expect(calls).toBe(1);
     await expect(session.cancel(result.id, home)).rejects.toThrow("closed");
+    expect(session.list()).toEqual([]);
   });
 
   it("does not start disable commands after an abort", async () => {
@@ -170,6 +261,7 @@ describe("human reminders and session-owned cancellation", () => {
     const { session, home } = await setup(async () => ok("bq: scheduled one at=...\n", { stdoutTruncated: true }));
     const result = await session.submit({ reentryPrompt: "check", timing: { in: "1h" } }, home);
     expect(result.cancellation?.complete).toBe(false);
+    expect(session.list()[0]).toMatchObject({ acceptance: "confirmed", cancellation: { coverageComplete: false } });
     expect((await session.cancel(result.submissionId, home)).confirmed).toBe(false);
   });
 });

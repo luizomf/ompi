@@ -2,6 +2,7 @@ import {
   keyHint,
   type AgentToolResult,
   type ExtensionAPI,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
@@ -14,6 +15,7 @@ import {
   type SchedulerSubmissionResult,
   type SchedulerWake,
 } from "./scheduler.ts";
+import { schedulerSnapshot } from "./presentation.ts";
 
 const MAX_REENTRY_PROMPT_CHARACTERS = 8_000;
 const MAX_ARGUMENT_CHARACTERS = 8_000;
@@ -168,6 +170,12 @@ export function registerSchedulerExtension(
   options: SchedulerExtensionOptions = {},
 ): void {
   let session: SchedulerSession | undefined;
+  let ui: ExtensionContext["ui"] | undefined;
+  const refreshUi = () => {
+    if (!ui) return;
+    const count = session?.list().length ?? 0;
+    ui.setStatus("scheduler", count ? ui.theme.fg("muted", `scheduler: ${count} record${count === 1 ? "" : "s"} · /schedulelist`) : undefined);
+  };
 
   pi.registerFlag("no-scheduler", {
     description: "Disable the scheduler tool and callback endpoint for this Pi process",
@@ -247,6 +255,43 @@ export function registerSchedulerExtension(
     },
   });
 
+  pi.registerTool({
+    name: "scheduler_list",
+    label: "List Scheduler Records",
+    description: "Read a bounded snapshot of this live session's scheduler records, with requested timing, acceptance, cancellation coverage and observed callbacks. Each /schedule reminder group is one record. No Queue query or administration; known cancellation IDs may include past occurrences and are not pending jobs or official Queue state. Output is bounded to about 24 KB / 200 lines, with an offset for remaining records and marked oversized record previews.",
+    promptSnippet: "List session-local scheduler records and timing without querying OMQueue",
+    parameters: Type.Object({
+      offset: Type.Optional(Type.Integer({ minimum: 0, description: "Record offset returned by a previous snapshot; defaults to zero." })),
+    }, { additionalProperties: false }),
+    async execute(_id, { offset }) {
+      if (!session) throw new Error("Scheduler is unavailable for this session.");
+      const snapshot = schedulerSnapshot(session.list(), offset);
+      return { content: [{ type: "text", text: snapshot.text }], details: snapshot.details };
+    },
+    renderResult(result, { expanded }, _theme) {
+      const snapshot = result.details as ReturnType<typeof schedulerSnapshot>["details"] | undefined;
+      return new Text(expanded || !snapshot
+        ? toolResultText(result)
+        : `${snapshot.total} session-local scheduler records (not Queue state).\n${keyHint("app.tools.expand", "to expand")}`, 0, 0);
+    },
+  });
+
+  pi.registerCommand("schedulelist", {
+    description: "Show session-local scheduler records and timing (optional record offset)",
+    async handler(args, ctx) {
+      if (pi.getFlag("no-scheduler") === true || !session) {
+        ctx.ui.notify("Scheduler is disabled or unavailable for this session.", "error");
+        return;
+      }
+      const offset = args.trim() ? Number(args.trim()) : 0;
+      if (!Number.isSafeInteger(offset) || offset < 0) {
+        ctx.ui.notify("Usage: /schedulelist [OFFSET]", "error");
+        return;
+      }
+      ctx.ui.notify(schedulerSnapshot(session.list(), offset).text, "info");
+    },
+  });
+
   pi.registerCommand("schedule", {
     description: "Schedule PROMPT hourly for 24 reminders, first after one hour",
     async handler(prompt, ctx) {
@@ -287,18 +332,21 @@ export function registerSchedulerExtension(
     },
   });
 
-  pi.on("session_start", async () => {
+  pi.on("session_start", async (_event, ctx) => {
     const previous = session;
     session = undefined;
+    ui = ctx?.hasUI ? ctx.ui : undefined;
+    refreshUi();
     await previous?.close();
 
     if (pi.getFlag("no-scheduler") === true) {
-      pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "scheduler_submit" && name !== "scheduler_cancel"));
+      pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "scheduler_submit" && name !== "scheduler_cancel" && name !== "scheduler_list"));
       return;
     }
 
     session = await SchedulerSession.start({
       runBq: options.runBq,
+      onChange: refreshUi,
       onWake: (wake) => {
         pi.sendMessage({
           customType: "scheduler-wake",
@@ -313,6 +361,8 @@ export function registerSchedulerExtension(
   pi.on("session_shutdown", async () => {
     const closing = session;
     session = undefined;
+    ui?.setStatus("scheduler", undefined);
+    ui = undefined;
     await closing?.close();
   });
 }

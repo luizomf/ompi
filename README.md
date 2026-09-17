@@ -210,7 +210,7 @@ tools; this map lists the additional repository resources and extension tools.
 | `just core` | `bare` plus [`AGENTS.md`](AGENTS.md) as an appended system prompt | No repository tool |
 | `just research` | `core`-like instructions plus the `research` skill, Browser Fetch, and Codex Search | `browser_fetch` for rendered HTTP(S) retrieval; `codex_search` for exact-URL Codex retrieval, complex research, and image generation |
 | `just orchestrate` | `core`-like instructions plus `handoff`, `tmux-worker`, and `wormhole` skills; the latter two require an active tmux session | No repository tool beyond the `/exit` command |
-| `just scheduler` | `core`-like instructions plus Scheduler | `scheduler_submit`, `/schedule` reminders, and `scheduler_cancel` |
+| `just scheduler` | `core`-like instructions plus Scheduler | `scheduler_submit`, `/schedule` reminders, `scheduler_cancel`, and read-only `scheduler_list` / `/schedulelist` |
 | `just managed-processes` | `core`-like instructions plus Managed Processes | `managed_process_start`, `managed_process_list`, `managed_process_output`, and `managed_process_stop` |
 | `just subagents` | `core`-like instructions plus Subagents | `subagent_start`, `subagent_continue`, `subagent_steer`, `subagent_interrupt`, `subagent_status`, and `subagent_list` |
 
@@ -238,7 +238,8 @@ resource that Pi may discover, but no recipe selects it. Likewise, a standalone
 `pi --no-extensions --extension ...` command affects that Pi process only and is
 not another profile capability. If globally discovered Scheduler alone must be
 suppressed, `--no-scheduler` disables `scheduler_submit`, `scheduler_cancel`,
-`/schedule`, and the callback endpoint; it does not disable unrelated extensions.
+`scheduler_list`, `/schedule`, `/schedulelist`, and the callback endpoint; it does
+not disable unrelated extensions.
 
 ### Lifetime summary
 
@@ -513,9 +514,9 @@ canonical lifecycle and security contract.
 Its `scheduler_submit` tool is Pi's unified OMQueue-backed background runner and
 scheduler. When the extension is globally discovered but a process must not
 open its callback endpoint—for example, when Pi itself runs inside OMQueue—pass
-`--no-scheduler`. The flag removes `scheduler_submit` and `scheduler_cancel` from
-that process's active tools, disables `/schedule`, and skips callback endpoint
-startup:
+`--no-scheduler`. The flag removes `scheduler_submit`, `scheduler_cancel`, and
+`scheduler_list` from that process's active tools, disables `/schedule` and
+`/schedulelist`, and skips callback endpoint startup:
 
 ```sh
 pi --no-scheduler -p "Só teste. Responda OK"
@@ -558,6 +559,30 @@ The complete prompt plus suffix must fit 8,000 UTF-8 bytes. `/schedule` requires
 Handles live only until shutdown, reload, or session replacement. Durable
 schedules are not automatically disabled when Pi closes; later administration
 requires an explicitly authorized external Queue command.
+
+### Read-only session visibility
+
+Use `scheduler_list({})` for the agent or `/schedulelist` for a human snapshot.
+The native footer shows the number of **known session records**, not pending
+jobs. Each `/schedule` group stays one record, including partial creation.
+Details show a short quoted prompt preview, requested timing (delay, absolute
+start, finite recurrence, or cron/time zone), acceptance, confirmed submission
+count, known cancellation coverage and disables, and observed callback count
+with the last mechanical outcome. Callback observation does not prove that the
+agent has processed the wake or that Queue work has finished.
+
+These views read session memory only: no Queue lookup, polling, or administration.
+Stored Schedule IDs can include past occurrences; "known IDs not disabled" does
+not mean future occurrences or active Jobs. Records remain visible after a
+callback or cancellation and disappear with the live session, just like handles.
+No recurrence parser, next-run prediction, or official Queue state is inferred.
+
+List output is bounded to about 24 KB / 200 lines. When more records remain,
+the snapshot supplies `scheduler_list({ offset: N })` or `/schedulelist N`.
+Oversized individual record displays are marked as truncated; prompt previews
+are limited to 160 characters. Tool details are collapsed by default and expand
+with Pi's native tool expansion control. The footer is hidden when no records
+are known or Scheduler is disabled.
 
 ### Finite work and heartbeats
 
