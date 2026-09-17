@@ -62,13 +62,13 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
 }
 
 describe("scheduler extension", () => {
-  it("handles /schedule literally without sending a message or triggering a model turn", async () => {
+  it.each([true, false])("announces /schedule activation only after complete creation (%s)", async (complete) => {
     let handler: ((prompt: string, ctx: ExtensionContext) => Promise<void>) | undefined;
     const events = new Map<string, () => Promise<void>>();
     const notify = vi.fn();
     const sendMessage = vi.fn();
     const schedule = vi.spyOn(SchedulerSession.prototype, "scheduleReminders")
-      .mockResolvedValue({ id: "group", accepted: 24, complete: true });
+      .mockResolvedValue({ id: "group", accepted: complete ? 24 : 3, complete });
     const pi = {
       registerFlag: () => {}, getFlag: () => false, registerTool: () => {},
       registerMessageRenderer: () => {}, sendMessage,
@@ -83,8 +83,16 @@ describe("scheduler extension", () => {
       const prompt = "  literal prompt\nwith newlines  ";
       await handler?.(prompt, { cwd: "/tmp", ui: { notify } } as unknown as ExtensionContext);
       expect(schedule).toHaveBeenCalledWith(prompt, "/tmp");
-      expect(notify).toHaveBeenCalledWith(expect.stringContaining("24 hourly"), "info");
-      expect(sendMessage).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith(expect.any(String), complete ? "info" : "warning");
+      if (complete) {
+        expect(sendMessage).toHaveBeenCalledExactlyOnceWith({
+          customType: "scheduler-activated",
+          content: `[Schedule activated]\nThe user enabled 24 hourly reminders, starting in one hour,\nas a precaution for work already explained or currently in progress.\nThis is not a new task or a request to restart completed work.\nContinue using the conversation context and the reminder below.\n\nIf you think the task is complete, cancel this schedule using\nscheduler_cancel({ id: "group" }). If cancellation is unavailable\nor fails, reply only OK.\n\nReminder prompt:\n${prompt}`,
+          display: true,
+        }, { deliverAs: "followUp", triggerTurn: true });
+      } else {
+        expect(sendMessage).not.toHaveBeenCalled();
+      }
     } finally {
       schedule.mockRestore();
       await events.get("session_shutdown")?.();

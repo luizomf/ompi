@@ -524,8 +524,15 @@ pi --no-scheduler -p "Só teste. Responda OK"
 ### Human reminders and cancellation
 
 `/schedule PROMPT` creates exactly 24 hourly reminders, first after one hour
-(rounded up to a whole minute), without an LLM turn on creation. It uses the
-existing configured `bq`/OMQueue backend, not local timers. Each native follow-up
+(rounded up to a whole minute). Creation runs directly in the extension, then a
+successful creation immediately sends the agent a native follow-up activation
+notice with the literal prompt, cancellation ID, and completion/cancel/OK
+instruction. It explains that this is a precaution for work already explained or
+in progress, not a new task or a request to restart completed work. The notice
+triggers a turn when idle and queues normally when busy; it does not consume any
+of the 24 reminders. Incomplete creation only reports its existing UI warning,
+not a successful activation notice. It uses the existing configured `bq`/OMQueue
+backend, not local timers. Each native follow-up
 wake carries the literal prompt and this suffix, with its actual ordinal and
 stable cancellation ID:
 

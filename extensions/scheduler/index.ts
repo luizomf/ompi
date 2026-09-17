@@ -261,6 +261,26 @@ export function registerSchedulerExtension(
           `Cancellation ID: ${result.id}.`,
           result.error ?? "",
         ].filter(Boolean).join("\n"), result.complete ? "info" : "warning");
+        if (result.complete) {
+          pi.sendMessage({
+            customType: "scheduler-activated",
+            content: [
+              "[Schedule activated]",
+              "The user enabled 24 hourly reminders, starting in one hour,",
+              "as a precaution for work already explained or currently in progress.",
+              "This is not a new task or a request to restart completed work.",
+              "Continue using the conversation context and the reminder below.",
+              "",
+              "If you think the task is complete, cancel this schedule using",
+              `scheduler_cancel({ id: "${result.id}" }). If cancellation is unavailable`,
+              "or fails, reply only OK.",
+              "",
+              "Reminder prompt:",
+              prompt,
+            ].join("\n"),
+            display: true,
+          }, { deliverAs: "followUp", triggerTurn: true });
+        }
       } catch (error) {
         ctx.ui.notify(String(error), "error");
       }

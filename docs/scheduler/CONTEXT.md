@@ -63,7 +63,13 @@ _Avoid_: Queue completion event, watcher result, durable notification
 **Human reminder schedule**:
 `/schedule PROMPT` creates 24 hourly, payload-free occurrences with the first
 one after one hour (rounded up to a whole minute). The command handler submits
-directly, without an LLM turn. Each occurrence preserves the literal command
+directly. After complete acceptance, it sends a native follow-up activation
+notice with `triggerTurn: true`, the literal prompt, cancellation handle, and
+completion/cancel/OK instruction. The notice explains that the reminders are a
+precaution for work already explained or in progress, not a new task or a request
+to restart completed work. This immediate notice is additional to the 24 timed
+reminders; incomplete creation retains its UI warning without announcing success.
+Each occurrence preserves the literal command
 argument and appends the numbered cancellation instruction from issue #54.
 The 24 one-time submissions share one cancellation handle and an anchored hourly
 timeline. Separate submissions keep ordinals explicit without runner counters,
