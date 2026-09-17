@@ -109,6 +109,11 @@ asynchronously. Read the selected context document before changing one.
    test, or repository documentation.
 5. Review the exact diff and leave the working tree understandable. Do not mix
    unrelated changes.
+6. Create new Git worktrees only under
+   `~/sannux-data/worktrees/<repo>/<worktree_name>`, never inside the checkout
+   or in a sibling directory. This central root is host-local and excluded by
+   `synchosts`; transfer a worktree explicitly when another host needs it. Do
+   not relocate existing worktrees solely to apply this rule.
 
 Before reviewing, updating, or commenting on a pull request, verify its current
 state. Treat merged or closed pull requests as read-only historical records: do
