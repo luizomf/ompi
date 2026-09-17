@@ -449,7 +449,12 @@ describe("scheduler submission", () => {
         });
 
         expect(runner).toMatchObject({ code: 0, signal: null, stderr: "" });
-        expect(JSON.parse(runner.stdout)).toEqual({
+        const payloadEnvironment = JSON.parse(runner.stdout);
+        // A bare Node child with env: {} also gains this metadata on macOS.
+        // Its value is host-owned, not runner propagation. Keep exact equality
+        // for every other key so credentials and unrelated settings still fail.
+        if (process.platform === "darwin") delete payloadEnvironment.__CF_USER_TEXT_ENCODING;
+        expect(payloadEnvironment).toEqual({
           HOME: cwd,
           PROJECTS_DIR: join(cwd, "projects"),
           PATH: [nodeDirectory, hostPath].join(delimiter),
