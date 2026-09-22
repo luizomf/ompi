@@ -779,7 +779,7 @@ describe("subagent routing inheritance", () => {
       expect(tool.parameters.properties).not.toHaveProperty("thinking");
       expect(tool.parameters.properties.model.minLength).toBe(1);
       expect(tool.parameters.properties.model.description).toContain("<provider>/<model>");
-      expect(tool.parameters.properties.model.description).toContain("openai-codex/gpt-5.6-luna");
+      expect(tool.parameters.properties.model.description).toContain("openai-codex/gpt-6-luna");
       expect(tool.parameters.properties.reasoning.enum).toEqual([
         "off", "minimal", "low", "medium", "high", "xhigh", "max",
       ]);
@@ -794,7 +794,7 @@ describe("subagent routing inheritance", () => {
       expect(tool.promptGuidelines.join(" ")).toContain("qualified <provider>/<model> form");
       expect(tool.promptGuidelines.join(" ")).toContain("Omit every unrequested override");
       expect(tool.promptGuidelines.join(" ")).toContain("parent's active route");
-      expect(tool.promptGuidelines.join(" ")).not.toContain("openai-codex/gpt-5.6-sol");
+      expect(tool.promptGuidelines.join(" ")).not.toContain("openai-codex/gpt-6-sol");
       expect(tool.promptGuidelines.join(" ")).toContain("PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL");
       expect(tool.promptGuidelines.join(" ")).toContain("Do not inspect routing on ordinary turns");
       expect(tool.promptGuidelines.join(" ")).toContain("selected mechanically from runtime mode and managed lineage");
@@ -1189,9 +1189,9 @@ describe("subagent routing inheritance", () => {
 
     await expect(start.execute("start", {
       prompt: "one",
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
     }, undefined, undefined, ctx)).rejects.toThrow(
-      'Explicit subagent model overrides must use "<provider>/<model>". Example: "openai-codex/gpt-5.6-luna".',
+      'Explicit subagent model overrides must use "<provider>/<model>". Example: "openai-codex/gpt-6-luna".',
     );
     expect(rpc.invocations).toEqual([]);
   });
@@ -1224,7 +1224,7 @@ describe("subagent routing inheritance", () => {
     await expect(continuation.execute("continue", {
       id: 1,
       prompt: "two",
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
     }, undefined, undefined, ctx)).rejects.toThrow("<provider>/<model>");
     expect(rpc.invocations).toHaveLength(1);
   });
@@ -1310,7 +1310,7 @@ describe("subagent routing inheritance", () => {
   it("rejects invalid JSON slash-command routing before launch", async () => {
     const { commands, ctx, notifications } = setup();
 
-    await commands.get("sub").handler('{"prompt":"one","model":"gpt-5.6-luna"}', ctx);
+    await commands.get("sub").handler('{"prompt":"one","model":"gpt-6-luna"}', ctx);
     await commands.get("sub").handler('{"prompt":"two","model":""}', ctx);
     await commands.get("sub").handler('{"prompt":"three","reasoning":"extreme"}', ctx);
 

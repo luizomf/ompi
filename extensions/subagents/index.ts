@@ -79,7 +79,7 @@ const StartSchema = Type.Object({
   name: Type.Optional(Type.String({ description: "Native Pi session display name" })),
   model: Type.Optional(Type.String({
     minLength: 1,
-    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the parent\'s active model',
+    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-6-luna"; omit to inherit the parent\'s active model',
   })),
   reasoning: Type.Optional(ReasoningSchema),
   cwd: Type.Optional(Type.String({ description: "Initial working directory; fixed for this conversation" })),
@@ -94,7 +94,7 @@ const ContinueSchema = Type.Object({
   prompt: Type.String({ description: "Prompt for the next turn in the existing conversation" }),
   model: Type.Optional(Type.String({
     minLength: 1,
-    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-5.6-luna"; omit to inherit the parent\'s active model',
+    description: 'Explicit override in "<provider>/<model>" form, for example "openai-codex/gpt-6-luna"; omit to inherit the parent\'s active model',
   })),
   reasoning: Type.Optional(ReasoningSchema),
   tools: Type.Optional(ToolsSchema),
@@ -133,7 +133,7 @@ function selectedModel(value: unknown, ctx: ExtensionContext): string {
   if (value === undefined) return activeModel(ctx);
   if (typeof value !== "string" || !/^[^/\s]+\/\S+$/.test(value)) {
     throw new Error(
-      'Explicit subagent model overrides must use "<provider>/<model>". Example: "openai-codex/gpt-5.6-luna".',
+      'Explicit subagent model overrides must use "<provider>/<model>". Example: "openai-codex/gpt-6-luna".',
     );
   }
   return value;

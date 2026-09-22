@@ -819,7 +819,7 @@ neither value can be raised. For example:
 ```text
 /sub Inspect the authentication flow and report risks.
 /sub {"prompt":"Run the focused tests","name":"tests","tools":["read","bash"]}
-/sub {"prompt":"Inspect memory handling","model":"openai-codex/gpt-5.6-luna","reasoning":"high"}
+/sub {"prompt":"Inspect memory handling","model":"openai-codex/gpt-6-luna","reasoning":"high"}
 /sub {"prompt":"Record a delivery preference; root TUI remains async","delivery":"direct","maxDepth":2,"maxChildren":0}
 /subcont {"id":1,"prompt":"Continue; root TUI still remains async","delivery":"direct"}
 /subcont 1 Check the newly changed files.
