@@ -72,7 +72,7 @@ async function runParentLeavingDescendant(
 }
 
 describe("codex_search process wrapper", () => {
-  it("routes exact-URL retrieval through unsandboxed GPT-6 Astra with high reasoning", () => {
+  it("routes exact-URL retrieval through unsandboxed GPT-6 Astra with medium reasoning", () => {
     const signal = new AbortController().signal;
     const request = buildCodexSearchRequest(
       "fetch and extract https://example.com/source",
@@ -90,7 +90,7 @@ describe("codex_search process wrapper", () => {
       "--model",
       "gpt-6-astra",
       "--config",
-      "model_reasoning_effort=high",
+      "model_reasoning_effort=medium",
       "--skip-git-repo-check",
       "--cd",
       "/repo",
@@ -107,7 +107,7 @@ describe("codex_search process wrapper", () => {
     expect(request).not.toHaveProperty("shell");
   });
 
-  it("routes complex research through unsandboxed GPT-6 Astra with high reasoning", () => {
+  it("routes complex research through unsandboxed GPT-6 Astra with medium reasoning", () => {
     const request = buildCodexSearchRequest(
       "compare the primary sources",
       "/repo",
@@ -122,7 +122,7 @@ describe("codex_search process wrapper", () => {
       "--model",
       "gpt-6-astra",
       "--config",
-      "model_reasoning_effort=high",
+      "model_reasoning_effort=medium",
       "--skip-git-repo-check",
       "--cd",
       "/repo",
@@ -131,7 +131,7 @@ describe("codex_search process wrapper", () => {
     expect(request.input).toBe("compare the primary sources");
   });
 
-  it("routes image generation through unsandboxed GPT-6 Astra and passes its destination on stdin", () => {
+  it("routes image generation through unsandboxed GPT-6 Astra with medium reasoning and passes its destination on stdin", () => {
     const request = buildCodexSearchRequest(
       "Generate a cinematic mountain landscape",
       "/repo",
@@ -147,7 +147,7 @@ describe("codex_search process wrapper", () => {
       "--model",
       "gpt-6-astra",
       "--config",
-      "model_reasoning_effort=high",
+      "model_reasoning_effort=medium",
       "--skip-git-repo-check",
       "--cd",
       "/repo",

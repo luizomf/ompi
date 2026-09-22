@@ -125,7 +125,7 @@ export function buildCodexSearchRequest(
         "--model",
         "gpt-6-astra",
         "--config",
-        "model_reasoning_effort=high",
+        "model_reasoning_effort=medium",
       ]
     : [
         "--profile",
@@ -134,7 +134,7 @@ export function buildCodexSearchRequest(
         "--model",
         "gpt-6-astra",
         "--config",
-        "model_reasoning_effort=high",
+        "model_reasoning_effort=medium",
       ];
   args.push("--skip-git-repo-check", "--cd", cwd, "-");
 

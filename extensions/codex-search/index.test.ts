@@ -60,8 +60,8 @@ describe("codex_search background delivery", () => {
     expect(messages).toEqual([]);
     expect(tool.description).toContain("asynchronously");
     expect(tool.description).toMatch(/completion may arrive later.*owning Pi session remains live/i);
-    expect(tool.description).toMatch(/exact-URL retrieval.*GPT-6 Astra.*high.*complex research.*GPT-6 Astra.*high.*image generation.*GPT-6 Astra.*high/is);
-    expect(tool.parameters.properties.intent.description).toMatch(/exact_url, research, and image.*GPT-6 Astra.*high/i);
+    expect(tool.description).toMatch(/exact-URL retrieval.*GPT-6 Astra.*medium.*complex research.*GPT-6 Astra.*medium.*image generation.*GPT-6 Astra.*medium/is);
+    expect(tool.parameters.properties.intent.description).toMatch(/exact_url, research, and image.*GPT-6 Astra.*medium/i);
     expect(tool.description).toMatch(/every.*unsandboxed/i);
     expect(tool.parameters.properties.intent.anyOf.map((item: { const: string }) => item.const)).toEqual([
       "exact_url",
