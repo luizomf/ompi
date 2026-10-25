@@ -7,7 +7,7 @@ Read only the contexts that intersect the accepted request.
 | --- | --- | --- |
 | Session Background Tools | Selected finite tool work with synchronous print-mode results or one later session-scoped result outside print mode; each tool retains its own effect boundary | [Session Background Tools](./docs/background-tools/CONTEXT.md) |
 | Managed Processes | Genuinely long-running local processes with explicit start, snapshot, output, and stop operations | [Managed Processes](./docs/managed-processes/CONTEXT.md) |
-| Pi Scheduler | Immediate or timed finite OMQueue work, heartbeats, repeats, cron, and best-effort wakes into a live Pi session | [Pi Scheduler](./docs/scheduler/CONTEXT.md) |
+| Pi Scheduler | Immediate or timed finite OMQueue work that needs a Pi wake; heartbeats, reminders, and routing boundaries with fire-and-forget submissions | [Pi Scheduler](./docs/scheduler/CONTEXT.md) |
 | Pi Subagents | Independent native Pi conversations, routing inheritance, steering, interruption, and mode-dependent direct results or completion pongs | [Pi Subagents](./docs/subagents/CONTEXT.md) |
 
 This file owns the current context inventory and one-line routing descriptions.

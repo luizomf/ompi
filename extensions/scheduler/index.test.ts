@@ -320,6 +320,20 @@ describe("scheduler extension", () => {
     expect(discovery).toContain("required best-effort wake");
     expect(discovery).not.toContain("Use scheduler_submit only for fire-and-forget scheduler wakes");
 
+    // Routing is model-facing behavior: assert the exposed lifecycle contract.
+    const fireAndForget = (tool.promptGuidelines ?? []).find((rule) => rule.startsWith("Fire-and-forget")) ?? "";
+    expect(fireAndForget).toMatch(/any authorized task/i);
+    expect(fireAndForget).toMatch(/request or selected workflow/i);
+    expect(fireAndForget).toMatch(/no result, monitoring, stop operation, or reentry/i);
+    expect(fireAndForget).toMatch(/ordinary bash.*submission command.*raw bq/i);
+    expect(fireAndForget).toMatch(/immediate, delayed, or recurring/i);
+    expect(fireAndForget).toMatch(/not just voice/i);
+    expect(fireAndForget).toMatch(/no scheduler_submit, managed_process_start, callback, reminder, wait, or polling/i);
+    expect(discovery).toMatch(/configured fire-and-forget.*without executable discovery, script reads, environment inspection, or runtime checks/i);
+    expect(discovery).toMatch(/Before submitting a scheduler_submit payload, inspect/i);
+    expect(discovery).not.toMatch(/ordinary bash only when the user explicitly asks/i);
+    expect(tool.description).toMatch(/fire-and-forget.*ordinary bash/i);
+
     const reentryGuidance = tool.parameters.properties?.reentryPrompt?.description ?? "";
     expect(reentryGuidance).toContain("complete, self-contained trusted reentry instruction");
     expect(reentryGuidance).toContain("Restore the deferred context");

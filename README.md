@@ -505,15 +505,18 @@ and output calls are concrete snapshots, not polling or wait operations. Use
 ordinary bash instead for finite work that should
 complete synchronously in the current turn. Use `scheduler_submit` for fixed,
 non-interactive finite work that should run through OMQueue and wake Pi after its
-outcome. See [Managed Processes](docs/managed-processes/CONTEXT.md) for the
-canonical lifecycle and security contract.
+outcome. Fire-and-forget work instead uses ordinary bash for direct submission;
+it needs neither a managed process nor a completion wake. See
+[Managed Processes](docs/managed-processes/CONTEXT.md) for the canonical lifecycle
+and security contract.
 
 ## OMQueue background runner and scheduler
 
 `just scheduler` explicitly enables the extension in `extensions/scheduler/`.
-Its `scheduler_submit` tool is Pi's unified OMQueue-backed background runner and
-scheduler. When the extension is globally discovered but a process must not
-open its callback endpoint—for example, when Pi itself runs inside OMQueue—pass
+Its `scheduler_submit` tool runs OMQueue-backed work that needs a Pi wake; it is
+not the route for fire-and-forget submissions. When the extension is globally
+discovered but a process must not open its callback endpoint—for example, when
+Pi itself runs inside OMQueue—pass
 `--no-scheduler`. The flag removes `scheduler_submit`, `scheduler_cancel`, and
 `scheduler_list` from that process's active tools, disables `/schedule` and
 `/schedulelist`, and skips callback endpoint startup:
@@ -591,13 +594,28 @@ is omitted, or after a delay, at an absolute time, as a finite
 repeat, or on cron when timing is present. Omitting the payload creates a
 heartbeat, reminder, or deferred-recheck wake.
 
-Immediate Queue submission is not a blanket replacement for synchronous bash. A
-trivial finite command such as `ls` is normally simpler to run directly. The
-scheduler is useful when finite work should continue outside the current turn
-and Pi should wake automatically after it terminates. Use managed processes
-instead for genuinely long-running servers, watchers, tails, or development
-processes that need explicit snapshots and stop operations and do not emit a
-completion wake.
+Route by the lifecycle required by the request or selected workflow:
+
+| Required lifecycle | Route |
+| --- | --- |
+| Finish finite work and use its result in this turn | Ordinary bash |
+| Submit work and leave it to the configured executor, with no result, monitoring, stop operation, or reentry needed in Pi | Ordinary bash invoking the supplied or configured submission command directly; raw `bq` for Queue work |
+| Run finite Queue work and wake Pi to handle the outcome, or wake Pi for a reminder/recheck | `scheduler_submit` |
+| Keep a local server, watcher, tail, or development process with explicit snapshots and stop operations | `managed_process_start` |
+
+The second route is **fire-and-forget**, for any authorized task—not just voice.
+It applies equally to immediate, delayed, and recurring work. Background
+execution or timing alone does not imply a Pi wake; needing to verify or use the
+result is not fire-and-forget. Submit once and continue after acceptance, without
+scheduler or managed-process wrappers, completion callbacks, reminders, waits,
+or polling. Acceptance does not confirm completion.
+
+For configured fire-and-forget commands, skip executable discovery, script
+reads, environment inspection, and runtime checks. Scheduler payload preflight
+belongs only to scheduler submissions; managed-process preflight belongs only
+to managed processes. Preserve ordinary authorization, safe quoting, and
+data-disclosure boundaries. Report a submission error without automatic retry
+or duplicating an uncertain submission.
 
 The extension invokes the existing global `bq` executable directly without a
 shell and labels every Queue Job or Schedule as
@@ -707,11 +725,12 @@ submissions inherit the user's command authority and are not sandboxed. This
 extension is not enabled by any unrelated launch profile or by package discovery
 in this repository. When loaded through global discovery, `--no-scheduler`
 disables its tools, slash command, and callback endpoint for the current Pi
-process without disabling other extensions. Equivalent `bq` syntax supplied as an example does
-not by itself select ordinary bash; route by whether the requested work should run
-through the Queue and wake Pi. For `bq`-related requests, use ordinary bash only
-when the user explicitly asks to invoke, test, debug, or inspect the raw `bq` CLI
-or administer OMQueue.
+process without disabling other extensions. Equivalent `bq` syntax supplied as
+an example does not by itself determine the lifecycle. Fire-and-forget intent
+established by the request or selected workflow is sufficient for direct
+submission; the user need not separately request raw-CLI invocation. Explicit
+raw `bq` CLI invocation, testing, debugging, inspection, and OMQueue
+administration also remain ordinary bash work.
 
 ## Subagents
 

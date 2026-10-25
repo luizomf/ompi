@@ -94,15 +94,26 @@ _Avoid_: Pending Job, active Schedule, Queue history, official Queue state
 - `bq` owns timing syntax, timing validation, durable Job or Schedule
   acceptance, and OMQueue integration.
 - Lifecycle intent controls routing. Ordinary bash owns finite work that should
-  complete synchronously in the current turn. `scheduler_submit` owns fixed,
-  non-interactive finite work that should run through OMQueue now or later and
-  wake Pi after its outcome. `managed_process_start` owns genuinely long-running
-  servers, watchers, tails, and development processes with explicit snapshot and
-  stop operations and no automatic completion wake.
-- Immediate scheduler submission is not a blanket replacement for synchronous
-  bash. It is useful when Queue-backed background execution and an automatic
-  best-effort completion wake matter; a trivial current-turn command is normally
-  simpler through ordinary bash.
+  complete synchronously in the current turn and direct fire-and-forget
+  submissions. `scheduler_submit` owns fixed, non-interactive finite work whose
+  requested lifecycle needs OMQueue execution now or later and a Pi wake after
+  its outcome. `managed_process_start` owns genuinely long-running servers,
+  watchers, tails, and development processes with explicit snapshot and stop
+  operations and no automatic completion wake.
+- Fire-and-forget is any authorized task whose request or selected workflow ends
+  the agent's responsibility at submission: no result, monitoring, stop
+  operation, or reentry in Pi is needed. Use ordinary bash to invoke the supplied
+  or configured submission command directly, including raw `bq` for Queue work.
+  This applies to immediate, delayed, and recurring work, not just voice. Timing
+  and background execution alone do not imply a wake. Continue after acceptance
+  without a scheduler wrapper, managed process, callback, reminder, wait, or
+  polling; acceptance is not completion. A task whose result the agent must
+  verify or use is not fire-and-forget merely because it runs in the background.
+- Scheduler payload preflight applies only to `scheduler_submit`. For configured
+  fire-and-forget work, submit without executable discovery, script reads,
+  environment inspection, or runtime checks. Ordinary authorization, safe
+  quoting, and data-disclosure boundaries still apply. Report submission errors
+  without automatic retry; do not duplicate an uncertain submission.
 - OMQueue execution remains opaque to the scheduler extension. The only direct
   Queue mutation is session-owned `schedule disable <schedule-id> --json`, through
   `BQ_OMQUEUE` (default `omqueue`), using the same selected environment as `bq`.
@@ -177,11 +188,12 @@ _Avoid_: Pending Job, active Schedule, Queue history, official Queue state
 - The extension never calls `omqueue watch`, polls Job state, reads the Queue
   database, or exposes Job cancellation, retry, history, output retrieval, or
   other Queue administration.
-- Equivalent `bq` syntax supplied as an example does not by itself select
-  ordinary bash. Use `scheduler_submit` when the requested lifecycle is Queue
-  background execution, scheduling, repetition, heartbeat, reminder, or deferred
-  recheck. For `bq`-related requests, reserve ordinary bash for explicit raw-CLI
-  invocation, testing, debugging, inspection, or OMQueue administration.
+- Equivalent `bq` syntax supplied as an example does not by itself determine
+  the lifecycle. Apply the fire-and-forget route when the request or selected
+  workflow establishes it; no separate raw-CLI request is needed. Explicit
+  raw-CLI invocation, testing, debugging, inspection, or OMQueue administration
+  also uses ordinary bash. Heartbeats, reminders, and deferred rechecks that
+  should wake Pi remain scheduler work.
 - Scheduler wakes are best effort and session-scoped. Closing Pi, host loss,
   forced runner termination, or failure before the runner starts can prevent a
   wake. Durable schedules and payloads may continue after the owning Pi session

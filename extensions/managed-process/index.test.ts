@@ -36,6 +36,9 @@ describe("managed-process extension", () => {
     expect(discovery).toContain("run through OMQueue and wake Pi after its outcome");
     expect(discovery).toContain("finite work that should complete synchronously in the current turn");
     expect(discovery).not.toContain("use ordinary bash for finite commands");
+    expect(discovery).toMatch(/fire-and-forget.*ordinary bash.*submission command/i);
+    expect(discovery).toMatch(/no result, monitoring, stop operation, or reentry/i);
+    expect(discovery).toMatch(/not a managed process.*no managed-process preflight/i);
   });
 
   it("keeps every active process visible while bounding terminal history and JSON-expanded detail fields", async () => {
