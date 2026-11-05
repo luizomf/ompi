@@ -770,7 +770,7 @@ describe("subagent routing inheritance", () => {
     expect(rpc.children[2].closed).toBe(true);
   });
 
-  it("exposes opt-in routing schemas and default-routing guidance", () => {
+  it("exposes user-first task routing with inheritance only as the final fallback", () => {
     const { tools } = setup();
 
     for (const name of ["subagent_start", "subagent_continue"]) {
@@ -788,11 +788,17 @@ describe("subagent routing inheritance", () => {
       expect(tool.description).toContain("root TUI is async");
       expect(tool.description).toContain("managed nested lineage are direct");
       expect(tool.description).toContain("root RPC defaults async while honoring explicit direct");
-      expect(tool.description).toContain("explicit user request");
+      expect(tool.description).toContain("user instructions, applicable routing documents, then task-based judgment");
       expect(tool.description).toContain("<provider>/<model>");
-      expect(tool.promptGuidelines.join(" ")).toContain("only when the user explicitly requests");
-      expect(tool.promptGuidelines.join(" ")).toContain("qualified <provider>/<model> form");
-      expect(tool.promptGuidelines.join(" ")).toContain("Omit every unrequested override");
+      const guidance = tool.promptGuidelines.join(" ");
+      expect(guidance).toContain("user instructions first");
+      expect(guidance).toContain("applicable documents and skills");
+      expect(guidance).toContain("difficulty, uncertainty, cost, and verification needs");
+      expect(guidance).toContain("Standing instructions remain applicable across starts and continuations");
+      expect(guidance).toContain("Reapply the selected values on each call");
+      expect(guidance).toContain("Only when those sources and task-based judgment leave a value undecided");
+      expect(guidance).not.toMatch(/only when the user explicitly requests|Omit every unrequested override|Unless the user explicitly requests routing/);
+      expect(guidance).toContain("qualified <provider>/<model> form");
       expect(tool.promptGuidelines.join(" ")).toContain("parent's active route");
       expect(tool.promptGuidelines.join(" ")).not.toContain("openai-codex/gpt-6.1-sol");
       expect(tool.promptGuidelines.join(" ")).toContain("PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL");

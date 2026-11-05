@@ -818,9 +818,15 @@ print and managed nested calls cannot become async through conflicting input.
 Each omitted routing value inherits the parent's active value when that turn is
 dispatched. An explicit `model` override must use the qualified
 `provider/model` form; bare or malformed values are rejected before child
-launch. Optional `model` and `reasoning` overrides apply to one dispatch only
-and must be supplied only when the user explicitly requests that routing. The
-live subagent widget and `/sublist` output show the effective routing values.
+launch. Choose `model` and `reasoning` from user instructions first, applicable
+routing documents and skills second, and task-based judgment third (difficulty,
+uncertainty, cost, and verification needs among available routes). Inherit only
+when those sources and judgment leave a value undecided. Standing instructions
+remain applicable within their scope until superseded, without a new user
+request for every dispatch. Reapply the selected values on each start and
+continuation: the tool does not persist routing policy, and omission inherits
+from the current parent, not the child's previous route. The live subagent
+widget and `/sublist` output show the effective routing values.
 `subagent_list` and `/sublist` use the same bounded presentation: they return up
 to 20 direct known conversations, always retain active entries, fill the
 remaining space with the most recent inactive entries, report omissions, cap

@@ -112,9 +112,19 @@ turn is dispatched. Agent-facing tools and command JSON may provide an
 explicit model override only as a qualified `provider/model` selector, such as
 `openai-codex/gpt-6-luna`. Bare or malformed model overrides are rejected
 before child launch. A supported `reasoning` level may also be provided for that
-dispatch only. The parent agent must omit these overrides unless the user
-explicitly requests that routing. An override never becomes a default for later
-continuations.
+dispatch only. The parent agent selects model and reasoning independently:
+user instructions first, then applicable routing documents and skills, then
+its judgment of the task's difficulty, uncertainty, cost, and verification
+needs among available models and supported reasoning levels. Only when these
+sources and task-based judgment leave a value undecided does the agent omit it
+and inherit the parent's active value.
+
+Standing instructions remain applicable within their stated scope until
+superseded; the user need not repeat them for every dispatch. The agent reapplies
+the selected values on every start and continuation. The extension does not
+interpret documents or persist a routing policy: an omitted continuation value
+inherits from the current parent, not the child's previous route. No fixed
+model ranking or task-to-model table is embedded in the extension.
 
 ## Mode contract
 
