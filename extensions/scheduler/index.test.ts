@@ -75,8 +75,8 @@ describe("scheduler extension", () => {
       statuses.push(pending!);
     });
     const duringDelivery: number[] = [];
-    const sendMessage = vi.fn(() => { duringDelivery.push(statuses.at(-1)!.count); });
-    const ctx = { cwd: tmpdir(), mode: "rpc", hasUI, ui: { setStatus } } as unknown as ExtensionContext;
+    const sendMessage = vi.fn((_message: unknown) => { duringDelivery.push(statuses.at(-1)!.count); });
+    const ctx = { cwd: tmpdir(), mode: "rpc", hasUI, isIdle: () => true, ui: { setStatus } } as unknown as ExtensionContext;
     let invocation!: BqInvocation;
     const pi = {
       registerFlag: () => {}, getFlag: () => false, registerMessageRenderer: () => {}, registerCommand: () => {},
@@ -100,11 +100,13 @@ describe("scheduler extension", () => {
       expect(JSON.stringify(statuses)).not.toMatch(/private reentry|capability|wake.sock/);
       await runQueuedInvocation(invocation);
       expect(statuses.at(-1)?.count).toBe(2); // One unresolved, one queued wake.
-      await events.get("agent_start")!({}, ctx);
-      expect(statuses.at(-1)?.count).toBe(1); // Starting a run must not clear raw obligations.
+      await events.get("message_start")!({ message: { role: "custom", ...sendMessage.mock.calls.at(-1)![0] as object } }, ctx);
+      await events.get("agent_settled")!({}, ctx);
+      expect(statuses.at(-1)?.count).toBe(1); // Consuming a wake must not clear raw obligations.
       await runQueuedInvocation(invocation);
       expect(statuses.at(-1)?.count).toBe(1); // Last wake has not started processing yet.
-      await events.get("agent_start")!({}, ctx);
+      await events.get("message_start")!({ message: { role: "custom", ...sendMessage.mock.calls.at(-1)![0] as object } }, ctx);
+      await events.get("agent_settled")!({}, ctx);
       expect(duringDelivery).toEqual([2, 1]);
       expect(statuses.at(-1)).toEqual({ count: 0, pendingIds: [], omitted: 0 });
       expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ customType: "scheduler-wake" }), { deliverAs: "followUp", triggerTurn: true });
@@ -129,8 +131,10 @@ describe("scheduler extension", () => {
     const tools = new Map<string, RegisteredTool>();
     const events = new Map<string, (event: unknown, ctx: ExtensionContext) => void | Promise<void>>();
     let latest: SchedulerPending | undefined;
+    let idle = true;
+    let sent: object;
     const ctx = {
-      cwd: tmpdir(), mode: "rpc", hasUI: false,
+      cwd: tmpdir(), mode: "rpc", hasUI: false, isIdle: () => idle,
       ui: { setStatus: (_key: string, text: string) => { latest = parseSchedulerPending(text); } },
     } as unknown as ExtensionContext;
     let invocation!: BqInvocation;
@@ -139,10 +143,11 @@ describe("scheduler extension", () => {
       registerFlag: () => {}, getFlag: () => false, registerMessageRenderer: () => {}, registerCommand: () => {},
       registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
       on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>) => events.set(name, handler),
-      sendMessage: () => {
+      sendMessage: (message: object) => {
+        sent = message;
         expect(latest?.count).toBe(1);
         if (fail) throw new Error("delivery failed");
-        if (delivery === "synchronous") events.get("agent_start")!({}, ctx);
+        if (delivery === "synchronous") events.get("message_start")!({ message: { role: "custom", ...sent } }, ctx);
       },
     } as unknown as ExtensionAPI;
     registerSchedulerExtension(pi, { runBq: async (call) => {
@@ -152,11 +157,11 @@ describe("scheduler extension", () => {
     try {
       await events.get("session_start")!({}, ctx);
       await tools.get("scheduler_submit")!.execute("submit", { reentryPrompt: "Check callback" }, undefined, undefined, ctx);
-      await events.get("agent_start")!({}, ctx);
-      expect(latest?.count).toBe(1); // Unrelated starts do not erase unresolved occurrences.
+      await events.get("agent_settled")!({}, ctx);
+      expect(latest?.count).toBe(1); // Unrelated settlement does not erase unresolved occurrences.
       if (fail) {
         await expect(runQueuedInvocation(invocation)).rejects.toThrow("callback runner failed");
-        await events.get("agent_start")!({}, ctx);
+        await events.get("agent_settled")!({}, ctx);
         expect(latest?.count).toBe(1); // Failed delivery still owns the raw obligation.
         fail = false;
       }
@@ -166,8 +171,13 @@ describe("scheduler extension", () => {
         // this wake but before starting the next run. That is not terminal.
         await events.get("agent_settled")?.({}, ctx);
         expect(latest?.count).toBe(1);
-        await events.get("agent_start")!({}, ctx);
+        await events.get("message_start")!({ message: { role: "custom", ...sent! } }, ctx);
       }
+      idle = false;
+      await events.get("agent_settled")!({}, ctx);
+      expect(latest?.count).toBe(1); // A stale settled hook cannot release a busy run.
+      idle = true;
+      await events.get("agent_settled")!({}, ctx);
       expect(latest).toEqual({ count: 0, pendingIds: [], omitted: 0 });
     } finally {
       await events.get("session_shutdown")!({}, ctx);

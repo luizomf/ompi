@@ -174,7 +174,7 @@ export function registerSchedulerExtension(
   let session: SchedulerSession | undefined;
   let ui: ExtensionContext["ui"] | undefined;
   let rpcUi: ExtensionContext["ui"] | undefined;
-  const deliveryHolds = new Map<string, SchedulerDeliveryHold>();
+  const deliveryHolds = new Map<string, SchedulerDeliveryHold & { consumed: boolean }>();
   const refreshUi = () => {
     rpcUi?.setStatus(SCHEDULER_STATUS_KEY, encodeSchedulerPending(
       session?.pending(deliveryHolds.values()) ?? { count: 0, pendingIds: [], omitted: 0 },
@@ -365,11 +365,11 @@ export function registerSchedulerExtension(
       runBq: options.runBq,
       onChange: refreshUi,
       onWake: (wake) => {
-        // sendMessage may start a run synchronously, or defer it until all old
-        // agent_settled hooks finish. Reserve before sending; only agent_start
-        // releases successful delivery holds, never the old settled event.
-        const hold: SchedulerDeliveryHold = {
-          submissionId: wake.submissionId, pendingSince: Date.now(), delivering: true,
+        // Keep delivery alive until this exact wake has entered model context
+        // and the session is idle. A follow-up can run without agent_start;
+        // conversely, a new agent_start hook can precede stale settled events.
+        const hold = {
+          submissionId: wake.submissionId, pendingSince: Date.now(), delivering: true, consumed: false,
         };
         deliveryHolds.set(wake.wakeId, hold);
         refreshUi();
@@ -390,8 +390,20 @@ export function registerSchedulerExtension(
     });
   });
 
-  pi.on("agent_start", () => {
-    deliveryHolds.clear();
+  pi.on("message_start", (event) => {
+    if (event.message.role !== "custom" || event.message.customType !== "scheduler-wake") return;
+    const details = event.message.details as Partial<SchedulerWake> | undefined;
+    const hold = details?.wakeId ? deliveryHolds.get(details.wakeId) : undefined;
+    if (hold && hold.submissionId === details?.submissionId) hold.consumed = true;
+  });
+
+  pi.on("agent_settled", (_event, ctx) => {
+    // On older Pi a previous settled hook may still be draining while a new
+    // run starts. Never release its consumed wakes while that run is busy.
+    if (!ctx.isIdle()) return;
+    for (const [id, hold] of deliveryHolds) {
+      if (hold.consumed) deliveryHolds.delete(id);
+    }
     refreshUi();
   });
 

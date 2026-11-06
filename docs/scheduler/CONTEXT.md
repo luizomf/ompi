@@ -65,8 +65,9 @@ A local keepalive expectation reserved before invoking `bq`, distinct from a
 historical scheduler record or an official Queue state. One-shot submissions
 expect one callback; finite repeats count their remaining occurrences; cron
 retains one subscription obligation. Unknown acceptance remains pending because
-durable work may already exist. Successfully injected wakes remain held until
-the next agent run starts, bridging queued delivery across old settled events.
+durable work may already exist. Successfully injected wakes remain held until that exact wake enters model
+context and the session settles idle, covering both same-run follow-ups and
+queued delivery across old settled events.
 _Avoid_: Active Queue Job, delivery guarantee, durable mailbox
 
 **Human reminder schedule**:
@@ -209,7 +210,9 @@ _Avoid_: Pending Job, active Schedule, Queue history, official Queue state
   paths, or callback capabilities. Managed subagents use this snapshot to retain
   an idle callback owner; the root remains free after asynchronous dispatch.
   Successful callback injection decrements finite expectations, but a delivered
-  wake retains a keepalive until `agent_start`. The parent must wait for the
+  wake retains a keepalive until its correlated `message_start` and idle
+  `agent_settled`. An unrelated start or stale settled hook while busy cannot
+  release it. The parent must wait for the
   callback-processing turn to settle before completing the child, not close on
   a zero snapshot alone. Failure and explicit interruption can still close it.
 - Full confirmed Schedule cancellation (known coverage, creation finished, all

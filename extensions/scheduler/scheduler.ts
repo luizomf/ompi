@@ -474,7 +474,7 @@ export class SchedulerSession {
   }
 
   // The default snapshot is raw unresolved occurrences. The RPC publisher also
-  // supplies delivered wakes awaiting agent_start, merging before bounding IDs.
+  // supplies delivered wakes awaiting consumption and idle, merging before bounding IDs.
   pending(deliveryHolds: Iterable<SchedulerDeliveryHold> = []): SchedulerPending {
     let count = 0;
     let oldestPendingAt: number | undefined;

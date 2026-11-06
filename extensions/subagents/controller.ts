@@ -437,7 +437,8 @@ export class SubagentController {
   async steer(id: number, message: string): Promise<SubagentView> {
     const record = this.requireActive(id);
     if (!record.accepted || !record.child) throw new Error(`Subagent ${id} has not accepted its prompt yet.`);
-    const waiting = record.state === "waiting-scheduler";
+    const waiting = record.state === "waiting-scheduler"
+      || (!record.modelRunActive && (record.scheduler?.count ?? 0) > 0);
     record.state = "steering";
     this.changed();
     try {
@@ -449,7 +450,7 @@ export class SubagentController {
       if (record.state === "steering" && record.active) {
         const handled = result && typeof result === "object" && "disposition" in result && result.disposition === "handled";
         if (waiting && handled) this.settle(record);
-        else record.state = "running";
+        else record.state = waiting ? "waiting-scheduler" : "running";
       }
       this.changed();
       return this.view(record);
@@ -462,14 +463,14 @@ export class SubagentController {
   async interrupt(id: number): Promise<SubagentView> {
     const record = this.requireActive(id);
     if (!record.accepted || !record.child) throw new Error(`Subagent ${id} has not accepted its prompt yet.`);
-    const waiting = record.state === "waiting-scheduler";
     record.interruptRequested = true;
     record.state = "interrupting";
     this.changed();
     try {
       await record.child.request({ type: "abort" });
-      // An already idle RPC runtime emits no new agent_settled on abort.
-      if (waiting) await this.finalize(record, "interrupted");
+      // abort acknowledges idle. Do not rely on presentation state or another
+      // settled event: handled prompts on older Pi can leave an idle runtime.
+      await this.finalize(record, "interrupted");
       return this.view(record);
     } catch (error) {
       void this.finalize(record, "interrupted", errorMessage(error));

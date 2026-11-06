@@ -688,7 +688,18 @@ describe("SubagentController", () => {
     const { controller, children, pongs } = setup();
     await controller.start({ prompt: "work", cwd: "/repo", model: "p/m", thinking: "medium", capabilities: DEFAULT_CAPABILITIES, name: "worker" });
     children[0].finalText = "done";
-    if (outcome === "interrupted") await controller.interrupt(1);
+    if (outcome === "interrupted") {
+      const request = children[0].request.bind(children[0]);
+      vi.spyOn(children[0], "request").mockImplementation(async command => {
+        if (command.type === "abort") {
+          // Native abort acknowledges only after idle; assistant output precedes it.
+          children[0].emit({ type: "message_end", message: { role: "assistant", stopReason: "stop" } });
+          children[0].emit({ type: "agent_end" });
+        }
+        return request(command);
+      });
+      await controller.interrupt(1);
+    }
     await settle(children[0]);
     children[0].emit({ type: "agent_settled" });
     children[0].crash("late");

@@ -14,11 +14,14 @@ const PI_CLI = resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js
 // replaced. The test explicitly runs the captured callback runner after idle.
 const fixture = `
 import { writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { registerSchedulerExtension } from ${JSON.stringify(resolve("extensions/scheduler/index.ts"))};
 export default function (pi) {
   let woke = false;
   let race = false;
+  let duringAcceptance = false;
   let releaseSettlement;
   pi.on("agent_settled", async () => {
     if (race && !woke) {
@@ -32,14 +35,24 @@ export default function (pi) {
     if (woke) releaseSettlement?.();
   } }, { runBq: async (invocation) => {
     writeFileSync(process.env.OMPI_SCHEDULER_CAPTURE, JSON.stringify(invocation.args));
+    if (duringAcceptance) {
+      const runner = invocation.args.slice(invocation.args.indexOf("--") + 1);
+      await promisify(execFile)(runner[0], runner.slice(1));
+    }
     return { code: 0, stdout: "accepted", stderr: "", stdoutTruncated: false, stderrTruncated: false };
   } });
+  // This hook deliberately follows the scheduler hook. Starting a run is not
+  // proof that its agent_start event has reached the parent yet.
+  pi.on("agent_start", async () => {
+    if (woke && race) await new Promise(resolve => setTimeout(resolve, 500));
+  });
   pi.registerProvider("fixture", {
     name: "Fixture", baseUrl: "http://fixture.invalid", apiKey: "fixture-key", api: "fixture-api",
     models: [{ id: "model", name: "Fixture", reasoning: false, input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1024 }],
     streamSimple(model, context) {
       if (JSON.stringify(context.messages).includes("SETTLEMENT_RACE")) race = true;
+      if (JSON.stringify(context.messages).includes("DURING_ACCEPTANCE")) duringAcceptance = true;
       const submitted = context.messages.some(m => m.role === "toolResult" && m.toolName === "scheduler_submit");
       const call = { type: "toolCall", id: "schedule_once", name: "scheduler_submit", arguments: {
         reentryPrompt: "Inspect this completed heartbeat; never rerun it or inspect/administer OMQueue."
@@ -117,6 +130,8 @@ it("retains a real idle scheduler child, wakes it through steering and callback,
 
     await controller.start(input);
     await vi.waitFor(() => expect(controller.list()[1].state).toBe("waiting-scheduler"), { timeout: 10_000 });
+    await controller.steer(2, "/schedulelist");
+    expect(controller.list()[1].state).toBe("waiting-scheduler");
     await controller.interrupt(2);
     expect(controller.list()[1]).toMatchObject({ state: "interrupted", active: false });
     expect(pongs[1]).toMatchObject({ outcome: "interrupted", error: expect.stringContaining("Queue") });
@@ -129,6 +144,10 @@ it("retains a real idle scheduler child, wakes it through steering and callback,
     const raceRunner = raceArgs.slice(raceArgs.indexOf("--") + 1);
     await execute(raceRunner[0], raceRunner.slice(1), { cwd });
     await vi.waitFor(() => expect(pongs[2]).toMatchObject({ outcome: "completed", finalText: "CALLBACK_PROCESSED" }), { timeout: 5_000 });
+
+    // Follow-ups can be consumed inside the existing run, without agent_start.
+    await controller.start({ ...input, prompt: "DURING_ACCEPTANCE: schedule one heartbeat" });
+    await vi.waitFor(() => expect(pongs[3]).toMatchObject({ outcome: "completed", finalText: "CALLBACK_PROCESSED" }), { timeout: 10_000 });
   } finally {
     await controller.shutdown();
     for (const [key, value] of Object.entries(previous)) {
