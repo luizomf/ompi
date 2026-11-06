@@ -10,12 +10,14 @@ import {
   SchedulerSession,
   type BqInvocation,
   type BqProcessResult,
+  type SchedulerDeliveryHold,
   type SchedulerPayloadOutcome,
   type SchedulerStreamPreview,
   type SchedulerSubmissionResult,
   type SchedulerWake,
 } from "./scheduler.ts";
 import { schedulerSnapshot } from "./presentation.ts";
+import { encodeSchedulerPending, SCHEDULER_STATUS_KEY } from "../shared/scheduler-lifecycle.ts";
 
 const MAX_REENTRY_PROMPT_CHARACTERS = 8_000;
 const MAX_ARGUMENT_CHARACTERS = 8_000;
@@ -171,7 +173,12 @@ export function registerSchedulerExtension(
 ): void {
   let session: SchedulerSession | undefined;
   let ui: ExtensionContext["ui"] | undefined;
+  let rpcUi: ExtensionContext["ui"] | undefined;
+  const deliveryHolds = new Map<string, SchedulerDeliveryHold>();
   const refreshUi = () => {
+    rpcUi?.setStatus(SCHEDULER_STATUS_KEY, encodeSchedulerPending(
+      session?.pending(deliveryHolds.values()) ?? { count: 0, pendingIds: [], omitted: 0 },
+    ));
     if (!ui) return;
     const count = session?.list().length ?? 0;
     ui.setStatus("scheduler", count ? ui.theme.fg("muted", `scheduler: ${count} record${count === 1 ? "" : "s"} · /schedulelist`) : undefined);
@@ -250,6 +257,11 @@ export function registerSchedulerExtension(
           result.confirmed ? "Future occurrences disabled." : "Cancellation incomplete or unconfirmed.",
           `ID: ${id}; disabled now: ${result.disabled}; known remaining: ${result.remaining}; coverage complete: ${result.coverageComplete}.`,
           "Existing Jobs and delivered messages are unaffected. No Queue search, polling, or automatic retry was performed.",
+          ...(result.confirmed
+            ? ["Local callback keepalive obligations released (stop waiting, not Job cancellation). Already-created Jobs may continue; their callbacks are not guaranteed after the owning child closes."]
+            : result.pendingCallbacksUnknown
+              ? ["Outstanding callbacks remain unknown; local pending obligations are retained conservatively."]
+              : []),
           ...result.errors,
         ].join("\n") }],
         details: result,
@@ -337,7 +349,10 @@ export function registerSchedulerExtension(
   pi.on("session_start", async (_event, ctx) => {
     const previous = session;
     session = undefined;
-    ui = ctx?.hasUI ? ctx.ui : undefined;
+    deliveryHolds.clear();
+    ui = ctx?.hasUI && ctx.mode !== "rpc" ? ctx.ui : undefined;
+    // RPC status is a lifecycle signal even when a managed host reports hasUI=false.
+    rpcUi = ctx?.mode === "rpc" ? ctx.ui : undefined;
     refreshUi();
     await previous?.close();
 
@@ -350,21 +365,43 @@ export function registerSchedulerExtension(
       runBq: options.runBq,
       onChange: refreshUi,
       onWake: (wake) => {
-        pi.sendMessage({
-          customType: "scheduler-wake",
-          content: formatSchedulerWake(wake),
-          display: true,
-          details: wake,
-        }, { deliverAs: "followUp", triggerTurn: true });
+        // sendMessage may start a run synchronously, or defer it until all old
+        // agent_settled hooks finish. Reserve before sending; only agent_start
+        // releases successful delivery holds, never the old settled event.
+        const hold: SchedulerDeliveryHold = {
+          submissionId: wake.submissionId, pendingSince: Date.now(), delivering: true,
+        };
+        deliveryHolds.set(wake.wakeId, hold);
+        refreshUi();
+        try {
+          pi.sendMessage({
+            customType: "scheduler-wake",
+            content: formatSchedulerWake(wake),
+            display: true,
+            details: wake,
+          }, { deliverAs: "followUp", triggerTurn: true });
+          hold.delivering = false;
+        } catch (error) {
+          deliveryHolds.delete(wake.wakeId);
+          refreshUi();
+          throw error;
+        }
       },
     });
+  });
+
+  pi.on("agent_start", () => {
+    deliveryHolds.clear();
+    refreshUi();
   });
 
   pi.on("session_shutdown", async () => {
     const closing = session;
     session = undefined;
-    ui?.setStatus("scheduler", undefined);
+    deliveryHolds.clear();
+    refreshUi();
     ui = undefined;
+    rpcUi = undefined;
     await closing?.close();
   });
 }

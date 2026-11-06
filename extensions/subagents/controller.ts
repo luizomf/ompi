@@ -17,9 +17,11 @@ import {
   errorText,
 } from "./feedback.ts";
 
+import type { SchedulerPending } from "../shared/scheduler-lifecycle.ts";
+
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type TerminalOutcome = "completed" | "failed" | "interrupted";
-export type ActiveSubagentState = "handshaking" | "running" | "steering" | "interrupting" | "finalizing";
+export type ActiveSubagentState = "handshaking" | "running" | "steering" | "interrupting" | "finalizing" | "waiting-scheduler";
 export type SubagentState = ActiveSubagentState | TerminalOutcome | "acceptance-unknown";
 export type DispatchAcceptance = "rejected" | "unknown";
 
@@ -32,6 +34,7 @@ export interface OwnershipRuntime {
   name?: string;
   model: string;
   thinking: ThinkingLevel;
+  scheduler?: SchedulerPending;
 }
 
 export interface LaunchSpec {
@@ -50,6 +53,7 @@ export interface RpcEvent {
   assistantMessageEvent?: { type?: string; delta?: string };
   message?: { role?: string; stopReason?: string; errorMessage?: string };
   ownership?: OwnershipRuntime[];
+  scheduler?: SchedulerPending;
 }
 
 export interface RpcChild {
@@ -91,6 +95,7 @@ export interface SubagentView {
   currentTool?: string;
   preview?: string;
   error?: string;
+  scheduler?: SchedulerPending;
 }
 
 export interface TerminalResult {
@@ -114,6 +119,7 @@ interface RecordState extends SubagentView {
   pendingExitError?: string;
   terminalError?: string;
   assistantMessageEnded: boolean;
+  modelRunActive: boolean;
   ownership: OwnershipRuntime[];
   directResolve?: (result: TerminalResult) => void;
 }
@@ -212,7 +218,7 @@ function ownershipRuntime(value: unknown): value is OwnershipRuntime {
     && runtime.id === path.at(-1)
     && Number.isInteger(runtime.depth)
     && typeof runtime.state === "string"
-    && ["handshaking", "running", "steering", "interrupting", "finalizing"].includes(runtime.state)
+    && ["handshaking", "running", "steering", "interrupting", "finalizing", "waiting-scheduler"].includes(runtime.state)
     && typeof runtime.model === "string"
     && runtime.model.length > 0
     && typeof runtime.thinking === "string"
@@ -246,7 +252,7 @@ export class SubagentController {
   }
 
   list(): SubagentView[] {
-    return [...this.records.values()].map(({ capabilities, lineage: _lineage, child: _child, accepted: _accepted, finalizing: _finalizing, delivered: _delivered, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, assistantMessageEnded: _assistantMessageEnded, ownership: _ownership, directResolve: _directResolve, ...view }) => ({
+    return [...this.records.values()].map(({ capabilities, lineage: _lineage, child: _child, accepted: _accepted, finalizing: _finalizing, delivered: _delivered, interruptRequested: _interruptRequested, pendingSettled: _pendingSettled, pendingExitError: _pendingExitError, terminalError: _terminalError, assistantMessageEnded: _assistantMessageEnded, modelRunActive: _modelRunActive, ownership: _ownership, directResolve: _directResolve, ...view }) => ({
       ...view,
       tools: capabilities.tools.map((tool) => tool.name),
     }));
@@ -264,6 +270,7 @@ export class SubagentController {
         name: record.name,
         model: record.model,
         thinking: record.thinking,
+        ...(record.scheduler ? { scheduler: record.scheduler } : {}),
       };
       const descendants = record.ownership.map((runtime) => ({
         ...runtime,
@@ -398,6 +405,8 @@ export class SubagentController {
     record.pendingExitError = undefined;
     record.terminalError = undefined;
     record.assistantMessageEnded = false;
+    record.modelRunActive = false;
+    record.scheduler = undefined;
     record.ownership = [];
     record.directResolve = directResolve;
 
@@ -428,11 +437,20 @@ export class SubagentController {
   async steer(id: number, message: string): Promise<SubagentView> {
     const record = this.requireActive(id);
     if (!record.accepted || !record.child) throw new Error(`Subagent ${id} has not accepted its prompt yet.`);
+    const waiting = record.state === "waiting-scheduler";
     record.state = "steering";
     this.changed();
     try {
-      await record.child.request({ type: "steer", message });
-      if (!record.finalizing && record.active) record.state = "running";
+      // RPC steer only queues while idle. Prompt wakes the retained runtime;
+      // streamingBehavior also handles a callback racing this instruction.
+      const result = await record.child.request(waiting
+        ? { type: "prompt", message, streamingBehavior: "steer" }
+        : { type: "steer", message });
+      if (record.state === "steering" && record.active) {
+        const handled = result && typeof result === "object" && "disposition" in result && result.disposition === "handled";
+        if (waiting && handled) this.settle(record);
+        else record.state = "running";
+      }
       this.changed();
       return this.view(record);
     } catch (error) {
@@ -444,11 +462,14 @@ export class SubagentController {
   async interrupt(id: number): Promise<SubagentView> {
     const record = this.requireActive(id);
     if (!record.accepted || !record.child) throw new Error(`Subagent ${id} has not accepted its prompt yet.`);
+    const waiting = record.state === "waiting-scheduler";
     record.interruptRequested = true;
     record.state = "interrupting";
     this.changed();
     try {
       await record.child.request({ type: "abort" });
+      // An already idle RPC runtime emits no new agent_settled on abort.
+      if (waiting) await this.finalize(record, "interrupted");
       return this.view(record);
     } catch (error) {
       void this.finalize(record, "interrupted", errorMessage(error));
@@ -501,8 +522,7 @@ export class SubagentController {
       if (record.pendingExitError) {
         void this.finalize(record, record.interruptRequested ? "interrupted" : "failed", record.pendingExitError, true);
       } else if (record.pendingSettled) {
-        const outcome = record.interruptRequested ? "interrupted" : record.terminalError ? "failed" : "completed";
-        void this.finalize(record, outcome, record.terminalError);
+        this.settle(record);
       }
     } catch (error) {
       try {
@@ -550,6 +570,30 @@ export class SubagentController {
 
   private handleEvent(record: RecordState, event: RpcEvent): void {
     if (!record.active || record.finalizing) return;
+    if (event.type === "scheduler_protocol_error") {
+      record.terminalError = "Child scheduler lifecycle status is invalid; callback ownership cannot be established.";
+      if (record.accepted) void this.finalize(record, "failed", record.terminalError);
+      return;
+    }
+    if (event.type === "scheduler_pending") {
+      record.scheduler = event.scheduler;
+      // Never close on a zero count: the callback's model turn must settle first.
+      this.changed();
+      return;
+    }
+    if (event.type === "agent_end") {
+      record.modelRunActive = false;
+      return;
+    }
+    if (event.type === "agent_start") {
+      record.modelRunActive = true;
+      record.pendingSettled = false;
+      record.assistantMessageEnded = false;
+      record.terminalError = undefined;
+      if (!record.interruptRequested) record.state = "running";
+      this.changed();
+      return;
+    }
     if (event.type === "subagent_ownership") {
       record.ownership = ownershipData(event.ownership).filter((runtime) => (
         runtime.depth === record.lineage.depth + runtime.path.length
@@ -563,8 +607,7 @@ export class SubagentController {
         record.pendingSettled = true;
         return;
       }
-      const outcome = record.interruptRequested ? "interrupted" : record.terminalError ? "failed" : "completed";
-      void this.finalize(record, outcome, record.terminalError);
+      this.settle(record);
       return;
     }
     const message = event.message && typeof event.message === "object"
@@ -601,6 +644,20 @@ export class SubagentController {
     this.changed();
   }
 
+  private settle(record: RecordState): void {
+    // Older Pi versions can forward a previous settled event after a new
+    // callback run has started while async settled hooks were draining.
+    if (record.modelRunActive) return;
+    const outcome = record.interruptRequested ? "interrupted" : record.terminalError ? "failed" : "completed";
+    if (outcome === "completed" && (record.scheduler?.count ?? 0) > 0) {
+      record.state = "waiting-scheduler";
+      record.currentTool = undefined;
+      this.changed();
+      return;
+    }
+    void this.finalize(record, outcome, record.terminalError);
+  }
+
   private handleExit(record: RecordState, error?: Error): void {
     if (!record.active || record.finalizing) return;
     const message = error?.message ?? "Child process exited before settlement.";
@@ -615,7 +672,10 @@ export class SubagentController {
     if (record.finalizing || record.delivered || !record.accepted) return;
     record.finalizing = true;
     record.state = "finalizing";
-    record.error = error;
+    const pendingWarning = (record.scheduler?.count ?? 0) > 0
+      ? "Scheduler callbacks are being abandoned by closing this runtime. Work already submitted to the Queue may continue; do not blindly resubmit it."
+      : undefined;
+    record.error = [error, pendingWarning].filter(Boolean).join(" ") || undefined;
     this.changed();
 
     let finalText: string | undefined;
@@ -686,6 +746,7 @@ export class SubagentController {
       interruptRequested: false,
       pendingSettled: false,
       assistantMessageEnded: false,
+      modelRunActive: false,
       ownership: [],
       directResolve,
     };

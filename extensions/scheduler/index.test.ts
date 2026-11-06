@@ -15,6 +15,7 @@ import {
   registerSchedulerExtension,
 } from "./index.ts";
 import { SchedulerSession, type BqInvocation } from "./scheduler.ts";
+import { parseSchedulerPending, SCHEDULER_STATUS_KEY, type SchedulerPending } from "../shared/scheduler-lifecycle.ts";
 
 interface RegisteredTool {
   name: string;
@@ -62,6 +63,118 @@ async function runQueuedInvocation(invocation: BqInvocation): Promise<void> {
 }
 
 describe("scheduler extension", () => {
+  it.each([true, false])("publishes pending RPC status even with hasUI=%s, through callback delivery and shutdown", async (hasUI) => {
+    const tools = new Map<string, RegisteredTool>();
+    const events = new Map<string, (event: unknown, ctx: ExtensionContext) => Promise<void>>();
+    const statuses: SchedulerPending[] = [];
+    const setStatus = vi.fn((key: string, text: unknown) => {
+      expect(key).toBe(SCHEDULER_STATUS_KEY);
+      expect(JSON.parse(text as string).version).toBe(1);
+      const pending = parseSchedulerPending(text);
+      expect(pending).toBeDefined();
+      statuses.push(pending!);
+    });
+    const duringDelivery: number[] = [];
+    const sendMessage = vi.fn(() => { duringDelivery.push(statuses.at(-1)!.count); });
+    const ctx = { cwd: tmpdir(), mode: "rpc", hasUI, ui: { setStatus } } as unknown as ExtensionContext;
+    let invocation!: BqInvocation;
+    const pi = {
+      registerFlag: () => {}, getFlag: () => false, registerMessageRenderer: () => {}, registerCommand: () => {},
+      registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool), sendMessage,
+      on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => Promise<void>) => events.set(name, handler),
+    } as unknown as ExtensionAPI;
+    registerSchedulerExtension(pi, { runBq: async (call) => {
+      // Pending must already have been sent over setStatus before acceptance work starts.
+      expect(statuses.at(-1)?.count).toBe(2);
+      if (call.command === "bq") invocation = call;
+      return { code: 0, signal: null, cancelled: false, stdout: "bq: scheduled 1/2 at=... one\nbq: scheduled 2/2 at=... two\n", stderr: "", stdoutTruncated: false, stderrTruncated: false };
+    } });
+    try {
+      await events.get("session_start")!({}, ctx);
+      expect(statuses).toEqual([{ count: 0, pendingIds: [], omitted: 0 }]);
+      const result = await tools.get("scheduler_submit")!.execute("submit", {
+        reentryPrompt: "private reentry prompt", timing: { in: "1m", every: "1m", count: 2 },
+      }, undefined, undefined, ctx);
+      const id = (result.details as { submissionId: string }).submissionId;
+      expect(statuses.at(-1)).toMatchObject({ count: 2, pendingIds: [id] });
+      expect(JSON.stringify(statuses)).not.toMatch(/private reentry|capability|wake.sock/);
+      await runQueuedInvocation(invocation);
+      expect(statuses.at(-1)?.count).toBe(2); // One unresolved, one queued wake.
+      await events.get("agent_start")!({}, ctx);
+      expect(statuses.at(-1)?.count).toBe(1); // Starting a run must not clear raw obligations.
+      await runQueuedInvocation(invocation);
+      expect(statuses.at(-1)?.count).toBe(1); // Last wake has not started processing yet.
+      await events.get("agent_start")!({}, ctx);
+      expect(duringDelivery).toEqual([2, 1]);
+      expect(statuses.at(-1)).toEqual({ count: 0, pendingIds: [], omitted: 0 });
+      expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ customType: "scheduler-wake" }), { deliverAs: "followUp", triggerTurn: true });
+      const next = await tools.get("scheduler_submit")!.execute("next", {
+        reentryPrompt: "Cancel future work", timing: { in: "1m", every: "1m", count: 2 },
+      }, undefined, undefined, ctx);
+      const cancel = await tools.get("scheduler_cancel")!.execute("cancel", {
+        id: (next.details as { submissionId: string }).submissionId,
+      }, undefined, undefined, ctx);
+      expect(cancel.content[0].text).toContain("Future occurrences disabled.");
+      expect(cancel.content[0].text).toContain("stop waiting, not Job cancellation");
+      expect(cancel.content[0].text).toContain("callbacks are not guaranteed");
+      expect(statuses.at(-1)?.count).toBe(0);
+    } finally {
+      await events.get("session_shutdown")!({}, ctx);
+    }
+    expect(statuses.at(-1)).toEqual({ count: 0, pendingIds: [], omitted: 0 });
+    expect(setStatus.mock.calls.every(([, text]) => typeof text === "string")).toBe(true);
+  });
+
+  it.each(["deferred", "synchronous", "throwing"])("keeps wake delivery through the old settle boundary (%s sendMessage)", async (delivery) => {
+    const tools = new Map<string, RegisteredTool>();
+    const events = new Map<string, (event: unknown, ctx: ExtensionContext) => void | Promise<void>>();
+    let latest: SchedulerPending | undefined;
+    const ctx = {
+      cwd: tmpdir(), mode: "rpc", hasUI: false,
+      ui: { setStatus: (_key: string, text: string) => { latest = parseSchedulerPending(text); } },
+    } as unknown as ExtensionContext;
+    let invocation!: BqInvocation;
+    let fail = delivery === "throwing";
+    const pi = {
+      registerFlag: () => {}, getFlag: () => false, registerMessageRenderer: () => {}, registerCommand: () => {},
+      registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
+      on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>) => events.set(name, handler),
+      sendMessage: () => {
+        expect(latest?.count).toBe(1);
+        if (fail) throw new Error("delivery failed");
+        if (delivery === "synchronous") events.get("agent_start")!({}, ctx);
+      },
+    } as unknown as ExtensionAPI;
+    registerSchedulerExtension(pi, { runBq: async (call) => {
+      invocation = call;
+      return { code: 0, signal: null, cancelled: false, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false };
+    } });
+    try {
+      await events.get("session_start")!({}, ctx);
+      await tools.get("scheduler_submit")!.execute("submit", { reentryPrompt: "Check callback" }, undefined, undefined, ctx);
+      await events.get("agent_start")!({}, ctx);
+      expect(latest?.count).toBe(1); // Unrelated starts do not erase unresolved occurrences.
+      if (fail) {
+        await expect(runQueuedInvocation(invocation)).rejects.toThrow("callback runner failed");
+        await events.get("agent_start")!({}, ctx);
+        expect(latest?.count).toBe(1); // Failed delivery still owns the raw obligation.
+        fail = false;
+      }
+      await runQueuedInvocation(invocation);
+      if (delivery !== "synchronous") {
+        // Pi may finish its previous asynchronous settled hooks after queuing
+        // this wake but before starting the next run. That is not terminal.
+        await events.get("agent_settled")?.({}, ctx);
+        expect(latest?.count).toBe(1);
+        await events.get("agent_start")!({}, ctx);
+      }
+      expect(latest).toEqual({ count: 0, pendingIds: [], omitted: 0 });
+    } finally {
+      await events.get("session_shutdown")!({}, ctx);
+    }
+    expect(latest).toEqual({ count: 0, pendingIds: [], omitted: 0 });
+  });
+
   it("shows session-local records in the agent list, human command, and footer without Queue reads", async () => {
     initTheme(undefined, false);
     const tools = new Map<string, RegisteredTool>();

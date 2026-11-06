@@ -145,11 +145,108 @@ async function settle(child: FakeChild): Promise<void> {
   if (child.finalText !== null) {
     child.emit({ type: "message_end", message: { role: "assistant", stopReason: "stop" } });
   }
+  child.emit({ type: "agent_end" });
   child.emit({ type: "agent_settled" });
   await vi.waitFor(() => expect(child.closed).toBe(true));
 }
 
 describe("SubagentController", () => {
+  const scheduledInput = { prompt: "build", cwd: "/repo", model: "p/m", thinking: "high" as const, capabilities: DEFAULT_CAPABILITIES };
+  const pending = { count: 1, oldestPendingAt: 1_000, pendingIds: ["44b5f82e-a65b-4e5d-a7ed-6e41b4f40611"], omitted: 0 };
+
+  it("keeps a settled scheduler owner alive until the callback turn settles", async () => {
+    const { controller, children, pongs } = setup();
+    await controller.start(scheduledInput);
+    children[0].emit({ type: "scheduler_pending", scheduler: pending });
+    children[0].emit({ type: "agent_settled" });
+    expect(controller.list()[0]).toMatchObject({ active: true, state: "waiting-scheduler", scheduler: pending });
+    expect(children[0].closed).toBe(false);
+    expect(pongs).toEqual([]);
+    await controller.start(scheduledInput);
+    expect(children).toHaveLength(2);
+    children[0].emit({ type: "scheduler_pending", scheduler: { count: 0, pendingIds: [], omitted: 0 } });
+    expect(children[0].closed).toBe(false);
+    children[0].emit({ type: "agent_start" });
+    // A stale settled event from an older Pi must not close the new run.
+    children[0].emit({ type: "agent_settled" });
+    expect(children[0].closed).toBe(false);
+    expect(controller.list()[0].state).toBe("running");
+    children[0].finalText = "Build verified";
+    await settle(children[0]);
+    expect(pongs).toEqual([expect.objectContaining({ outcome: "completed", finalText: "Build verified" })]);
+    await controller.shutdown();
+  });
+
+  it("wakes an idle scheduler owner with a prompt instead of leaving steering queued", async () => {
+    const { controller, children } = setup();
+    await controller.start(scheduledInput);
+    children[0].emit({ type: "scheduler_pending", scheduler: pending });
+    children[0].emit({ type: "agent_settled" });
+    await controller.steer(1, "Check the existing build; do not rerun it");
+    expect(children[0].requests.at(-1)).toEqual({ type: "prompt", message: "Check the existing build; do not rerun it", streamingBehavior: "steer" });
+    children[0].emit({ type: "agent_settled" });
+    expect(controller.list()[0].state).toBe("waiting-scheduler");
+    await controller.shutdown();
+  });
+
+  it("forcibly interrupts an idle scheduler owner without waiting for another settled event", async () => {
+    const { controller, children, pongs } = setup();
+    await controller.start(scheduledInput);
+    children[0].emit({ type: "scheduler_pending", scheduler: pending });
+    children[0].emit({ type: "agent_settled" });
+    await controller.interrupt(1);
+    expect(children[0].closed).toBe(true);
+    expect(controller.list()[0]).toMatchObject({ active: false, state: "interrupted" });
+    expect(pongs).toEqual([expect.objectContaining({ outcome: "interrupted", error: expect.stringContaining("Queue") })]);
+  });
+
+  it("retains scheduler ownership when settlement races prompt acceptance", async () => {
+    const { controller, children, pongs } = setup({ delayedPrompt: true });
+    const started = controller.start(scheduledInput);
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    children[0].emit({ type: "scheduler_pending", scheduler: pending });
+    children[0].emit({ type: "agent_settled" });
+    children[0].acceptPrompt();
+    await expect(started).resolves.toMatchObject({ state: "waiting-scheduler", active: true });
+    expect(pongs).toEqual([]);
+    await controller.shutdown();
+  });
+
+  it("allows cancellation of a direct call retained for a scheduler callback", async () => {
+    const { controller, children, pongs } = setup();
+    const abort = new AbortController();
+    const running = controller.run(scheduledInput, abort.signal);
+    await vi.waitFor(() => expect(controller.list()[0].state).toBe("running"));
+    children[0].emit({ type: "scheduler_pending", scheduler: pending });
+    children[0].emit({ type: "agent_settled" });
+    abort.abort();
+    await expect(running).resolves.toMatchObject({ outcome: "interrupted", error: expect.stringContaining("Queue") });
+    expect(children[0].closed).toBe(true);
+    expect(pongs).toEqual([]);
+  });
+
+  it("keeps a re-settled waiting state when a steering response arrives late", async () => {
+    const { controller, children } = setup();
+    await controller.start(scheduledInput);
+    children[0].emit({ type: "scheduler_pending", scheduler: pending });
+    children[0].emit({ type: "agent_settled" });
+    const original = children[0].request.bind(children[0]);
+    vi.spyOn(children[0], "request").mockImplementation(async command => {
+      if (command.type === "prompt") children[0].emit({ type: "agent_settled" });
+      return original(command);
+    });
+    await expect(controller.steer(1, "check")).resolves.toMatchObject({ state: "waiting-scheduler" });
+    await controller.shutdown();
+  });
+
+  it("does not retain a failed turn merely because it has a pending scheduler callback", async () => {
+    const { controller, children, pongs } = setup();
+    await controller.start(scheduledInput);
+    children[0].emit({ type: "scheduler_pending", scheduler: pending });
+    children[0].emit({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "provider failed" } });
+    await settle(children[0]);
+    expect(pongs).toEqual([expect.objectContaining({ outcome: "failed", error: expect.stringContaining("provider failed") })]);
+  });
   it("rolls back a new active record when pre-launch status publication fails", async () => {
     let launches = 0;
     const controller = new SubagentController({

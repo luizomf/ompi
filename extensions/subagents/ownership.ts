@@ -4,6 +4,7 @@ import type {
   ThinkingLevel,
 } from "./controller.ts";
 import { boundText } from "./feedback.ts";
+import { parseSchedulerPending } from "../shared/scheduler-lifecycle.ts";
 
 export const OWNERSHIP_STATUS_KEY = "ompi:subagents:ownership-v1";
 
@@ -18,6 +19,7 @@ const ACTIVE_STATES = new Set<ActiveSubagentState>([
   "steering",
   "interrupting",
   "finalizing",
+  "waiting-scheduler",
 ]);
 const THINKING_LEVELS = new Set<ThinkingLevel>([
   "off",
@@ -92,8 +94,12 @@ function parseRuntime(value: unknown): OwnershipRuntime {
     "name",
     "model",
     "thinking",
+    "scheduler",
   ]);
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) invalid();
+  const scheduler = candidate.scheduler === undefined ? undefined
+    : parseSchedulerPending(JSON.stringify({ version: 1, ...candidate.scheduler }));
+  if (candidate.scheduler !== undefined && !scheduler) invalid();
   return {
     path: [...candidate.path],
     parentPath: [...candidate.parentPath],
@@ -103,6 +109,7 @@ function parseRuntime(value: unknown): OwnershipRuntime {
     name: candidate.name,
     model: candidate.model,
     thinking: candidate.thinking as ThinkingLevel,
+    ...(scheduler ? { scheduler } : {}),
   };
 }
 
@@ -113,6 +120,11 @@ export function encodeOwnershipStatus(ownership: OwnershipRuntime[]): string {
       ...runtime,
       name: name || undefined,
       model: oneLine(runtime.model, MAX_MODEL_LENGTH),
+      ...(runtime.scheduler ? { scheduler: {
+        ...runtime.scheduler,
+        pendingIds: runtime.scheduler.pendingIds.slice(0, 2),
+        omitted: runtime.scheduler.omitted + Math.max(0, runtime.scheduler.pendingIds.length - 2),
+      } } : {}),
     };
   });
   const encoded = JSON.stringify({ version: 1, ownership: safe });

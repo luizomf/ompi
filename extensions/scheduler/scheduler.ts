@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBqProcess } from "./process.ts";
+import type { SchedulerPending } from "../shared/scheduler-lifecycle.ts";
 
 const CALLBACK_RUNNER = fileURLToPath(new URL("./callback-runner.mjs", import.meta.url));
 const CALLBACK_PROTOCOL_VERSION = 1;
@@ -117,6 +118,8 @@ export interface SchedulerCancellationResult {
   disabled: number;
   remaining: number;
   coverageComplete: boolean;
+  /** Disabling schedules cannot establish whether callbacks from existing Jobs remain. */
+  pendingCallbacksUnknown: boolean;
   errors: string[];
 }
 
@@ -162,6 +165,13 @@ export interface SchedulerWake {
   outcome: SchedulerPayloadOutcome;
   stdout: SchedulerStreamPreview;
   stderr: SchedulerStreamPreview;
+}
+
+export interface SchedulerDeliveryHold {
+  submissionId: string;
+  pendingSince: number;
+  /** The unresolved occurrence still covers this hold until onWake returns. */
+  delivering: boolean;
 }
 
 interface CallbackFrame extends SchedulerWake {
@@ -380,7 +390,14 @@ export class SchedulerSession {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly onWake: (wake: SchedulerWake) => void;
   private readonly onChange: () => void;
-  private readonly submissions = new Map<string, { prompt: string; record: SchedulerRecord }>();
+  private readonly submissions = new Map<string, {
+    prompt: string;
+    record: SchedulerRecord;
+    pendingSince: number;
+    remaining: number;
+    recurring: boolean;
+    keepaliveReleased?: boolean;
+  }>();
   private readonly records = new Map<string, SchedulerRecord>();
   private readonly deliveredWakeIds = new Set<string>();
   private readonly scheduleGroups = new Map<string, ScheduleGroup>();
@@ -456,6 +473,32 @@ export class SchedulerSession {
     });
   }
 
+  // The default snapshot is raw unresolved occurrences. The RPC publisher also
+  // supplies delivered wakes awaiting agent_start, merging before bounding IDs.
+  pending(deliveryHolds: Iterable<SchedulerDeliveryHold> = []): SchedulerPending {
+    let count = 0;
+    let oldestPendingAt: number | undefined;
+    const ids = new Set<string>();
+    const add = (id: string, amount: number, since: number) => {
+      count += amount;
+      oldestPendingAt = Math.min(oldestPendingAt ?? since, since);
+      ids.add(id);
+    };
+    for (const [id, submission] of this.submissions) {
+      if (submission.remaining === 0 || submission.keepaliveReleased) continue;
+      add(id, submission.remaining, submission.pendingSince);
+    }
+    for (const hold of deliveryHolds) {
+      const submission = this.submissions.get(hold.submissionId);
+      if (hold.delivering && submission && submission.remaining > 0 && !submission.keepaliveReleased) continue;
+      add(hold.submissionId, 1, hold.pendingSince);
+    }
+    return {
+      count, ...(oldestPendingAt !== undefined ? { oldestPendingAt } : {}),
+      pendingIds: [...ids].slice(0, 10), omitted: Math.max(0, ids.size - 10),
+    };
+  }
+
   async submit(
     input: SchedulerSubmitInput,
     sessionCwd: string,
@@ -496,7 +539,15 @@ export class SchedulerSession {
       acceptedSubmissions: 0,
       callbacks: 0,
     };
-    this.submissions.set(submissionId, { prompt: input.reentryPrompt, record });
+    // Reserve before invoking bq: even a thrown/aborted acceptance request may
+    // have created durable work. Only preflight failures create no obligation.
+    const repeatCount = input.timing?.count ?? 1;
+    const recurring = input.timing?.cron !== undefined;
+    this.submissions.set(submissionId, {
+      prompt: input.reentryPrompt, record, pendingSince: Date.now(), recurring,
+      remaining: !recurring && Number.isSafeInteger(repeatCount) && repeatCount >= 2 && repeatCount <= 100
+        ? repeatCount : 1,
+    });
     if (!groupId) this.records.set(submissionId, record);
     this.onChange();
     const runnerArguments = [
@@ -527,7 +578,6 @@ export class SchedulerSession {
         signal,
       });
     } catch (error) {
-      this.submissions.delete(submissionId);
       record.acceptance = "unknown";
       this.onChange();
       throw error;
@@ -642,10 +692,20 @@ export class SchedulerSession {
     }
     if (errorCount > errors.length) errors.push(`${errorCount - errors.length} additional errors omitted.`);
     group.lastAttemptConfirmed = group.complete && group.pending.size === 0;
+    // Full, coverage-confirmed cancellation explicitly stops waiting. It does
+    // not cancel existing Jobs: keep correlation and callback uncertainty, but
+    // release their keepalive obligations. Partial/unknown cancellation retains
+    // every unresolved expectation conservatively.
+    let pendingCallbacksUnknown = false;
+    for (const submission of this.submissions.values()) {
+      if (submission.record.id !== id) continue;
+      pendingCallbacksUnknown ||= submission.remaining > 0;
+      if (group.lastAttemptConfirmed) submission.keepaliveReleased = true;
+    }
     this.onChange();
     return {
       id, disabled, remaining: group.pending.size, coverageComplete: group.complete,
-      confirmed: group.complete && group.pending.size === 0, errors,
+      confirmed: group.complete && group.pending.size === 0, pendingCallbacksUnknown, errors,
     };
   }
 
@@ -694,6 +754,9 @@ export class SchedulerSession {
       const { version: _version, capability: _capability, ...wake } = frame;
       try {
         this.onWake(wake);
+        // Keep the obligation through sendMessage. A zero status is only a
+        // snapshot; the managed parent must still wait for agent_settled.
+        if (!submission.recurring) submission.remaining = Math.max(0, submission.remaining - 1);
         submission.record.callbacks++;
         submission.record.lastCallbackAt = new Date().toISOString();
         submission.record.lastOutcome = structuredClone(wake.outcome);

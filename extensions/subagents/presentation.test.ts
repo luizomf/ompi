@@ -72,6 +72,21 @@ describe("ownership status operation", () => {
 });
 
 describe("subagent presentation", () => {
+  it("exposes waiting callbacks, their age, and management actions without claiming Queue state", () => {
+    const scheduler = { count: 1, oldestPendingAt: 1000, pendingIds: ["44b5f82e-a65b-4e5d-a7ed-6e41b4f40611"], omitted: 0 };
+    const waiting = view({ state: "waiting-scheduler", scheduler });
+    const ui = buildActiveUi([waiting], 61_000);
+    expect(ui.lines?.[0]).toContain("waiting-scheduler");
+    expect(ui.lines?.[0]).toContain("1 pending (60s old");
+    const list = buildConversationList([waiting]);
+    expect(list.text).toContain("subagent_steer");
+    expect(list.text).toContain("subagent_interrupt");
+    expect(list.text).toContain(scheduler.pendingIds[0]);
+    expect(list.text).toContain("not Queue state");
+    const ownership = buildOwnershipStatus(1, [{ path: [1], parentPath: [], id: 1, depth: 2, state: "waiting-scheduler", model: "p/m", thinking: "high", scheduler }]);
+    expect(ownership.nodes[1].scheduler).toEqual(scheduler);
+    expect(ownership.lines[1]).toContain("scheduler: 1 pending");
+  });
   it("shows direct widget lines and direct, nested, and total footer counts", () => {
     const ownership: OwnershipRuntime[] = [
       {

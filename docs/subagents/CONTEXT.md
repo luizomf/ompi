@@ -13,11 +13,11 @@ The agent conversation that directly starts a subagent. A parent may itself be a
 _Avoid_: Manager process, supervisor service
 
 **Subagent**:
-An independent headless Pi agent conversation started by its parent. Its native Pi JSONL file can survive child processes and the owning parent session; its owner-local known-conversation entry exists only in that parent's in-memory registry, and an active child runtime exists only for an accepted turn.
+An independent headless Pi agent conversation started by its parent. Its native Pi JSONL file can survive child processes and the owning parent session; its owner-local known-conversation entry exists only in that parent's in-memory registry, and an active child runtime exists for an accepted dispatch, including idle scheduler waits before terminal delivery.
 _Avoid_: Worker service, task, job, daemon
 
 **Headless child runtime**:
-The live RPC process that hosts one accepted subagent turn with its normal Pi agent loop, inherited tools and extension providers, and managed descendants but no TUI. A temporary child process may exist during mechanical preflight before prompt acceptance; it becomes an active runtime only after acceptance is known. An active runtime remains alive through every model and tool step in that turn, including direct nested delegations, then exits after terminal settlement or parent-requested closure. A later continuation starts another process over the preserved native session at the same delegation depth.
+The live RPC process that hosts one accepted subagent turn with its normal Pi agent loop, inherited tools and extension providers, and managed descendants but no TUI. A temporary child process may exist during mechanical preflight before prompt acceptance; it becomes an active runtime only after acceptance is known. An active runtime remains alive through every model and tool step, including direct nested delegations and idle scheduler waits. Successful model settlement with unresolved callbacks is nonterminal; the runtime exits only after settlement without pending callbacks, failure, or parent-requested closure. A later continuation starts another process over the preserved native session at the same delegation depth.
 _Avoid_: Detached daemon, TUI pane, persistent idle service
 
 **Direct runtime owner**:
@@ -37,7 +37,7 @@ The one-based position of an agent in one managed delegation lineage: root orche
 _Avoid_: Process count, task phase, permission role
 
 **Direct active-child ceiling**:
-The maximum number of direct child processes one parent may own concurrently. The root default is 12 and a nested parent defaults to 2. A nested ceiling may be tightened to 0, 1, or 2 but never raised above what the parent inherited. Preflight and handshaking processes, plus accepted running, finalizing, and direct-wait runtimes, hold a local slot until their owned process has exited. Each controller enforces only its direct children; this is not a global or tree-wide semaphore.
+The maximum number of direct child processes one parent may own concurrently. The root default is 12 and a nested parent defaults to 2. A nested ceiling may be tightened to 0, 1, or 2 but never raised above what the parent inherited. Preflight and handshaking processes, plus accepted running, scheduler-waiting, finalizing, and direct-wait runtimes, hold a local slot until their owned process has exited. Each controller enforces only its direct children; this is not a global or tree-wide semaphore.
 _Avoid_: Global process limit, queue capacity, lifetime spawn count, known conversation count
 
 **Managed delegation lineage**:
@@ -68,12 +68,16 @@ _Avoid_: Native session store, durable registry, runtime inventory, cross-sessio
 The mechanical Pi extension that connects each parent agent to direct subagents and owns their managed process lifecycle, message transport, local limits, and status for the current session. Its child transport follows Pi's strict JSONL record semantics and does not terminate valid records at a smaller extension-specific byte cap; bounded terminal results and status metadata remain separate parent-visible limits. It does not decide or interpret delegated work.
 _Avoid_: Agent, daemon, orchestration platform, scheduler, workflow engine
 
+**Scheduler wait**:
+An accepted child runtime whose model turn settled successfully while its local scheduler still reports unresolved callbacks. Its state is `waiting-scheduler`; it remains active and occupies a local child slot without consuming model turns. Bounded pending submission IDs, count, and oldest submission time cross the existing owner transport, not prompts or callback capability material. Count and age are local observations, not official Queue state. Callback receipt alone does not complete the child: its processing turn must settle without remaining obligations. There is no automatic timeout or periodic root alert.
+_Avoid_: Completed child, Queue watcher, durable mailbox
+
 **Steering**:
-A new instruction queued for a running subagent and delivered at Pi's next safe boundary, before its next model call.
+A new instruction queued for a running subagent and delivered at Pi's next safe boundary, before its next model call. For an idle scheduler-waiting child, the same operation sends a new RPC prompt into the retained runtime, with streaming steering behavior to tolerate a racing callback.
 _Avoid_: Real-time chat, process interruption, follow-up
 
 **Interruption**:
-Aborting a subagent's current turn without deleting its conversation, so that conversation remains available for later instructions. A matching caller-requested interruption produces the mechanically distinct `interrupted` terminal outcome; a spontaneous process or provider failure remains `failed`, even when no current-turn assistant message exists.
+Aborting a subagent's current turn or explicitly closing its idle scheduler wait without deleting its conversation, so that conversation remains available for later instructions. Idle interruption must finalize without requiring another `agent_settled` event. Closing a callback owner abandons its pending wakes and warns that work already submitted to the Queue may continue; it never cancels or resubmits Queue work. A matching caller-requested interruption produces the mechanically distinct `interrupted` terminal outcome; a spontaneous process or provider failure remains `failed`, even when no current-turn assistant message exists.
 _Avoid_: Removal, reset, steering, generic failure
 
 **Delivery mode**:
@@ -81,7 +85,7 @@ The extension-selected return contract for one dispatch, derived mechanically fr
 _Avoid_: Coordinator profile, leaf profile, hidden topology mode, model-inferred lifecycle
 
 **Terminal result**:
-The mechanically classified `completed`, `failed`, or `interrupted` outcome of one bounded accepted subagent turn. Its final assistant text, error, name, and other parent-visible presentation fields have deterministic limits and mark omissions. It always retains the bounded complete native session reference needed to inspect persisted evidence after truncation, failure, interruption, or a missing assistant message. Unknown prompt acceptance is dispatch feedback, not a terminal result.
+The mechanically classified `completed`, `failed`, or `interrupted` outcome of one accepted subagent dispatch, including any scheduler-driven turns before terminal settlement. Its final assistant text, error, name, and other parent-visible presentation fields have deterministic limits and mark omissions. It always retains the bounded complete native session reference needed to inspect persisted evidence after truncation, failure, interruption, or a missing assistant message. Unknown prompt acceptance is dispatch feedback, not a terminal result.
 _Avoid_: Workflow decision, semantic success, transcript copy, unknown acceptance
 
 **Start confirmation**:
@@ -93,7 +97,7 @@ The subagent extension's single deterministic asynchronous notification that an 
 _Avoid_: Direct result, model callback, polling, status check
 
 **Ownership subtree**:
-One parent agent plus every active descendant runtime reachable through that parent's direct children. An on-demand snapshot identifies the invoking parent as `self`; descendant runtime paths are relative to it, while each `#ID` remains scoped to the direct owner named on that line. It presents at most 36 descendant runtimes and marks additional omissions. A parent can inspect only its own subtree, never its parent, siblings, unrelated controllers, idle conversations, or other sessions. Existing direct-owner steering and interruption operations continue to accept their local numeric IDs; the status view adds no tree action API, and closing an ancestor retains recursive managed-lineage cleanup.
+One parent agent plus every active descendant runtime reachable through that parent's direct children. An on-demand snapshot identifies the invoking parent as `self`; descendant runtime paths are relative to it, while each `#ID` remains scoped to the direct owner named on that line. It presents at most 36 descendant runtimes and marks additional omissions. Scheduler-waiting runtimes include bounded local callback count, age, and submission metadata; these are not Queue state or globally actionable cancellation handles. A parent can inspect only its own subtree, never its parent, siblings, unrelated controllers, idle conversations, or other sessions. Existing direct-owner steering and interruption operations continue to accept their local numeric IDs; the status view adds no tree action API, and closing an ancestor retains recursive managed-lineage cleanup.
 _Avoid_: Global agent registry, session inventory, machine process tree, globally actionable runtime ID
 
 **Live status**:
@@ -146,7 +150,7 @@ a missing assistant message, or unknown prompt acceptance. An inactive
 `acceptance-unknown` entry retains its original recovery guidance and warning
 against blind retry instead of suggesting a terminal pong or automatic continuation.
 
-A depth-2 parent remains alive while its mechanically direct depth-3 tool calls run and exits only after its enclosing Pi turn settles. Its native session persists for later inspection or continuation; the extension adds no persistent idle runtime or workflow store. Matching direct-call cancellation remains `interrupted` with its native session reference. Runtime closure and session shutdown recursively clean only the active managed lineage.
+A depth-2 parent remains alive while its mechanically direct depth-3 tool calls run and exits after its enclosing Pi turn settles without pending scheduler callbacks, or on failure or explicit interruption. Its native session persists for later inspection or continuation; scheduler waits retain only a live runtime, not a durable mailbox or workflow store. Matching direct-call cancellation remains `interrupted` with its native session reference. Runtime closure and session shutdown recursively clean only the active managed lineage.
 
 ## Root session boundary
 
