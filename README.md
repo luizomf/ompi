@@ -712,7 +712,13 @@ owning Pi session and is removed on session shutdown. A wake is therefore best
 effort: Pi shutdown, host loss, a missing callback runner, forced runner
 termination, or failure before the runner starts can prevent delivery. Durable
 OMQueue payloads and recurring schedules may continue after Pi closes, but their
-callbacks cannot reopen the session. Manage or cancel such schedules outside
+callbacks cannot reopen the session. Managed subagents now remain alive during
+local callback waits; this does not make delivery durable. Unknown acceptance
+retains the wait conservatively. Finite repeats wait for their remaining
+occurrences; cron keeps a subscription until full confirmed cancellation or
+explicit child interruption. Full confirmed cancellation releases the local
+wait but does not cancel already-created Jobs; late callbacks are not guaranteed
+after the child closes. Manage or cancel schedules from closed sessions outside
 this extension through explicitly requested ordinary shell or OMQueue
 administration.
 
@@ -748,6 +754,20 @@ A root depth-1 RPC remains async by default and honors explicit `"direct"`.
 Child transport follows Pi's strict JSONL framing without a smaller
 ompi-specific record cap; parent-visible terminal text, diagnostics, metadata,
 and inventories remain bounded separately and mark omissions.
+
+A child with unresolved scheduler callbacks stays alive when its model turn
+settles successfully. Its state becomes `waiting-scheduler`, not `completed`;
+no terminal pong is sent yet. The existing widget, list, and ownership snapshot
+show the pending callback count and age (local observations, not Queue state).
+Direct-child list details include bounded child-owned submission IDs. The root
+TUI remains free to work or start other children. `subagent_steer` wakes a waiting
+child in its existing runtime; `subagent_interrupt` explicitly closes it even
+while idle. Closure abandons callbacks but does **not** cancel Queue work, so
+never blindly resubmit it. A callback resumes the child, and completion occurs
+only after its processing turn settles without outstanding callbacks. Waiting
+children still occupy a local child slot. There is no periodic waiting alert or
+automatic timeout; a lost callback requires an explicit management decision.
+Existing closed runtimes and their lost callbacks are not restored by reload.
 
 The normal widget remains compact and shows only direct current activity. The
 compact footer summarizes the active ownership subtree as `direct: N • nested:
@@ -805,8 +825,8 @@ The extension exposes these tools and matching commands:
 | --- | --- | --- |
 | `subagent_start` | `/sub` | Start a clean conversation |
 | `subagent_continue` | `/subcont` | Continue a settled conversation |
-| `subagent_steer` | `/substeer` | Steer an active turn |
-| `subagent_interrupt` | `/substop` | Interrupt an active turn |
+| `subagent_steer` | `/substeer` | Steer an active turn or wake a scheduler-waiting child |
+| `subagent_interrupt` | `/substop` | Interrupt an active child, including scheduler waits |
 | `subagent_status` | `/subtree` | Show the active ownership subtree on demand |
 | `subagent_list` | `/sublist` | List direct session-scoped known conversations |
 
@@ -868,11 +888,12 @@ same one-based delegation depth while capturing the parent's current
 capabilities again. The root is depth 1, its coordinator is depth 2, a leaf is
 depth 3, and the default maximum is 3. The root owns at most 12 active direct
 children; each nested parent defaults to 2. Preflight and handshaking processes,
-plus accepted running, finalizing, and direct-wait runtimes, occupy the
+plus accepted running, scheduler-waiting, finalizing, and direct-wait runtimes, occupy the
 responsible parent's local slot until their process exits.
 
 A coordinator RPC process remains alive through dependent direct leaf calls and
-exits only after its enclosing Pi turn settles. Parent interruption, process
+exits after its enclosing Pi turn settles successfully without pending scheduler
+callbacks, or on failure or explicit interruption. Parent interruption, process
 closure, and session shutdown recursively close active descendants created
 through this extension and await their process exit. Independently shell-launched
 Pi or other processes are outside that managed lineage. Caller-requested
@@ -886,8 +907,8 @@ Native Pi JSONL conversation files can survive their child processes and the
 owning parent session. Separately, the numeric known-conversation registry is
 in memory only for that owning parent session and is not rebuilt from native
 files after the parent exits. An active child runtime exists only for an
-accepted turn; a temporary process may exist during preflight, and no idle
-runtime survives terminal settlement. The extension adds no durable registry,
+accepted dispatch, including idle waits for scheduler callbacks; a temporary
+process may exist during preflight. No runtime survives terminal settlement. The extension adds no durable registry,
 retry system, task store, or supervisor.
 
 Standard `select`, `confirm`, `input`, and `editor` dialogs requested by a

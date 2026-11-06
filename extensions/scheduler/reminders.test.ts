@@ -42,6 +42,8 @@ describe("human reminders and session-owned cancellation", () => {
     const before = Date.now();
     const result = await session.scheduleReminders(prompt, home);
     expect(result).toMatchObject({ complete: true, accepted: 24 });
+    expect(session.pending()).toMatchObject({ count: 24, omitted: 14 });
+    expect(session.pending().pendingIds).toHaveLength(10);
     expect(calls).toHaveLength(24);
     const at = calls.map((call) => Date.parse(call.args[call.args.indexOf("--at") + 1]));
     expect(at[0]).toBeGreaterThanOrEqual(before + 3_600_000);
@@ -54,7 +56,8 @@ describe("human reminders and session-owned cancellation", () => {
       expect(call.args).not.toContain("--every");
     });
     calls.length = 0;
-    expect(await session.cancel(result.id, home)).toMatchObject({ confirmed: true, disabled: 24, remaining: 0 });
+    expect(await session.cancel(result.id, home)).toMatchObject({ confirmed: true, disabled: 24, remaining: 0, pendingCallbacksUnknown: true });
+    expect(session.pending().count).toBe(0);
     expect(calls).toHaveLength(24);
     expect(session.list()).toEqual([expect.objectContaining({
       id: result.id,
@@ -134,6 +137,7 @@ describe("human reminders and session-owned cancellation", () => {
     })]);
     const separator = first!.args.indexOf("--");
     await promisify(execFile)(first!.args[separator + 1], first!.args.slice(separator + 2), { env: first!.env });
+    expect(session.pending().count).toBe(23);
     expect(session.list()).toEqual([expect.objectContaining({
       id: result.id, callbacks: 1, lastOutcome: { kind: "heartbeat" },
       cancellation: expect.objectContaining({ knownNotDisabled: 24 }),
@@ -178,6 +182,7 @@ describe("human reminders and session-owned cancellation", () => {
       cancellation: { knownNotDisabled: 2, disabled: 0, coverageComplete: false, creating: false },
     })]);
     expect(created).toBe(2);
+    expect(session.pending().count).toBe(2);
     expect(await session.cancel(result.id, home)).toMatchObject({ confirmed: false, disabled: 2, coverageComplete: false });
     expect(disabled).toEqual(["first", "second"]);
   });
@@ -226,6 +231,7 @@ describe("human reminders and session-owned cancellation", () => {
     const result = await session.scheduleReminders("check", home);
     expect(result).toMatchObject({ accepted: 1, complete: false });
     expect(result.error).toContain("synthetic spawn failure");
+    expect(session.pending().count).toBe(2);
     expect(session.list()).toEqual([expect.objectContaining({
       id: result.id, acceptance: "unknown", acceptedSubmissions: 1,
     })]);
@@ -246,6 +252,7 @@ describe("human reminders and session-owned cancellation", () => {
     expect(calls).toBe(1);
     await expect(session.cancel(result.id, home)).rejects.toThrow("closed");
     expect(session.list()).toEqual([]);
+    expect(session.pending()).toEqual({ count: 0, pendingIds: [], omitted: 0 });
   });
 
   it("does not start disable commands after an abort", async () => {

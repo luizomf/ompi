@@ -447,6 +447,31 @@ describe("RpcSubprocess ownership transport", () => {
   });
 });
 
+describe("RpcSubprocess scheduler transport", () => {
+  it.each([false, true])("relays bounded scheduler status, rejecting malformed frames (invalid=%s)", async (invalid) => {
+    const scheduler = { count: 1, oldestPendingAt: 1000, pendingIds: ["44b5f82e-a65b-4e5d-a7ed-6e41b4f40611"], omitted: 0 };
+    const script = String.raw`
+      process.stdout.write(JSON.stringify({
+        type: "extension_ui_request", method: "setStatus",
+        statusKey: "ompi:scheduler:pending-v1", statusText: process.env.STATUS_TEXT,
+      }) + "\n");
+      process.stdin.resume();
+    `;
+    const child = new RpcSubprocess({ command: process.execPath, args: ["-e", script], cwd: process.cwd(), env: {
+      ...process.env, STATUS_TEXT: invalid ? "bad JSON" : JSON.stringify({ version: 1, ...scheduler }),
+    } });
+    const events: unknown[] = [];
+    child.onEvent((event) => events.push(event));
+    try {
+      await vi.waitFor(() => expect(events).toEqual([invalid
+        ? { type: "scheduler_protocol_error" }
+        : { type: "scheduler_pending", scheduler }]));
+    } finally {
+      await child.close();
+    }
+  });
+});
+
 describe("RpcSubprocess prompt transport", () => {
   it("marks failure before a prompt can be written as not crossed", async () => {
     const child = new RpcSubprocess({

@@ -60,6 +60,16 @@ outcome so they cannot create another section. The wake and its mechanical
 outcome are not an official terminal OMQueue Job state.
 _Avoid_: Queue completion event, watcher result, durable notification
 
+**Pending callback obligation**:
+A local keepalive expectation reserved before invoking `bq`, distinct from a
+historical scheduler record or an official Queue state. One-shot submissions
+expect one callback; finite repeats count their remaining occurrences; cron
+retains one subscription obligation. Unknown acceptance remains pending because
+durable work may already exist. Successfully injected wakes remain held until that exact wake enters model
+context and the session settles idle, covering both same-run follow-ups and
+queued delivery across old settled events.
+_Avoid_: Active Queue Job, delivery guarantee, durable mailbox
+
 **Human reminder schedule**:
 `/schedule PROMPT` creates 24 hourly, payload-free occurrences with the first
 one after one hour (rounded up to a whole minute). The command handler submits
@@ -194,6 +204,27 @@ _Avoid_: Pending Job, active Schedule, Queue history, official Queue state
   raw-CLI invocation, testing, debugging, inspection, or OMQueue administration
   also uses ordinary bash. Heartbeats, reminders, and deferred rechecks that
   should wake Pi remain scheduler work.
+- In RPC mode, the scheduler publishes a bounded, versioned local lifecycle
+  snapshot: pending count, oldest pending timestamp, up to ten submission IDs,
+  and an omitted-ID count. It never includes prompts, payload output, socket
+  paths, or callback capabilities. Managed subagents use this snapshot to retain
+  an idle callback owner; the root remains free after asynchronous dispatch.
+  Successful callback injection decrements finite expectations, but a delivered
+  wake retains a keepalive until its correlated `message_start` and idle
+  `agent_settled`. An unrelated start or stale settled hook while busy cannot
+  release it. The parent must wait for the
+  callback-processing turn to settle before completing the child, not close on
+  a zero snapshot alone. Failure and explicit interruption can still close it.
+- Full confirmed Schedule cancellation (known coverage, creation finished, all
+  known IDs disabled) explicitly releases local keepalive obligations. Partial
+  or unknown cancellation retains them conservatively. Cancellation warns that
+  existing Jobs may continue and their callbacks are not guaranteed after the
+  owning child closes; it does not cancel Jobs or retract delivered wakes.
+  Correlation remains available for late callbacks while the session is live.
+- There is no automatic waiting timeout, periodic root alert, callback transfer,
+  or resurrection. Missing callbacks and unknown acceptance may retain a child
+  until its parent explicitly interrupts it. A retained child is steerable and
+  interruptible through the existing subagent controls.
 - Scheduler wakes are best effort and session-scoped. Closing Pi, host loss,
   forced runner termination, or failure before the runner starts can prevent a
   wake. Durable schedules and payloads may continue after the owning Pi session

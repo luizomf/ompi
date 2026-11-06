@@ -26,6 +26,7 @@ import {
   type StandardDialogResult,
 } from "./dialogs.ts";
 import { readManagedLineage } from "./lineage.ts";
+import type { SchedulerPending } from "../shared/scheduler-lifecycle.ts";
 import {
   OWNERSHIP_STATUS_KEY,
   encodeOwnershipStatus,
@@ -172,12 +173,18 @@ function parentVisibleView(view: SubagentView): ParentVisibleSubagentView {
   };
 }
 
+function schedulerSummary(pending: SchedulerPending | undefined, now = Date.now()): string {
+  if (!pending?.count) return "";
+  const age = pending.oldestPendingAt === undefined ? "unknown age" : `${Math.max(0, Math.floor((now - pending.oldestPendingAt) / 1_000))}s old`;
+  return ` · scheduler: ${pending.count} pending (${age}; local callback tracking, not Queue state)`;
+}
+
 function formatView(view: SubagentView): string {
   const visible = parentVisibleView(view);
   const name = visible.name ? ` (${oneLine(visible.name, 60)})` : "";
   const session = visible.sessionRef ? `\n  session: ${oneLine(visible.sessionRef, 260)}` : "";
   const error = visible.error ? `\n  error: ${oneLine(visible.error, 160)}` : "";
-  return `#${visible.id}${name}: ${visible.state} — ${oneLine(visible.model, 100)} · reasoning ${visible.thinking} @ ${oneLine(visible.cwd, 180)}${session}${error}`;
+  return `#${visible.id}${name}: ${visible.state} — ${oneLine(visible.model, 100)} · reasoning ${visible.thinking} @ ${oneLine(visible.cwd, 180)}${schedulerSummary(visible.scheduler)}${session}${error}`;
 }
 
 export function buildConversationList(views: SubagentView[]): {
@@ -212,6 +219,12 @@ export function buildConversationList(views: SubagentView[]): {
     : subagents.map(formatView);
   if (subagents.some((view) => ["completed", "failed", "interrupted"].includes(view.state))) {
     lines.unshift(ASYNC_RESULT_GUIDANCE);
+  }
+  for (const view of subagents) {
+    if (view.scheduler?.count) lines.push(`#${view.id} pending submission IDs (child-owned): ${view.scheduler.pendingIds.join(", ")}${view.scheduler.omitted ? ` [${view.scheduler.omitted} omitted]` : ""}`);
+  }
+  if (subagents.some((view) => view.state === "waiting-scheduler")) {
+    lines.unshift("Waiting children remain reachable with subagent_steer and can be forcibly closed with subagent_interrupt. Closing a child does not cancel Queue work.");
   }
   const bounded = boundText(lines.join("\n"), INVENTORY_TEXT_LIMIT);
   return {
@@ -265,7 +278,7 @@ export function buildActiveUi(
     const model = oneLine(view.model, 40);
     const tool = view.currentTool ? ` · ${oneLine(view.currentTool, 80)}` : "";
     const preview = view.preview ? ` · ${oneLine(view.preview, 72)}` : "";
-    return `#${view.id}${name} · ${view.state} · ${elapsed}s · ${model} · reasoning ${view.thinking}${tool}${preview}`;
+    return `#${view.id}${name} · ${view.state} · ${elapsed}s · ${model} · reasoning ${view.thinking}${tool}${preview}${schedulerSummary(view.scheduler, now)}`;
   });
   return {
     lines,
@@ -282,6 +295,7 @@ interface OwnershipStatusNode {
   name?: string;
   model?: string;
   thinking?: ThinkingLevel;
+  scheduler?: SchedulerPending;
 }
 
 export function buildOwnershipStatus(
@@ -301,6 +315,7 @@ export function buildOwnershipStatus(
       name: runtime.name ? oneLine(runtime.name, 80) : undefined,
       model: oneLine(runtime.model, 160),
       thinking: runtime.thinking,
+      ...(runtime.scheduler ? { scheduler: runtime.scheduler } : {}),
     })),
   ];
   const lines = ["self · depth " + depth + " · current owner"];
@@ -312,7 +327,8 @@ export function buildOwnershipStatus(
     lines.push(
       `${indent}└─ runtime ${runtimeId}${name} · depth ${runtime.depth} · ${runtime.state}`
       + ` · parent ${parentRuntimeId} · owner-local ID #${runtime.id}`
-      + ` · ${oneLine(runtime.model, 80)} · reasoning ${runtime.thinking}`,
+      + ` · ${oneLine(runtime.model, 80)} · reasoning ${runtime.thinking}`
+      + schedulerSummary(runtime.scheduler),
     );
   }
   if (omitted > 0) lines.push(`[${omitted} additional active runtimes omitted]`);
@@ -522,6 +538,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "In print or managed nested lineage, subagent_start returns only after the subagent reaches a terminal outcome; inspect that direct result before continuing dependent work.",
       "After an asynchronous root subagent_start accepts a prompt, never wait, sleep, or poll for its result. Continue only useful independent work or end the response so user input and the later pong can be delivered.",
       ASYNC_RESULT_GUIDANCE,
+      "A subagent with unresolved scheduler callbacks stays alive as waiting-scheduler after its turn settles. The parent remains free after asynchronous dispatch. Use subagent_steer to wake and instruct a waiting child, or subagent_interrupt to explicitly close it; closing a child does not cancel work already submitted to the Queue. No periodic waiting alert is emitted.",
       "If dispatch acceptance is reported as unknown, preserve the native session reference and original cause, inspect available evidence, and do not blindly retry because the prompt may already have produced effects.",
     ],
     parameters: StartSchema,
@@ -590,7 +607,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_steer",
     label: "Steer Subagent",
-    description: "Queue an instruction for an active subagent at Pi's safe steering boundary. An inactive-state rejection means this instruction was not sent; it does not establish whether a prior result has reached the parent.",
+    description: "Send an instruction to an active subagent: queue at Pi's safe steering boundary while running, or wake a waiting-scheduler child in its existing runtime. An inactive-state rejection means this instruction was not sent; it does not establish whether a prior result has reached the parent.",
     promptGuidelines: [
       "A subagent may finish before subagent_steer arrives. On an inactive-state rejection, do not retry steering or automatically continue it. If awaiting an async result, end this response so the queued follow-up can enter the conversation; use subagent_continue only for new work after reviewing the prior result. Unknown acceptance instead requires evidence inspection, not blind retry.",
     ],
@@ -609,13 +626,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_interrupt",
     label: "Interrupt Subagent",
-    description: "Abort an active subagent turn while preserving its native conversation for continuation.",
+    description: "Interrupt an active subagent, including forcibly closing a waiting-scheduler runtime, while preserving its native conversation. Pending callbacks are abandoned on closure; work already submitted to the Queue may continue. This does not cancel Queue work.",
     parameters: InterruptSchema,
     async execute(_id, params) {
       return withParentVisibleErrors(async () => {
         const view = await controller.interrupt(params.id);
         return {
-          content: [{ type: "text" as const, text: `Interruption requested for subagent #${view.id}.` }],
+          content: [{ type: "text" as const, text: `Interruption requested for subagent #${view.id}.${view.scheduler?.count ? " Pending callbacks will be abandoned on closure; work already submitted to the Queue may continue. Do not blindly resubmit it." : ""}` }],
           details: parentVisibleView(view),
         };
       });
@@ -720,8 +737,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       try {
         const id = Number(args.trim());
         if (!Number.isInteger(id) || id < 1) throw new Error("Usage: /substop <id>");
-        await controller.interrupt(id);
-        ctx.ui.notify(`Interruption requested for subagent #${id}.`, "info");
+        const view = await controller.interrupt(id);
+        ctx.ui.notify(`Interruption requested for subagent #${id}.${view.scheduler?.count ? " Pending callbacks are abandoned on closure; Queue work may continue." : ""}`, "info");
       } catch (error) {
         ctx.ui.notify(errorText(error), "error");
       }

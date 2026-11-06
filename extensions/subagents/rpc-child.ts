@@ -25,6 +25,7 @@ import {
 } from "./dialogs.ts";
 import { MANAGED_LINEAGE_ENV, encodeManagedLineage } from "./lineage.ts";
 import { OWNERSHIP_STATUS_KEY, parseOwnershipStatus } from "./ownership.ts";
+import { SCHEDULER_STATUS_KEY, parseSchedulerPending } from "../shared/scheduler-lifecycle.ts";
 
 interface RpcResponse {
   id?: string;
@@ -297,6 +298,22 @@ export class RpcSubprocess implements RpcChild {
       for (const listener of this.eventListeners) {
         listener({ type: "subagent_ownership", ownership });
       }
+      return;
+    }
+    if (
+      message.type === "extension_ui_request"
+      && "method" in message && message.method === "setStatus"
+      && "statusKey" in message && message.statusKey === SCHEDULER_STATUS_KEY
+    ) {
+      let event: RpcEvent;
+      try {
+        const scheduler = parseSchedulerPending("statusText" in message ? message.statusText : undefined);
+        if (!scheduler) throw new Error("Invalid scheduler lifecycle status");
+        event = { type: "scheduler_pending", scheduler };
+      } catch {
+        event = { type: "scheduler_protocol_error" };
+      }
+      for (const listener of this.eventListeners) listener(event);
       return;
     }
     if (message.type === "response" && "id" in message && message.id) {
