@@ -17,7 +17,7 @@ import {
   type SchedulerWake,
 } from "./scheduler.ts";
 import { schedulerSnapshot } from "./presentation.ts";
-import { encodeSchedulerPending, SCHEDULER_STATUS_KEY } from "../shared/scheduler-lifecycle.ts";
+import { encodeSchedulerPending, SCHEDULER_STATUS_KEY } from "./scheduler-lifecycle.ts";
 
 const MAX_REENTRY_PROMPT_CHARACTERS = 8_000;
 const MAX_ARGUMENT_CHARACTERS = 8_000;
