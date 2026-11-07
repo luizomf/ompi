@@ -816,7 +816,10 @@ ln -s "$(pwd)/extensions/subagents" "${HOME}/.pi/agent/extensions/subagents"
 ```
 
 A normal `pi` process then discovers it automatically, and `/reload` picks up
-source changes. Explicit profiles using `--no-extensions` remain isolated unless
+source changes. Resource snapshots that copy individual extension directories
+must dereference their internal shared-module symlinks (for example, `rsync -aL`).
+These extension-local aliases keep copied resources self-contained; production
+imports must not require the repository's sibling `shared/` directory. Explicit profiles using `--no-extensions` remain isolated unless
 they also pass `--extension ./extensions/subagents/index.ts`.
 
 The extension exposes these tools and matching commands:

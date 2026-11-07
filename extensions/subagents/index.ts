@@ -26,7 +26,7 @@ import {
   type StandardDialogResult,
 } from "./dialogs.ts";
 import { readManagedLineage } from "./lineage.ts";
-import type { SchedulerPending } from "../shared/scheduler-lifecycle.ts";
+import type { SchedulerPending } from "./scheduler-lifecycle.ts";
 import {
   OWNERSHIP_STATUS_KEY,
   encodeOwnershipStatus,

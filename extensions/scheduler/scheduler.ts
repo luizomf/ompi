@@ -6,7 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBqProcess } from "./process.ts";
-import type { SchedulerPending } from "../shared/scheduler-lifecycle.ts";
+import type { SchedulerPending } from "./scheduler-lifecycle.ts";
 
 const CALLBACK_RUNNER = fileURLToPath(new URL("./callback-runner.mjs", import.meta.url));
 const CALLBACK_PROTOCOL_VERSION = 1;

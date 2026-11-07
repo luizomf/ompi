@@ -25,7 +25,7 @@ import {
 } from "./dialogs.ts";
 import { MANAGED_LINEAGE_ENV, encodeManagedLineage } from "./lineage.ts";
 import { OWNERSHIP_STATUS_KEY, parseOwnershipStatus } from "./ownership.ts";
-import { SCHEDULER_STATUS_KEY, parseSchedulerPending } from "../shared/scheduler-lifecycle.ts";
+import { SCHEDULER_STATUS_KEY, parseSchedulerPending } from "./scheduler-lifecycle.ts";
 
 interface RpcResponse {
   id?: string;

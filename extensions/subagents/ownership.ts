@@ -4,7 +4,7 @@ import type {
   ThinkingLevel,
 } from "./controller.ts";
 import { boundText } from "./feedback.ts";
-import { parseSchedulerPending } from "../shared/scheduler-lifecycle.ts";
+import { parseSchedulerPending } from "./scheduler-lifecycle.ts";
 
 export const OWNERSHIP_STATUS_KEY = "ompi:subagents:ownership-v1";
 

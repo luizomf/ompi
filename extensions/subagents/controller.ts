@@ -17,7 +17,7 @@ import {
   errorText,
 } from "./feedback.ts";
 
-import type { SchedulerPending } from "../shared/scheduler-lifecycle.ts";
+import type { SchedulerPending } from "./scheduler-lifecycle.ts";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type TerminalOutcome = "completed" | "failed" | "interrupted";
